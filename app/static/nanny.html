@@ -1,0 +1,854 @@
+<!doctype html>
+<html>
+  <head>
+  <link rel="stylesheet" href="/static/theme.css" />
+    <meta charset="utf-8" />
+    <title>Nanny</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: Arial, sans-serif; max-width: 900px; margin: 30px auto; }
+      input, select, textarea { max-width: 100%; }
+      button { padding: 8px; margin: 4px 0; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      .row.top { align-items: flex-start; }
+      .stack { display: flex; flex-direction: column; gap: 8px; }
+      .card { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin: 10px 0; }
+      .small { color: #444; font-size: 13px; }
+      .msg { white-space: pre-wrap; margin-top: 10px; }
+      .topbar{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        margin: 10px 0 20px 0;
+      }
+      .btn.secondary{
+        background:#fff;
+        border:1px solid #ccc;
+      }
+      .photo-preview{width:120px;height:120px;border-radius:12px;object-fit:cover;border:1px solid #ddd;background:#f3f4f6}
+      .photo-controls{display:flex;flex-direction:column;gap:8px}
+      .doc-upload{display:flex;flex-direction:column;gap:6px;min-width:220px}
+      .doc-upload input[type="file"]{width:100%}
+      .err { color: #b00020; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="topbar" class="topbar"></div>
+    <div class="row">
+      <h2 style="margin-right: auto;">Nanny onboarding and profile setup</h2>
+      <button class="btn secondary back-btn" id="backToOpsBtn" type="button" style="display:none;">Back to operations</button>
+    </div>
+
+    <div class="card" id="approvalBanner"></div>
+
+    <div class="card">
+      <div class="row">
+        <img id="photoPreview" class="photo-preview" alt="Profile photo preview" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
+        <div class="photo-controls">
+          <input type="file" id="photoInput" accept="image/*" style="display:none;" />
+          <button id="uploadPhotoBtn" type="button">Upload photo</button>
+          <button id="editPhotoBtn" type="button" style="display:none;">Edit photo</button>
+          <span class="small" id="photoStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row top">
+        <div class="stack" style="flex:1; min-width:240px;">
+          <label class="small">Full name</label>
+          <input id="fullName" style="width:100%; padding:8px;" placeholder="Full name" />
+          <input id="phone" style="width:100%; padding:8px;" placeholder="Phone number" />
+          <input id="phoneAlt" style="width:100%; padding:8px;" placeholder="Alternative phone number" />
+        </div>
+        <div style="min-width:200px;">
+          <label class="small">Date of birth</label>
+          <input id="dob" type="date" style="width:100%; padding:8px;" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label class="small">Bio (optional)</label>
+        <textarea id="bio" style="width:100%; min-height:80px; padding:8px;" placeholder="Short bio"></textarea>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Nationality and documents</div>
+      <div class="row">
+        <div style="flex:1; min-width:240px;">
+          <label class="small">Nationality</label>
+          <select id="nationality" style="width:100%; padding:8px;">
+            <option value="">Select nationality</option>
+            <option value="Angolan">Angolan</option>
+            <option value="Botswanan">Botswanan</option>
+            <option value="Comorian">Comorian</option>
+            <option value="Congolese (DRC)">Congolese (DRC)</option>
+            <option value="Eswatini">Eswatini</option>
+            <option value="Lesotho">Lesotho</option>
+            <option value="Madagascan">Madagascan</option>
+            <option value="Malawian">Malawian</option>
+            <option value="Mauritian">Mauritian</option>
+            <option value="Mozambican">Mozambican</option>
+            <option value="Namibian">Namibian</option>
+            <option value="Seychellois">Seychellois</option>
+            <option value="South African">South African</option>
+            <option value="Tanzanian">Tanzanian</option>
+            <option value="Zambian">Zambian</option>
+            <option value="Zimbabwean">Zimbabwean</option>
+          </select>
+          <div class="err" id="nationalityError" style="display:none;"></div>
+        </div>
+        <div style="flex:1; min-width:240px;">
+          <label class="small">Race</label>
+          <select id="race" style="width:100%; padding:8px;">
+            <option value="">Select race</option>
+            <option value="Black">Black</option>
+            <option value="Coloured">Coloured</option>
+            <option value="Indian/Asian">Indian/Asian</option>
+            <option value="White">White</option>
+            <option value="Other">Other</option>
+          </select>
+          <div class="err" id="raceError" style="display:none;"></div>
+        </div>
+      </div>
+      <div class="row" id="passportRow" style="margin-top:10px;">
+        <div style="flex:1; min-width:240px;">
+          <label class="small">Passport number (if not South African)</label>
+          <input id="passportNumber" style="width:100%; padding:8px;" placeholder="Passport number" />
+          <div class="err" id="passportError" style="display:none;"></div>
+        </div>
+        <div style="min-width:200px;">
+          <label class="small">Passport expiry date</label>
+          <input id="passportExpiry" type="date" style="width:100%; padding:8px;" />
+        </div>
+        <div class="doc-upload">
+          <label class="small">Passport copy</label>
+          <div class="row">
+            <input id="passportFile" type="file" accept=".pdf,image/*" />
+            <button id="uploadPassportBtn" type="button">Upload passport</button>
+          </div>
+          <div class="small" id="passportStatus"></div>
+        </div>
+      </div>
+      <div class="row" id="saIdRow" style="margin-top:10px;">
+        <div style="flex:1; min-width:240px;">
+          <label class="small">South African ID number</label>
+          <input id="saIdNumber" style="width:100%; padding:8px;" placeholder="ID number" />
+          <div class="err" id="saIdError" style="display:none;"></div>
+        </div>
+        <div class="doc-upload">
+          <label class="small">Copy of ID</label>
+          <div class="row">
+            <input id="saIdFile" type="file" accept=".pdf,image/*" />
+            <button id="uploadSaIdBtn" type="button">Upload ID</button>
+          </div>
+          <div class="small" id="saIdStatus"></div>
+        </div>
+      </div>
+      <div class="row" id="permitRow" style="margin-top:10px;">
+        <div>
+          <label class="small">Work permit</label>
+          <select id="workPermit" style="width:200px; padding:8px;">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div>
+          <label class="small">Work permit expiry</label>
+          <input id="workPermitExpiry" type="date" style="width:200px; padding:8px;" />
+        </div>
+        <div>
+          <label class="small">Waiver (if no permit)</label>
+          <select id="waiver" style="width:200px; padding:8px;">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div class="doc-upload">
+          <label class="small">Work permit copy</label>
+          <div class="row">
+            <input id="permitFile" type="file" accept=".pdf,image/*" />
+            <button id="uploadPermitBtn" type="button">Upload permit</button>
+          </div>
+          <div class="small" id="permitStatus"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="permitWarning" style="display:none;">
+      <div class="small" style="color:#b00020; font-weight:600;">
+        Please get permit or waiver to proceed with your application
+      </div>
+    </div>
+    <div class="card" id="saIdWarning" style="display:none;">
+      <div class="small" style="color:#b00020; font-weight:600;">
+        Please upload your ID document to proceed with your application
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Home address</div>
+      <input id="homeAddress" style="width:100%; padding:8px;" placeholder="Start typing your address" autocomplete="off" />
+      <div class="row" style="margin-top:8px;">
+        <button id="useCurrentLocationBtn" type="button">Use current location</button>
+      </div>
+      <div class="small" id="locationStatus"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Tags</div>
+      <div id="tagsList" class="row"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Languages</div>
+      <div id="languagesList" class="row"></div>
+    </div>
+
+    <div class="card">
+      <button id="saveProfileBtn" type="button">Save profile</button>
+      <span class="small" id="saveStatus"></span>
+      <div id="savedMsg" style="color:green; display:none; margin-top:6px;">
+        Thanks! Your application will be processed and administrators will contact you on how to proceed.
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=2"></script>
+    <script>
+      const locationState = {
+        place_id: null,
+        formatted_address: null,
+        suburb: null,
+        city: null,
+        lat: null,
+        lng: null,
+      };
+
+      function pickComponent(components, type) {
+        const c = (components || []).find(x => (x.types || []).includes(type));
+        return c ? c.long_name : null;
+      }
+
+      function setLocationStatus(text, timeoutMs) {
+        const el = document.getElementById("locationStatus");
+        el.textContent = text || "";
+        if (timeoutMs) {
+          setTimeout(() => {
+            if (el.textContent === text) el.textContent = "";
+          }, timeoutMs);
+        }
+      }
+
+      async function guard() {
+        const me = await requireMe();
+        if (me.role !== "nanny") {
+          location.href = "/static/login.html";
+          throw new Error("Wrong role");
+        }
+        return me;
+      }
+
+      function renderBanner(isApproved) {
+        const banner = document.getElementById("approvalBanner");
+        banner.textContent = isApproved
+          ? "Approved"
+          : "Profile submitted, waiting for admin approval";
+      }
+
+      function renderTags(tags, selectedIds) {
+        const root = document.getElementById("tagsList");
+        root.innerHTML = "";
+        (tags || []).forEach(t => {
+          const id = `tag_${t.id}`;
+          const wrap = document.createElement("label");
+          wrap.className = "small";
+          wrap.style.display = "flex";
+          wrap.style.alignItems = "center";
+          wrap.style.gap = "6px";
+          wrap.innerHTML = `<input type="checkbox" id="${id}" name="tags" value="${t.id}"> ${t.name}`;
+          root.appendChild(wrap);
+        });
+        (selectedIds || []).forEach(id => {
+          const cb = document.getElementById(`tag_${id}`);
+          if (cb) cb.checked = true;
+        });
+      }
+
+      function renderLanguages(langs, selectedIds) {
+        const root = document.getElementById("languagesList");
+        root.innerHTML = "";
+        (langs || []).forEach(l => {
+          const id = `lang_${l.id}`;
+          const wrap = document.createElement("label");
+          wrap.className = "small";
+          wrap.style.display = "flex";
+          wrap.style.alignItems = "center";
+          wrap.style.gap = "6px";
+          wrap.innerHTML = `<input type="checkbox" id="${id}" name="languages" value="${l.id}"> ${l.name}`;
+          root.appendChild(wrap);
+        });
+        (selectedIds || []).forEach(id => {
+          const cb = document.getElementById(`lang_${id}`);
+          if (cb) cb.checked = true;
+        });
+      }
+
+      function getSelectedIds(name) {
+        return Array.from(document.querySelectorAll(`input[name='${name}']:checked`))
+          .map(cb => Number(cb.value));
+      }
+
+      async function saveLocation() {
+        if (locationState.lat === null || locationState.lng === null) {
+          setLocationStatus("Select a valid address", 3000);
+          return false;
+        }
+
+        await fetchJson("/nannies/me/location", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lat: locationState.lat,
+            lng: locationState.lng,
+            place_id: locationState.place_id,
+            formatted_address: locationState.formatted_address,
+            suburb: locationState.suburb,
+            city: locationState.city,
+          })
+        });
+
+        setLocationStatus("Location saved", 2000);
+        return true;
+      }
+
+      async function useCurrentLocation() {
+        const btn = document.getElementById("useCurrentLocationBtn");
+        if (!navigator.geolocation) {
+          setLocationStatus("Geolocation not supported", 3000);
+          return;
+        }
+
+        btn.disabled = true;
+        const prevText = btn.textContent;
+        btn.textContent = "Locating…";
+
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          try {
+            const data = await fetchJson(`/geo/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+            if (data && data.status && data.status !== "OK") {
+              setLocationStatus(data.error_message || data.status || "Reverse geocode failed", 3000);
+              return;
+            }
+
+            locationState.place_id = data.place_id || null;
+            locationState.formatted_address = data.formatted_address || null;
+            locationState.suburb = data.suburb || null;
+            locationState.city = data.city || null;
+            locationState.lat = data.lat ?? lat;
+            locationState.lng = data.lng ?? lng;
+
+            const addressInput = document.getElementById("homeAddress");
+            if (addressInput) addressInput.value = data.formatted_address || "";
+
+            await saveLocation();
+          } catch (e) {
+            setLocationStatus(e?.message || "Reverse geocode failed", 3000);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = prevText;
+          }
+        }, (err) => {
+          if (err && err.code === 1) {
+            setLocationStatus("Allow location access", 3000);
+          } else {
+            setLocationStatus("Unable to get location", 3000);
+          }
+          btn.disabled = false;
+          btn.textContent = prevText;
+        }, { enableHighAccuracy: true, timeout: 10000 });
+      }
+
+      window.initAddressAutocomplete = function() {
+        const input = document.getElementById("homeAddress");
+        if (!input || !window.google || !google.maps || !google.maps.places) return;
+        const ac = new google.maps.places.Autocomplete(input, {
+          types: ["address"],
+          componentRestrictions: { country: "za" }
+        });
+
+        ac.addListener("place_changed", async () => {
+          const place = ac.getPlace();
+          if (!place || !place.geometry || !place.geometry.location) {
+            setLocationStatus("Could not read that address", 3000);
+            return;
+          }
+
+          const comps = place.address_components || [];
+          locationState.place_id = place.place_id || null;
+          locationState.formatted_address = place.formatted_address || input.value || null;
+          locationState.lat = place.geometry.location.lat();
+          locationState.lng = place.geometry.location.lng();
+          locationState.suburb = pickComponent(comps, "sublocality") || pickComponent(comps, "sublocality_level_1") || pickComponent(comps, "neighborhood");
+          locationState.city = pickComponent(comps, "locality");
+
+          await saveLocation();
+        });
+      };
+
+      const photoInputEl = document.getElementById("photoInput");
+      const uploadPhotoBtn = document.getElementById("uploadPhotoBtn");
+      const editPhotoBtn = document.getElementById("editPhotoBtn");
+      const photoStatusEl = document.getElementById("photoStatus");
+
+      function setPhotoMode(hasPhoto) {
+        if (hasPhoto) {
+          if (uploadPhotoBtn) uploadPhotoBtn.style.display = "none";
+          if (editPhotoBtn) editPhotoBtn.style.display = "inline-block";
+          if (photoInputEl) photoInputEl.style.display = "none";
+        } else {
+          if (uploadPhotoBtn) uploadPhotoBtn.style.display = "inline-block";
+          if (editPhotoBtn) editPhotoBtn.style.display = "none";
+          if (photoInputEl) photoInputEl.style.display = "inline-block";
+        }
+      }
+
+      if (editPhotoBtn) {
+        editPhotoBtn.addEventListener("click", () => {
+          if (photoInputEl) photoInputEl.click();
+        });
+      }
+
+      if (uploadPhotoBtn) {
+        uploadPhotoBtn.addEventListener("click", async () => {
+          if (photoInputEl) photoInputEl.click();
+        });
+      }
+
+      async function uploadSelectedPhoto() {
+        const input = photoInputEl;
+        const status = document.getElementById("photoStatus");
+        if (!input.files || !input.files[0]) {
+          status.textContent = "Select a file";
+          return;
+        }
+        status.textContent = "Uploading...";
+        const form = new FormData();
+        form.append("file", input.files[0]);
+
+        const res = await fetch("/nannies/me/photo", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + getToken() },
+          body: form,
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          status.textContent = err.detail || "Upload failed";
+          return;
+        }
+
+        const data = await res.json().catch(() => ({}));
+        if (data.url) {
+          document.getElementById("photoPreview").src = data.url;
+        }
+        status.textContent = "Uploaded";
+        setPhotoMode(true);
+      }
+
+      if (photoInputEl) {
+        photoInputEl.addEventListener("change", (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+          const url = URL.createObjectURL(file);
+          document.getElementById("photoPreview").src = url;
+          uploadSelectedPhoto().catch(() => {});
+        });
+      }
+
+      document.getElementById("useCurrentLocationBtn").addEventListener("click", () => {
+        useCurrentLocation().catch(e => setLocationStatus(e?.message || String(e), 3000));
+      });
+
+      document.getElementById("uploadSaIdBtn").addEventListener("click", async () => {
+        const fileInput = document.getElementById("saIdFile");
+        const status = document.getElementById("saIdStatus");
+        status.textContent = "";
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          status.textContent = "Choose a file first.";
+          return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        try {
+          const res = await fetch("/nannies/me/id-document", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            body: formData
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(text || "Upload failed");
+          }
+          const data = await res.json();
+          status.textContent = "Uploaded.";
+          document.getElementById("saIdFile").value = "";
+          document.getElementById("saIdFile").dataset.url = data.url || "";
+        } catch (e) {
+          status.textContent = e.message || "Upload failed";
+        }
+      });
+      document.getElementById("uploadPassportBtn").addEventListener("click", async () => {
+        const fileInput = document.getElementById("passportFile");
+        const status = document.getElementById("passportStatus");
+        status.textContent = "";
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          status.textContent = "Choose a file first.";
+          return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        try {
+          const res = await fetch("/nannies/me/passport-document", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            body: formData
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(text || "Upload failed");
+          }
+          const data = await res.json();
+          status.textContent = "Uploaded.";
+          document.getElementById("passportFile").value = "";
+          document.getElementById("passportFile").dataset.url = data.url || "";
+        } catch (e) {
+          status.textContent = e.message || "Upload failed";
+        }
+      });
+      document.getElementById("uploadPermitBtn").addEventListener("click", async () => {
+        const fileInput = document.getElementById("permitFile");
+        const status = document.getElementById("permitStatus");
+        status.textContent = "";
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          status.textContent = "Choose a file first.";
+          return;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        try {
+          const res = await fetch("/nannies/me/work-permit-document", {
+            method: "POST",
+            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            body: formData
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(text || "Upload failed");
+          }
+          const data = await res.json();
+          status.textContent = "Uploaded.";
+          document.getElementById("permitFile").value = "";
+          document.getElementById("permitFile").dataset.url = data.url || "";
+        } catch (e) {
+          status.textContent = e.message || "Upload failed";
+        }
+      });
+
+      function toggleNationalityFields() {
+        const nat = (document.getElementById("nationality").value || "").trim().toLowerCase();
+        const isSa = nat === "south african";
+        const hasNat = !!nat;
+        document.getElementById("passportRow").style.display = (!hasNat || isSa) ? "none" : "flex";
+        document.getElementById("permitRow").style.display = (!hasNat || isSa) ? "none" : "flex";
+        document.getElementById("saIdRow").style.display = (hasNat && isSa) ? "flex" : "none";
+        const permitVal = document.getElementById("workPermit").value;
+        const permitFileRow = document.getElementById("permitFile")?.parentElement?.parentElement;
+        if (permitFileRow) permitFileRow.style.display = permitVal === "yes" ? "flex" : "none";
+        const waiverSelect = document.getElementById("waiver");
+        const waiverRow = waiverSelect?.parentElement;
+        if (waiverRow) waiverRow.style.display = permitVal === "no" ? "flex" : "none";
+      }
+      document.getElementById("nationality").addEventListener("input", toggleNationalityFields);
+      document.getElementById("workPermit").addEventListener("change", toggleNationalityFields);
+
+      function validateSaId(idNumber, dobValue) {
+        const s = (idNumber || "").trim();
+        if (!s) return null;
+        if (!/^\d{13}$/.test(s)) return "South African ID number must be 13 digits.";
+
+        const yy = parseInt(s.slice(0, 2), 10);
+        const mm = parseInt(s.slice(2, 4), 10);
+        const dd = parseInt(s.slice(4, 6), 10);
+        const now = new Date();
+        const century = yy <= (now.getFullYear() % 100) ? 2000 : 1900;
+        const dob = new Date(century + yy, mm - 1, dd);
+        if (dob.getFullYear() !== century + yy || dob.getMonth() !== (mm - 1) || dob.getDate() !== dd) {
+          return "South African ID number has an invalid date of birth.";
+        }
+
+        if (dobValue) {
+          const parts = dobValue.split("-");
+          if (parts.length === 3) {
+            const y = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            const d = parseInt(parts[2], 10);
+            if ((y % 100) !== yy || m !== mm || d !== dd) {
+              return "South African ID number does not match date of birth.";
+            }
+          }
+        }
+
+        const citizen = s[10];
+        if (citizen !== "0" && citizen !== "1") {
+          return "South African ID number has an invalid citizenship digit.";
+        }
+
+        let total = 0;
+        const digits = s.split("").map((d) => parseInt(d, 10)).reverse();
+        for (let i = 0; i < digits.length; i++) {
+          let d = digits[i];
+          if (i % 2 === 1) {
+            d *= 2;
+            if (d > 9) d -= 9;
+          }
+          total += d;
+        }
+        if (total % 10 !== 0) return "South African ID number failed checksum.";
+        return null;
+      }
+
+      document.getElementById("saveProfileBtn").addEventListener("click", async () => {
+        const saveBtn = document.getElementById("saveProfileBtn");
+        const status = document.getElementById("saveStatus");
+        const savedMsg = document.getElementById("savedMsg");
+
+        const fullName = document.getElementById("fullName").value.trim();
+        const dob = document.getElementById("dob").value;
+        const tagIds = getSelectedIds("tags");
+        const languageIds = getSelectedIds("languages");
+
+        if (!fullName) {
+          alert("Full name is required");
+          return;
+        }
+        if (!dob) {
+          alert("Date of birth is required");
+          return;
+        }
+        if (locationState.lat === null || locationState.lng === null) {
+          alert("Please set your home address");
+          return;
+        }
+        if (tagIds.length === 0) {
+          alert("Select at least one tag");
+          return;
+        }
+        if (languageIds.length === 0) {
+          alert("Select at least one language");
+          return;
+        }
+
+        const natSelect = document.getElementById("nationality");
+        const raceSelect = document.getElementById("race");
+        const natValue = (natSelect?.value || "").trim().toLowerCase();
+        const raceValue = (raceSelect?.value || "").trim();
+        const nationalityErrorEl = document.getElementById("nationalityError");
+        const raceErrorEl = document.getElementById("raceError");
+        if (nationalityErrorEl) {
+          nationalityErrorEl.textContent = "";
+          nationalityErrorEl.style.display = "none";
+        }
+        if (raceErrorEl) {
+          raceErrorEl.textContent = "";
+          raceErrorEl.style.display = "none";
+        }
+        if (!natValue) {
+          if (nationalityErrorEl) {
+            nationalityErrorEl.textContent = "Please select nationality.";
+            nationalityErrorEl.style.display = "block";
+          } else {
+            alert("Please select nationality.");
+          }
+          return;
+        }
+        if (!raceValue) {
+          if (raceErrorEl) {
+            raceErrorEl.textContent = "Please select race.";
+            raceErrorEl.style.display = "block";
+          } else {
+            alert("Please select race.");
+          }
+          return;
+        }
+
+        const saIdNumber = document.getElementById("saIdNumber").value || "";
+        const saIdErrorEl = document.getElementById("saIdError");
+        const passportErrorEl = document.getElementById("passportError");
+        if (saIdErrorEl) {
+          saIdErrorEl.textContent = "";
+          saIdErrorEl.style.display = "none";
+        }
+        if (passportErrorEl) {
+          passportErrorEl.textContent = "";
+          passportErrorEl.style.display = "none";
+        }
+        if (natValue === "south african") {
+          if (!saIdNumber.trim()) {
+            if (saIdErrorEl) {
+              saIdErrorEl.textContent = "South African ID number is required.";
+              saIdErrorEl.style.display = "block";
+            } else {
+              status.textContent = "South African ID number is required.";
+            }
+            return;
+          }
+          const saErr = validateSaId(saIdNumber, dob);
+          if (saErr) {
+            if (saIdErrorEl) {
+              saIdErrorEl.textContent = saErr;
+              saIdErrorEl.style.display = "block";
+            } else {
+              status.textContent = saErr;
+            }
+            return;
+          }
+        } else if (natValue) {
+          const passportNumber = (document.getElementById("passportNumber").value || "").trim();
+          if (!passportNumber) {
+            if (passportErrorEl) {
+              passportErrorEl.textContent = "Passport number is required.";
+              passportErrorEl.style.display = "block";
+            } else {
+              status.textContent = "Passport number is required.";
+            }
+            return;
+          }
+        }
+
+        saveBtn.disabled = true;
+        status.textContent = "Saving...";
+        try {
+          await fetchJson("/nannies/me/profile", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+              full_name: fullName,
+              phone: document.getElementById("phone").value || null,
+              phone_alt: document.getElementById("phoneAlt").value || null,
+              dob: dob,
+              bio: document.getElementById("bio").value || null,
+              nationality: document.getElementById("nationality").value || null,
+              ethnicity: document.getElementById("race").value || null,
+              passport_number: document.getElementById("passportNumber").value || null,
+              passport_expiry: document.getElementById("passportExpiry").value || null,
+              passport_document_url: document.getElementById("passportFile").dataset.url || null,
+              work_permit: document.getElementById("workPermit").value === "yes" ? true : (document.getElementById("workPermit").value === "no" ? false : null),
+              work_permit_expiry: document.getElementById("workPermitExpiry").value || null,
+              work_permit_document_url: document.getElementById("permitFile").dataset.url || null,
+              waiver: document.getElementById("waiver").value === "yes" ? true : (document.getElementById("waiver").value === "no" ? false : null),
+              sa_id_number: document.getElementById("saIdNumber").value || null,
+              sa_id_document_url: document.getElementById("saIdFile").dataset.url || null,
+              tag_ids: tagIds,
+              language_ids: languageIds,
+            })
+          });
+          savedMsg.style.display = "block";
+          setTimeout(() => {
+            savedMsg.style.display = "none";
+          }, 5000);
+        } catch (e) {
+          status.textContent = "Save failed: " + (e?.message || String(e));
+        } finally {
+          saveBtn.disabled = false;
+          status.textContent = "";
+        }
+      });
+
+      guard().then(async () => {
+        const params = new URLSearchParams(window.location.search);
+        const fromOps = params.get("from") === "ops";
+        const isAdminView = params.get("admin") === "1";
+        const backBtn = document.getElementById("backToOpsBtn");
+        if (fromOps && backBtn) {
+          backBtn.style.display = "inline-block";
+          backBtn.addEventListener("click", () => {
+            window.location.href = "/static/nanny_home.html";
+          });
+        }
+        if (!fromOps && !isAdminView) {
+          window.location.href = "/static/nanny_home.html?v=2";
+          return;
+        }
+        const [profile, tags, langs] = await Promise.all([
+          fetchJson("/nannies/me/profile"),
+          fetchJson("/nanny-tags"),
+          fetchJson("/languages"),
+        ]);
+
+        renderBanner(!!profile.is_approved);
+
+        document.getElementById("fullName").value = profile.full_name || "";
+        document.getElementById("phone").value = profile.phone || "";
+        document.getElementById("phoneAlt").value = profile.phone_alt || "";
+        document.getElementById("dob").value = profile.dob || "";
+        document.getElementById("bio").value = profile.bio || "";
+        document.getElementById("nationality").value = profile.nationality || "";
+        document.getElementById("race").value = profile.ethnicity || "";
+        document.getElementById("passportNumber").value = profile.passport_number || "";
+        document.getElementById("passportExpiry").value = profile.passport_expiry || "";
+        document.getElementById("passportFile").dataset.url = profile.passport_document_url || "";
+        if (profile.passport_document_url) {
+          document.getElementById("passportStatus").textContent = "Passport uploaded.";
+        }
+        document.getElementById("workPermit").value = profile.work_permit === true ? "yes" : (profile.work_permit === false ? "no" : "");
+        document.getElementById("workPermitExpiry").value = profile.work_permit_expiry || "";
+        document.getElementById("permitFile").dataset.url = profile.work_permit_document_url || "";
+        if (profile.work_permit_document_url) {
+          document.getElementById("permitStatus").textContent = "Permit uploaded.";
+        }
+        document.getElementById("waiver").value = profile.waiver === true ? "yes" : (profile.waiver === false ? "no" : "");
+        document.getElementById("saIdNumber").value = profile.sa_id_number || "";
+        document.getElementById("saIdFile").dataset.url = profile.sa_id_document_url || "";
+        if (profile.sa_id_document_url) {
+          document.getElementById("saIdStatus").textContent = "ID uploaded.";
+        }
+
+        toggleNationalityFields();
+        const waiverSelect = document.getElementById("waiver");
+        if (waiverSelect?.parentElement && (document.getElementById("workPermit").value !== "no")) {
+          waiverSelect.parentElement.style.display = "none";
+        }
+        const nat = (profile.nationality || "").trim().toLowerCase();
+        const needsPermit = nat && nat !== "south african" && (!profile.work_permit && profile.waiver !== true);
+        document.getElementById("permitWarning").style.display = needsPermit ? "block" : "none";
+        const needsSaId = nat === "south african" && (!profile.sa_id_number || !profile.sa_id_document_url);
+        document.getElementById("saIdWarning").style.display = needsSaId ? "block" : "none";
+
+        if (profile.profile_photo_url) {
+          document.getElementById("photoPreview").src = profile.profile_photo_url;
+          setPhotoMode(true);
+        } else {
+          setPhotoMode(false);
+        }
+
+        document.getElementById("homeAddress").value = profile.formatted_address || profile.location_hint || "";
+        locationState.lat = profile.lat ?? null;
+        locationState.lng = profile.lng ?? null;
+        locationState.formatted_address = profile.formatted_address || null;
+        locationState.suburb = profile.suburb || null;
+        locationState.city = profile.city || null;
+
+        renderTags(tags, profile.tag_ids || []);
+        renderLanguages(langs, profile.language_ids || []);
+      }).catch(() => {});
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initAddressAutocomplete" async defer></script>
+  </body>
+</html>

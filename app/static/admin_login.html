@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Login</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin: 0 0 16px; }
+    label { display:block; margin: 12px 0 6px; font-weight: 600; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; }
+    button { margin-top: 14px; width: 100%; padding: 12px; border: 1px solid #222; border-radius: 10px; cursor: pointer; }
+    #msg { color: #b00020; margin-top: 10px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Admin Login</h1>
+  <form id="admin-login-form">
+    <label>Email</label>
+    <input id="email" type="email" autocomplete="email" placeholder="admin@example.com" />
+    <label>Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Password" />
+    <button type="submit">Login</button>
+    <div id="msg"></div>
+  </form>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    document.getElementById("admin-login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({email, password})
+      });
+
+      if (!res.ok) {
+        const t = await res.text();
+        document.getElementById("msg").textContent = t;
+        return;
+      }
+
+      const data = await res.json();
+      localStorage.setItem("token", data.access_token);
+
+      const adminRes = await fetch("/admin/me", {
+        headers: { "Authorization": "Bearer " + data.access_token }
+      });
+      if (adminRes.ok) {
+        window.location.href = "/static/admin_dashboard.html";
+        return;
+      }
+
+      localStorage.removeItem("token");
+      document.getElementById("msg").textContent = "Not authorized";
+    });
+  </script>
+</body>
+</html>

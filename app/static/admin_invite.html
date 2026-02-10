@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Accept Admin Invite</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    h1 { margin: 0 0 12px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
+    label { display: block; margin: 12px 0 6px; font-weight: 600; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; font-size: 16px; }
+    button { margin-top: 14px; width: 100%; padding: 12px; border: 1px solid #222; border-radius: 10px; font-size: 16px; cursor: pointer; }
+    .err { color: #b00020; margin-top: 10px; }
+    .muted { color: #666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>Accept Admin Invite</h1>
+  <div class="card">
+    <div class="muted" id="inviteStatus">Loading invite...</div>
+
+    <label>Name</label>
+    <input id="name" type="text" placeholder="Your full name" />
+
+    <label>Email</label>
+    <input id="email" type="email" disabled />
+
+    <label>Password</label>
+    <input id="password" type="password" placeholder="Create a password" />
+
+    <button id="acceptBtn" type="button">Accept invite</button>
+    <div id="err" class="err"></div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    const statusEl = document.getElementById("inviteStatus");
+    const errEl = document.getElementById("err");
+    const emailEl = document.getElementById("email");
+
+    async function loadInvite() {
+      if (!token) {
+        statusEl.textContent = "Missing invite token.";
+        return;
+      }
+      try {
+        const data = await fetchJson(`/auth/admin-invite/${encodeURIComponent(token)}`);
+        emailEl.value = data.email || "";
+        statusEl.textContent = data.status === "pending" ? "Invite is valid." : `Invite status: ${data.status}`;
+        if (data.status !== "pending") {
+          document.getElementById("acceptBtn").disabled = true;
+        }
+      } catch (e) {
+        statusEl.textContent = "Invite not found or expired.";
+      }
+    }
+
+    document.getElementById("acceptBtn").addEventListener("click", async () => {
+      errEl.textContent = "";
+      const name = document.getElementById("name").value.trim();
+      const password = document.getElementById("password").value;
+      if (!name) {
+        errEl.textContent = "Name is required.";
+        return;
+      }
+      if (!password || password.length < 6) {
+        errEl.textContent = "Password must be at least 6 characters.";
+        return;
+      }
+      try {
+        const res = await fetchJson("/auth/admin-invite/accept", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, name, password })
+        });
+        setToken(res.access_token);
+        localStorage.setItem("is_admin", "true");
+        window.location.href = "/static/admin_dashboard.html";
+      } catch (e) {
+        errEl.textContent = e.message || "Error";
+      }
+    });
+
+    loadInvite();
+  </script>
+</body>
+</html>

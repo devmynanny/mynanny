@@ -1,0 +1,332 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Set Availability</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .muted{color:#666}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+    input, select{padding:10px;border-radius:10px;border:1px solid #ccc}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div class="row" style="justify-content:space-between;">
+    <h1>Set availability</h1>
+    <button class="btn back-btn" id="backBtn" type="button">Back to operations</button>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-weight:600;">Inactive mode</div>
+        <div class="muted">When enabled, you are inactive until you turn it off.</div>
+      </div>
+      <label class="row" style="gap:8px;">
+        <input id="inactiveToggle" type="checkbox" />
+        <span>Inactive</span>
+      </label>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <span id="inactiveStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px;">
+      <div>
+        <div class="muted">Date</div>
+        <input id="availDate" type="date" />
+      </div>
+      <div>
+        <div class="muted">Start time</div>
+        <input id="availStart" type="time" />
+      </div>
+      <div>
+        <div class="muted">End time</div>
+        <input id="availEnd" type="time" />
+      </div>
+      <div>
+        <div class="muted">Type</div>
+        <select id="availType">
+          <option value="available">Available</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </div>
+      <button class="btn" id="addAvailabilityBtn" type="button">Add</button>
+      <span id="availStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px;">Apply Date Range</h3>
+    <div class="row" style="margin-bottom:8px;">
+      <div>
+        <div class="muted">Start date</div>
+        <input id="rangeStartDate" type="date" />
+      </div>
+      <div>
+        <div class="muted">End date</div>
+        <input id="rangeEndDate" type="date" />
+      </div>
+      <div>
+        <div class="muted">Start time (optional)</div>
+        <input id="rangeStartTime" type="time" />
+      </div>
+      <div>
+        <div class="muted">End time (optional)</div>
+        <input id="rangeEndTime" type="time" />
+      </div>
+      <div>
+        <div class="muted">Type</div>
+        <select id="rangeType">
+          <option value="available">Available</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </div>
+      <button class="btn" id="applyRangeBtn" type="button">Apply range</button>
+      <span id="rangeStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 10px;">Weekly Pattern</h3>
+    <div class="row" style="margin-bottom:8px;">
+      <div>
+        <div class="muted">Start date</div>
+        <input id="weeklyStartDate" type="date" />
+      </div>
+      <div>
+        <div class="muted">Weeks</div>
+        <input id="weeklyWeeks" type="number" min="1" max="52" value="4" />
+      </div>
+      <div>
+        <div class="muted">Weekdays</div>
+        <div class="row">
+          <label class="muted"><input type="checkbox" value="0" class="weekdayBox"> Mon</label>
+          <label class="muted"><input type="checkbox" value="1" class="weekdayBox"> Tue</label>
+          <label class="muted"><input type="checkbox" value="2" class="weekdayBox"> Wed</label>
+          <label class="muted"><input type="checkbox" value="3" class="weekdayBox"> Thu</label>
+          <label class="muted"><input type="checkbox" value="4" class="weekdayBox"> Fri</label>
+          <label class="muted"><input type="checkbox" value="5" class="weekdayBox"> Sat</label>
+          <label class="muted"><input type="checkbox" value="6" class="weekdayBox"> Sun</label>
+        </div>
+      </div>
+      <div>
+        <div class="muted">Start time (optional)</div>
+        <input id="weeklyStartTime" type="time" />
+      </div>
+      <div>
+        <div class="muted">End time (optional)</div>
+        <input id="weeklyEndTime" type="time" />
+      </div>
+      <div>
+        <div class="muted">Type</div>
+        <select id="weeklyType">
+          <option value="available">Available</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </div>
+      <button class="btn" id="applyWeeklyBtn" type="button">Apply weekly</button>
+      <span id="weeklyStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <div id="availabilityList" class="grid"></div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    function buildIso(dateStr, timeStr) {
+      if (!dateStr || !timeStr) return null;
+      if (window.toIsoFromZA) return window.toIsoFromZA(dateStr, timeStr);
+      const d = new Date(`${dateStr}T${timeStr}`);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toISOString();
+    }
+
+    async function loadAvailability() {
+      const data = await fetchJson("/nannies/me/availability");
+      const list = document.getElementById("availabilityList");
+      list.innerHTML = "";
+      (data.results || []).forEach(r => {
+        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
+        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div><strong>${r.type || "-"}</strong></div>
+          <div class="muted">${start} to ${end}</div>
+          <button class="btn" data-id="${r.id}">Remove</button>
+        `;
+        card.querySelector("button").addEventListener("click", async () => {
+          await fetchJson(`/nannies/me/availability/${r.id}`, { method: "DELETE" });
+          loadAvailability();
+        });
+        list.appendChild(card);
+      });
+    }
+
+    document.getElementById("addAvailabilityBtn").addEventListener("click", async () => {
+      const date = document.getElementById("availDate").value;
+      const startT = document.getElementById("availStart").value;
+      const endT = document.getElementById("availEnd").value;
+      const type = document.getElementById("availType").value;
+      const status = document.getElementById("availStatus");
+      status.textContent = "";
+      let start_dt = buildIso(date, startT);
+      let end_dt = buildIso(date, endT);
+      if (!start_dt && !end_dt) {
+        // full-day window when no times selected
+        if (!date) {
+          status.textContent = "Select a date.";
+          return;
+        }
+        start_dt = buildIso(date, "00:00");
+        end_dt = buildIso(date, "23:59");
+      }
+      if (!start_dt || !end_dt) {
+        status.textContent = "Select a date and start/end times.";
+        return;
+      }
+      if (new Date(end_dt) <= new Date(start_dt)) {
+        status.textContent = "End time must be after start time.";
+        return;
+      }
+      try {
+        await fetchJson("/nannies/me/availability", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ start_dt, end_dt, type })
+        });
+        status.textContent = "Saved.";
+        loadAvailability();
+      } catch (e) {
+        status.textContent = e.message || "Error";
+      }
+    });
+
+    const inactiveToggle = document.getElementById("inactiveToggle");
+    const inactiveStatus = document.getElementById("inactiveStatus");
+    const disableSections = (disabled) => {
+      document.getElementById("addAvailabilityBtn").disabled = disabled;
+      document.getElementById("applyRangeBtn").disabled = disabled;
+      document.getElementById("applyWeeklyBtn").disabled = disabled;
+    };
+
+    inactiveToggle.addEventListener("change", async () => {
+      inactiveStatus.textContent = "Saving...";
+      try {
+        const res = await fetchJson("/nannies/me/inactive", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ inactive: inactiveToggle.checked })
+        });
+        const isActive = !!res.is_active;
+        inactiveToggle.checked = !isActive;
+        inactiveStatus.textContent = inactiveToggle.checked ? "You are inactive." : "You are active.";
+        disableSections(inactiveToggle.checked);
+      } catch (e) {
+        inactiveStatus.textContent = e.message || "Error";
+      }
+    });
+
+    document.getElementById("applyRangeBtn").addEventListener("click", async () => {
+      const startDate = document.getElementById("rangeStartDate").value;
+      const endDate = document.getElementById("rangeEndDate").value;
+      const startTime = document.getElementById("rangeStartTime").value || null;
+      const endTime = document.getElementById("rangeEndTime").value || null;
+      const type = document.getElementById("rangeType").value;
+      const status = document.getElementById("rangeStatus");
+      status.textContent = "";
+      if (!startDate || !endDate) {
+        status.textContent = "Select start and end dates.";
+        return;
+      }
+      try {
+        const res = await fetchJson("/nannies/me/availability/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            start_date: startDate,
+            end_date: endDate,
+            start_time: startTime,
+            end_time: endTime,
+            type
+          })
+        });
+        status.textContent = `Created ${res.created || 0} entries.`;
+        loadAvailability();
+      } catch (e) {
+        status.textContent = e.message || "Error";
+      }
+    });
+
+    document.getElementById("applyWeeklyBtn").addEventListener("click", async () => {
+      const startDate = document.getElementById("weeklyStartDate").value;
+      const weeks = Number(document.getElementById("weeklyWeeks").value || "0");
+      const startTime = document.getElementById("weeklyStartTime").value || null;
+      const endTime = document.getElementById("weeklyEndTime").value || null;
+      const type = document.getElementById("weeklyType").value;
+      const status = document.getElementById("weeklyStatus");
+      status.textContent = "";
+      const weekdays = Array.from(document.querySelectorAll(".weekdayBox:checked")).map(x => Number(x.value));
+      if (!startDate) {
+        status.textContent = "Select start date.";
+        return;
+      }
+      if (!weeks || weeks < 1) {
+        status.textContent = "Weeks must be at least 1.";
+        return;
+      }
+      if (!weekdays.length) {
+        status.textContent = "Select at least one weekday.";
+        return;
+      }
+      try {
+        const res = await fetchJson("/nannies/me/availability/weekly", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            start_date: startDate,
+            weeks,
+            weekdays,
+            start_time: startTime,
+            end_time: endTime,
+            type
+          })
+        });
+        status.textContent = `Created ${res.created || 0} entries.`;
+        loadAvailability();
+      } catch (e) {
+        status.textContent = e.message || "Error";
+      }
+    });
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/nanny_home.html";
+    });
+
+    (async () => {
+      const me = await requireMe();
+      if (me.role !== "nanny") {
+        location.href = "/static/login.html";
+        return;
+      }
+      try {
+        const me2 = await fetchJson("/auth/me");
+        inactiveToggle.checked = !(me2?.is_active ?? true);
+        inactiveStatus.textContent = inactiveToggle.checked ? "You are inactive." : "You are active.";
+        disableSections(inactiveToggle.checked);
+      } catch {}
+      loadAvailability().catch(() => {});
+    })();
+  </script>
+</body>
+</html>

@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     CheckConstraint,
     Index,
+    Numeric,
 )
 from sqlalchemy.orm import relationship
 from app.db import Base
@@ -34,13 +35,20 @@ class User(Base):
     email = Column(String, nullable=False, unique=True)
     password_hash = Column(String, nullable=False)
 
+    is_admin = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+
     phone = Column(String, nullable=True)
+    phone_alt = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
 
     nickname = Column(String, nullable=True)
     last_initial = Column(String, nullable=True)
     profile_photo_url = Column(String, nullable=True)
+
+    is_admin = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
 
     admin_profile = relationship("AdminProfile", back_populates="user", uselist=False)
 
@@ -71,10 +79,13 @@ class Booking(Base):
     price_cents = Column(Integer, nullable=False)
     starts_at = Column(DateTime, nullable=True)
     ends_at = Column(DateTime, nullable=True)
+    start_dt = Column(String, nullable=True)
+    end_dt = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
     location_mode = Column(String, nullable=True)
     location_label = Column(String, nullable=True)
+    formatted_address = Column(String, nullable=True)
 
 
 class Review(Base):
@@ -152,6 +163,85 @@ class ParentProfile(Base):
     lng = Column(Float, nullable=True)
     location_confirmed_at = Column(DateTime, nullable=True)
     location_confirm_version = Column(String, nullable=True)
+    place_id = Column(String, nullable=True)
+    formatted_address = Column(String, nullable=True)
+    street = Column(String, nullable=True)
+    suburb = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    province = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    location_label = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    kids_count = Column(Integer, nullable=True)
+    kids_ages_json = Column(Text, nullable=True)
+    desired_tag_ids_json = Column(Text, nullable=True)
+    home_language_id = Column(Integer, nullable=True)
+    special_notes = Column(Text, nullable=True)
+    family_photo_url = Column(String, nullable=True)
+    residence_type = Column(String, nullable=True)
+    access_flags_json = Column(Text, nullable=True)
+
+
+class ParentFavorite(Base):
+    __tablename__ = "parent_favorites"
+
+    id = Column(Integer, primary_key=True)
+    parent_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("parent_user_id", "nanny_id", name="uq_parent_favorite"),
+        Index("ix_parent_favorites_parent_user_id", "parent_user_id"),
+        Index("ix_parent_favorites_nanny_id", "nanny_id"),
+    )
+
+
+class PricingSettings(Base):
+    __tablename__ = "pricing_settings"
+
+    id = Column(Integer, primary_key=True)
+    weekday_half_day = Column(Integer, nullable=False, default=250)
+    weekday_full_day = Column(Integer, nullable=False, default=300)
+    weekend_half_day = Column(Integer, nullable=False, default=300)
+    weekend_full_day = Column(Integer, nullable=False, default=350)
+    sleepover_add = Column(Integer, nullable=False, default=150)
+    sleepover_only_weekday = Column(Integer, nullable=False, default=400)
+    sleepover_only_weekend = Column(Integer, nullable=False, default=450)
+    sleepover_extra_hour_over14 = Column(Integer, nullable=False, default=50)
+    after17_weekday = Column(Integer, nullable=False, default=30)
+    after17_weekend = Column(Integer, nullable=False, default=35)
+    over9_weekday = Column(Integer, nullable=False, default=45)
+    over9_weekend = Column(Integer, nullable=False, default=50)
+    sleepover_start_hour = Column(Integer, nullable=False, default=14)
+    sleepover_end_hour = Column(Integer, nullable=False, default=7)
+    sleepover_after7_hourly = Column(Integer, nullable=False, default=45)
+    booking_fee_pct_1_5 = Column(Numeric(5, 4), nullable=False, default=0.30)
+    booking_fee_pct_6_10 = Column(Numeric(5, 4), nullable=False, default=0.27)
+    booking_fee_pct_10_plus = Column(Numeric(5, 4), nullable=False, default=0.25)
+
+
+class ParentLocation(Base):
+    __tablename__ = "parent_locations"
+
+    id = Column(Integer, primary_key=True)
+    parent_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    label = Column(String, nullable=True)
+    place_id = Column(String, nullable=True)
+    formatted_address = Column(String, nullable=True)
+    street = Column(String, nullable=True)
+    suburb = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    province = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    lat = Column(Float, nullable=True)
+    lng = Column(Float, nullable=True)
+    lat_round = Column(Float, nullable=True)
+    lng_round = Column(Float, nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
 # ---------------- MANY TO MANY ----------------
@@ -191,9 +281,33 @@ class NannyProfile(Base):
     nationality = Column(String, nullable=True)
 
     ethnicity = Column(String, nullable=True)
+    passport_number = Column(String, nullable=True)
+    passport_expiry = Column(String, nullable=True)
+    passport_document_url = Column(String, nullable=True)
+    work_permit = Column(Boolean, nullable=True)
+    work_permit_expiry = Column(String, nullable=True)
+    work_permit_document_url = Column(String, nullable=True)
+    waiver = Column(Boolean, nullable=True)
+    sa_id_number = Column(String, nullable=True)
+    sa_id_document_url = Column(String, nullable=True)
 
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
+
+    is_approved = Column(Integer, nullable=False, default=0)
+    approved_at = Column(String, nullable=True)
+    application_status = Column(String, nullable=True, default="pending")
+    admin_reason = Column(Text, nullable=True)
+    reviewed_at = Column(String, nullable=True)
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    formatted_address = Column(String, nullable=True)
+    suburb = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    province = Column(String, nullable=True)
+    postal_code = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    place_id = Column(String, nullable=True)
 
     nanny = relationship("Nanny", back_populates="profile")
 
@@ -203,5 +317,6 @@ class NannyProfile(Base):
 
 
 from app.models.admin_profile import AdminProfile
+from app.models.admin_invite import AdminInvite
 from app.models.audit_log import AuditLog
 from . import availability

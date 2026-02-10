@@ -22,8 +22,9 @@ class NannyReviewsResponse(BaseModel):
 
 
 from datetime import datetime, date
-from typing import List, Optional
-from pydantic import BaseModel, Field, conint, field_validator
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field, conint, field_validator, model_validator
+from pydantic import EmailStr
 from enum import Enum
 
 
@@ -47,11 +48,25 @@ class NannySearchResult(BaseModel):
     average_rating_12m: Optional[float] = None
     review_count_12m: int = 0
     distance_km: Optional[float] = None
+    location_hint: Optional[str] = None
 
 class SearchNanniesResponse(BaseModel):
     results: List[NannySearchResult] = []
     code: Optional[str] = None
     message: Optional[str] = None
+    parent_profile_complete: Optional[bool] = None
+
+class SearchNanniesRequest(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    max_distance_km: Optional[float] = None
+    min_rating: Optional[float] = None
+    tag_ids: Optional[List[int]] = None
+    qualification_ids: Optional[List[int]] = None
+    language_ids: Optional[List[int]] = None
+    min_age: Optional[int] = None
+    max_age: Optional[int] = None
+    use_preferences: bool = False
 
 class BookingSlot(BaseModel):
     starts_at: datetime
@@ -81,6 +96,90 @@ class CreateNannyProfileRequest(BaseModel):
     nationality: Optional[str] = None
     ethnicity: Optional[str] = None
 
+
+class NannyMeProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    phone_alt: Optional[str] = None
+    dob: Optional[date] = None
+    bio: Optional[str] = None
+    nationality: Optional[str] = None
+    ethnicity: Optional[str] = None
+    passport_number: Optional[str] = None
+    passport_expiry: Optional[str] = None
+    passport_document_url: Optional[str] = None
+    work_permit: Optional[bool] = None
+    work_permit_expiry: Optional[str] = None
+    work_permit_document_url: Optional[str] = None
+    waiver: Optional[bool] = None
+    sa_id_number: Optional[str] = None
+    sa_id_document_url: Optional[str] = None
+    tag_ids: Optional[List[int]] = None
+    language_ids: Optional[List[int]] = None
+
+
+class NannyMeProfileResponse(BaseModel):
+    nanny_id: int
+    user_id: int
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    phone_alt: Optional[str] = None
+    dob: Optional[date] = None
+    bio: Optional[str] = None
+    nationality: Optional[str] = None
+    ethnicity: Optional[str] = None
+    passport_number: Optional[str] = None
+    passport_expiry: Optional[str] = None
+    passport_document_url: Optional[str] = None
+    work_permit: Optional[bool] = None
+    work_permit_expiry: Optional[str] = None
+    work_permit_document_url: Optional[str] = None
+    waiver: Optional[bool] = None
+    sa_id_number: Optional[str] = None
+    sa_id_document_url: Optional[str] = None
+    tag_ids: List[int] = []
+    language_ids: List[int] = []
+    is_approved: bool
+    approved_at: Optional[str] = None
+    profile_photo_url: Optional[str] = None
+    formatted_address: Optional[str] = None
+    suburb: Optional[str] = None
+    city: Optional[str] = None
+    location_hint: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class NannyAvailabilityCreateRequest(BaseModel):
+    start_dt: str
+    end_dt: str
+    type: Literal["available", "blocked"]
+
+
+class NannyAvailabilityBulkRequest(BaseModel):
+    start_date: str
+    end_date: str
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    type: Literal["available", "blocked"]
+
+
+class NannyAvailabilityWeeklyRequest(BaseModel):
+    start_date: str
+    weeks: int
+    weekdays: List[int]
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    type: Literal["available", "blocked"]
+
+
+class NannyAvailabilityOut(BaseModel):
+    id: int
+    start_dt: Optional[str] = None
+    end_dt: Optional[str] = None
+    type: Optional[str] = None
+    notes: Optional[str] = None
+
 class SetParentAreaRequest(BaseModel):
     user_id: int
     area_id: int
@@ -96,6 +195,16 @@ class SetParentDefaultLocationRequest(BaseModel):
 class SetLocationRequest(BaseModel):
     lat: float
     lng: float
+    place_id: Optional[str] = None
+    formatted_address: Optional[str] = None
+    street: Optional[str] = None
+    suburb: Optional[str] = None
+    city: Optional[str] = None
+    province: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    label: Optional[str] = None
+    location_label: Optional[str] = None
 
 
 class SetLocationResponse(BaseModel):
@@ -126,18 +235,54 @@ class BookingCreateRequest(BaseModel):
     nanny_id: int
     starts_at: datetime
     ends_at: datetime
-    location_mode: LocationMode = LocationMode.default
-    location_label: str = Field(min_length=1, max_length=30)
+    location_id: int
+
+
+class BookingRequestCreate(BaseModel):
+    nanny_id: int
+    start_dt: str
+    end_dt: str
+    notes: Optional[str] = None
+    location_id: Optional[int] = None
+    sleepover: Optional[bool] = None
+
+
+class BookingRequestBulkCreate(BaseModel):
+    nanny_ids: List[int]
+    start_dt: str
+    end_dt: str
+    notes: Optional[str] = None
+    location_id: Optional[int] = None
+    sleepover: Optional[bool] = None
+
+
+class NannySearchByTimeRequest(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
+    start_dt: str
+    end_dt: str
+    max_distance_km: Optional[float] = 50
 
-    @field_validator("location_label")
-    @classmethod
-    def validate_location_label(cls, v: str) -> str:
-        label = v.strip()
-        if not label:
-            raise ValueError("location_label is required")
-        return label
+
+class BookingRequestReject(BaseModel):
+    reason: Optional[str] = None
+    assign_nanny_id: Optional[int] = None
+
+
+class AdminNannyApplicationUpdateRequest(BaseModel):
+    status: Literal["approved", "declined", "hold", "pending"]
+    reason: Optional[str] = None
+
+
+class AdminInviteCreateRequest(BaseModel):
+    email: EmailStr
+    reason: Optional[str] = None
+
+
+class AdminInviteAcceptRequest(BaseModel):
+    token: str
+    name: str
+    password: str
 
 
 class BookingOut(BaseModel):
@@ -149,11 +294,56 @@ class BookingOut(BaseModel):
     status: str
     location_mode: Optional[str] = None
     location_label: Optional[str] = None
+    formatted_address: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
 
     class Config:
         from_attributes = True
+
+
+class AuthUserOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    nanny_id: Optional[int] = None
+    is_admin: bool = False
+    is_active: bool = True
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: AuthUserOut
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    user: AuthUserOut
+
+
+class SignupRequest(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: Literal["parent", "nanny"]
+    phone: Optional[str] = None
+    phone_alt: Optional[str] = None
+    nationality: Optional[str] = None
+    ethnicity: Optional[str] = None
+    passport_number: Optional[str] = None
+    passport_expiry: Optional[str] = None
+    work_permit: Optional[bool] = None
+    work_permit_expiry: Optional[str] = None
+    waiver: Optional[bool] = None
+    sa_id_number: Optional[str] = None
+    sa_id_document_url: Optional[str] = None
 
 
 class BookingListResponse(BaseModel):
@@ -192,3 +382,93 @@ class ReviewOut(BaseModel):
         from_attributes = True
 
 
+class ParentProfileDetailsRequest(BaseModel):
+    phone: Optional[str] = None
+    kids_count: int
+    kids_ages: Optional[List[int]] = None
+    desired_tag_ids: Optional[List[int]] = None
+    home_language_id: Optional[int] = None
+    special_notes: Optional[str] = None
+    family_photo_url: Optional[str] = None
+    residence_type: Optional[str] = None
+    access_flags: Optional[List[str]] = None
+
+
+class ParentLocationBase(BaseModel):
+    label: Optional[str] = None
+    place_id: Optional[str] = None
+    formatted_address: Optional[str] = None
+    street: Optional[str] = None
+    suburb: Optional[str] = None
+    city: Optional[str] = None
+    province: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    lat: float
+    lng: float
+
+
+class ParentLocationCreateRequest(ParentLocationBase):
+    is_default: Optional[bool] = None
+
+
+class ParentLocationUpdateRequest(ParentLocationBase):
+    pass
+
+
+class ParentLocationOut(ParentLocationBase):
+    id: int
+    parent_user_id: int
+    is_default: bool
+    created_at: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_created_at(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return str(v)
+
+
+class SetDefaultLocationRequest(BaseModel):
+    make_default: bool = True
+
+
+class GeoReverseResponse(BaseModel):
+    place_id: Optional[str] = None
+    formatted_address: Optional[str] = None
+    street: Optional[str] = None
+    suburb: Optional[str] = None
+    city: Optional[str] = None
+    province: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    lat: float
+    lng: float
+
+
+class GeoReverseErrorResponse(BaseModel):
+    status: Optional[str] = None
+    error_message: Optional[str] = None
+    raw: Optional[dict] = None
+
+
+class AdminSetUserAdminRequest(BaseModel):
+    is_admin: bool
+
+
+class AdminSetNannyApprovalRequest(BaseModel):
+    approved: bool
+
+
+class AdminSetBookingRequestStatusRequest(BaseModel):
+    status: Literal["accepted", "rejected"]
+
+
+class AdminImpersonateRequest(BaseModel):
+    user_id: int

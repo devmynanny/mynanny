@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <link rel="stylesheet" href="/static/theme.css" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin</title>
@@ -117,161 +118,205 @@
       <h1>Admin</h1>
       <div style="display:flex; gap:15px; align-items:center;">
         <div class="userStatus">
-          <span class="dot green"></span>
-          <span id="loggedInUser"></span>
-        </div>
-        <button onclick="logout()">Sign out</button>
-      </div>
-    </div>
+          <!doctype html>
+          <html>
+          <head>
+  <link rel="stylesheet" href="/static/theme.css" />
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            <title>Admin</title>
+            <style>
+              body { font-family: system-ui, Arial, sans-serif; max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+              h1 { margin: 8px 0 18px; }
+              h2 { margin: 26px 0 10px; }
+              .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin: 10px 0; }
+              .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+              .muted { color: #666; }
+              input, button { padding: 8px 10px; }
+              button { cursor: pointer; }
+              .err { color: #b00020; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+              th { color: #555; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+              .topbar{ display:flex; align-items:center; justify-content:space-between; margin: 10px 0 20px 0; }
+              .btn.secondary{ background:#fff; border:1px solid #ccc; }
+              .section { margin-top: 18px; }
+            </style>
+          </head>
+          <body>
+            <div id="topbar" class="topbar"></div>
+            <h1>Admin</h1>
+            <div id="authMsg" class="err"></div>
 
-    <div id="navControls" class="row" style="gap:12px;">
-      <button id="btnClients" type="button">Manage clients</button>
-      <button id="btnNannies" type="button">Manage nannies</button>
-      <button id="btnAdmins" type="button">Manage admins</button>
-    </div>
+            <div id="adminContent" style="display:none;">
+              <div class="section" id="usersSection">
+                <h2>Users</h2>
+                <div class="row" style="margin-bottom:8px">
+                  <input id="userSearch" placeholder="Search by name or email" style="flex:1" />
+                  <button id="userSearchBtn" type="button">Search</button>
+                </div>
+                <div class="card">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Admin</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="usersTable"></tbody>
+                  </table>
+                </div>
+              </div>
 
-    <div id="clientsSection" style="display:none;">
-      <div class="row">
-        <input id="clientSearch" placeholder="Search clients by name, email or contact number" style="flex:1" />
-        <button id="clientSearchBtn" type="button">Search</button>
-      </div>
+              <div class="section" id="pendingNanniesSection">
+                <h2>Pending nannies</h2>
+                <div id="pendingNannies"></div>
+              </div>
 
-      <div class="card">
-        <div class="sectionTitle">Add client</div>
-        <div class="grid">
-          <div><label>Name</label><input id="newClientName" placeholder="Full name"></div>
-          <div><label>Email</label><input id="newClientEmail" placeholder="Email"></div>
-          <div><label>Contact number</label><input id="newClientPhone" placeholder="Phone"></div>
-        </div>
-        <div class="actions">
-          <button id="addClientBtn" type="button">Add client</button>
-          <span class="ok" id="addClientOk" style="display:none;">Saved</span>
-          <span class="err" id="addClientErr" style="display:none;"></span>
-        </div>
-      </div>
+              <div class="section" id="pendingBookingsSection">
+                <h2>Pending booking requests</h2>
+                <div id="pendingBookings"></div>
+              </div>
+            </div>
 
-      <div id="clientsResults"></div>
-    </div>
+            <script src="/static/app.js?v=2"></script>
+            <script>
+              let currentUser = null;
 
-    <div id="nanniesSection" style="display:none;">
-      <div class="row" style="justify-content: space-between;">
-        <div class="row" style="flex:1;">
-          <input id="nannySearch" placeholder="Search nannies by name or email" style="flex:1" oninput="applyFilters()" />
-        </div>
-        <button type="button" onclick="loadNannies()">Load nannies</button>
-      </div>
+              async function loadUsers(query = "") {
+                const q = query.trim();
+                const url = q ? `/admin/users?q=${encodeURIComponent(q)}` : "/admin/users";
+                const users = await fetchJson(url);
+                const tbody = document.getElementById("usersTable");
+                tbody.innerHTML = "";
+                users.forEach(u => {
+                  const tr = document.createElement("tr");
+                  const actionLabel = u.is_admin ? "Remove admin" : "Make admin";
+                  tr.innerHTML = `
+                    <td>${u.name || "-"}</td>
+                    <td>${u.email || "-"}</td>
+                    <td>${u.role || "-"}</td>
+                    <td>${u.is_admin ? "Yes" : "No"}</td>
+                    <td><button class="toggleAdminBtn" data-id="${u.id}" data-admin="${u.is_admin}">${actionLabel}</button></td>
+                  `;
+                  tbody.appendChild(tr);
+                });
+              }
 
-      <div class="row" style="flex-wrap: wrap; align-items:flex-start;">
-        <input id="fLocation" placeholder="Location" style="flex:1; min-width:220px" oninput="applyFilters()" />
-        <div style="min-width:220px;"><label>Race</label><div class="pillRow" id="fRaceBox"></div></div>
-        <div style="min-width:220px;"><label>Tags</label><div class="pillRow" id="fTagBox"></div></div>
-        <div style="min-width:220px;"><label>Qualifications</label><div class="pillRow" id="fQualBox"></div></div>
-        <div style="min-width:220px;"><label>Languages</label><div class="pillRow" id="fLangBox"></div></div>
-        <div style="display:flex; gap:10px; align-items:flex-end;">
-          <div><label>Min age</label><input id="fMinAge" type="number" style="width:120px" oninput="applyFilters()" /></div>
-          <div><label>Max age</label><input id="fMaxAge" type="number" style="width:120px" oninput="applyFilters()" /></div>
-          <button type="button" onclick="resetFilters()" style="height:42px;">Reset</button>
-        </div>
-      </div>
+              async function loadDashboard() {
+                const data = await fetchJson("/admin/dashboard");
+                const nanniesEl = document.getElementById("pendingNannies");
+                const bookingsEl = document.getElementById("pendingBookings");
+                nanniesEl.innerHTML = "";
+                bookingsEl.innerHTML = "";
 
-      <div class="card">
-        <div class="sectionTitle">Add nanny</div>
-        <div class="grid">
-          <div><label>Name</label><input id="newNannyName" placeholder="Full name"></div>
-          <div><label>Email</label><input id="newNannyEmail" placeholder="Email"></div>
-          <div><label>Contact number</label><input id="newNannyPhone" placeholder="Phone"></div>
-        </div>
-        <div class="actions">
-          <button id="addNannyBtn" type="button">Add nanny</button>
-          <span class="ok" id="addNannyOk" style="display:none;">Saved</span>
-          <span class="err" id="addNannyErr" style="display:none;"></span>
-        </div>
-      </div>
+                (data.pending_nannies || []).forEach(n => {
+                  const card = document.createElement("div");
+                  card.className = "card";
+                  card.innerHTML = `
+                    <div><strong>${n.name || "Nanny"}</strong></div>
+                    <div class="muted">${n.email || ""}</div>
+                    <div class="row" style="margin-top:8px">
+                      <button class="approveNannyBtn" data-id="${n.nanny_id}">Approve</button>
+                      <button class="rejectNannyBtn" data-id="${n.nanny_id}">Reject</button>
+                    </div>
+                  `;
+                  nanniesEl.appendChild(card);
+                });
 
-      <div id="results"></div>
-    </div>
+                (data.pending_booking_requests || []).forEach(r => {
+                  const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt ? new Date(r.start_dt).toLocaleString() : "-");
+                  const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt ? new Date(r.end_dt).toLocaleString() : "-");
+                  const parentLine = r.parent_email ? r.parent_email : (r.parent_name || "Parent");
+                  const loc = r.location_label || "-";
+                  const card = document.createElement("div");
+                  card.className = "card";
+                  card.innerHTML = `
+                    <div><strong>${parentLine}</strong> → <strong>${r.nanny_name || "Nanny"}</strong></div>
+                    <div class="muted">${start} to ${end}</div>
+                    <div class="muted">${loc}</div>
+                    <div class="row" style="margin-top:8px">
+                      <button class="approveBookingBtn" data-id="${r.id}">Approve</button>
+                      <button class="rejectBookingBtn" data-id="${r.id}">Reject</button>
+                    </div>
+                  `;
+                  bookingsEl.appendChild(card);
+                });
+              }
 
-    <div id="adminsSection" style="display:none;">
-      <div class="row">
-        <input id="adminSearch" placeholder="Search admins by name or email" style="flex:1" />
-        <button id="adminSearchBtn" type="button">Search</button>
-      </div>
+              async function init() {
+                try {
+                  currentUser = await requireMe();
+                } catch (e) {
+                  document.getElementById("authMsg").textContent = e.message || "Not authorized";
+                  setTimeout(() => { window.location.href = "/static/login.html"; }, 1000);
+                  return;
+                }
 
-      <div class="card">
-        <div class="sectionTitle">Add admin</div>
-        <div class="grid">
-          <div><label>Email</label><input id="newAdminEmail" placeholder="Email"></div>
-          <div><label>Password</label><input id="newAdminPassword" placeholder="Temporary password"></div>
-        </div>
-        <div class="actions">
-          <button id="addAdminBtn" type="button">Add admin</button>
-          <span class="ok" id="addAdminOk" style="display:none;">Saved</span>
-          <span class="err" id="addAdminErr" style="display:none;"></span>
-        </div>
-      </div>
+                if (!currentUser?.is_admin) {
+                  document.getElementById("authMsg").textContent = "Not authorized";
+                  setTimeout(() => { window.location.href = "/static/login.html"; }, 1000);
+                  return;
+                }
 
-      <div id="adminsResults"></div>
-    </div>
-    </div>
-  </div>
+                document.getElementById("adminContent").style.display = "block";
+                document.getElementById("authMsg").textContent = "";
+                await loadUsers("");
+                await loadDashboard();
+              }
 
-
-  <script>
-let renderToken = 0;
-            function showSection(name) {
-              const sections = ["clientsSection","nanniesSection","adminsSection"];
-              sections.forEach(id => document.getElementById(id).style.display = (id === name ? "block" : "none"));
-              document.getElementById("results").innerHTML = "";
-              document.getElementById("clientsResults").innerHTML = "";
-              document.getElementById("adminsResults").innerHTML = "";
-            }
-
-            document.addEventListener("DOMContentLoaded", () => {
-              document.getElementById("btnClients").addEventListener("click", () => showSection("clientsSection"));
-              document.getElementById("btnNannies").addEventListener("click", () => showSection("nanniesSection"));
-              document.getElementById("btnAdmins").addEventListener("click", () => showSection("adminsSection"));
-            });
-
-            let clientData = [];
-
-            async function loadClients() {
-              if (!requireLogin()) return;
-              const data = await fetchJson("/admin/parents", { headers: authHeaders() });
-              clientData = data || [];
-              renderClients(clientData);
-            }
-
-            function renderClients(list) {
-              const el = document.getElementById("clientsResults");
-              el.innerHTML = "";
-              if (!list.length) { el.innerHTML = `<p class="muted">No results.</p>`; return; }
-
-              list.forEach(p => {
-                const div = document.createElement("div");
-                div.className = "card";
-                div.innerHTML = `
-                  <div class="topLine">
-                    <div><strong>${escapeHtml(p.name)} (${escapeHtml(p.email)})</strong></div>
-                    <div class="small">User ID: ${p.user_id}</div>
-                  </div>
-                  <div class="muted">Phone: ${escapeHtml(p.phone ?? "")}</div>
-                `;
-                el.appendChild(div);
+              document.getElementById("userSearchBtn").addEventListener("click", () => {
+                const q = document.getElementById("userSearch").value || "";
+                loadUsers(q).catch(e => { document.getElementById("authMsg").textContent = e.message; });
               });
-            }
 
-            function filterClients() {
-              const q = (document.getElementById("clientSearch").value || "").toLowerCase().trim();
-              if (!q) return renderClients(clientData);
-
-              const filtered = clientData.filter(p => {
-                return (p.name || "").toLowerCase().includes(q)
-                  || (p.email || "").toLowerCase().includes(q)
-                  || (p.phone || "").toLowerCase().includes(q);
+              document.getElementById("usersTable").addEventListener("click", (e) => {
+                const btn = e.target.closest(".toggleAdminBtn");
+                if (!btn) return;
+                const userId = Number(btn.dataset.id);
+                const isAdmin = btn.dataset.admin === "true";
+                fetchJson(`/admin/users/${userId}/admin`, {
+                  method: "PATCH",
+                  body: JSON.stringify({ is_admin: !isAdmin })
+                })
+                  .then(() => loadUsers(document.getElementById("userSearch").value || ""))
+                  .catch(e => { document.getElementById("authMsg").textContent = e.message; });
               });
 
-              renderClients(filtered);
-            }
+              document.getElementById("pendingNannies").addEventListener("click", (e) => {
+                const approve = e.target.closest(".approveNannyBtn");
+                const reject = e.target.closest(".rejectNannyBtn");
+                const id = approve?.dataset?.id || reject?.dataset?.id;
+                if (!id) return;
+                const approved = !!approve;
+                fetchJson(`/admin/nannies/${id}/approval`, {
+                  method: "PATCH",
+                  body: JSON.stringify({ approved })
+                })
+                  .then(() => loadDashboard())
+                  .catch(e => { document.getElementById("authMsg").textContent = e.message; });
+              });
+
+              document.getElementById("pendingBookings").addEventListener("click", (e) => {
+                const approve = e.target.closest(".approveBookingBtn");
+                const reject = e.target.closest(".rejectBookingBtn");
+                const id = approve?.dataset?.id || reject?.dataset?.id;
+                if (!id) return;
+                const path = approve ? "approve" : "reject";
+                fetchJson(`/admin/booking-requests/${id}/${path}`, {
+                  method: "POST"
+                })
+                  .then(() => loadDashboard())
+                  .catch(e => { document.getElementById("authMsg").textContent = e.message; });
+              });
+
+              init();
+            </script>
+          </body>
+          </html>
 
             document.addEventListener("DOMContentLoaded", async () => {
               document.getElementById("clientSearchBtn").addEventListener("click", async () => {
@@ -400,6 +445,22 @@ let renderToken = 0;
       return true;
     }
 
+    async function requireAdminRole() {
+      if (!requireLogin()) return false;
+      try {
+        const me = await fetchJson("/auth/me", { headers: authHeaders() });
+        if (me.role !== "admin") {
+          alert("Admin access required");
+          logout();
+          return false;
+        }
+        return true;
+      } catch (e) {
+        logout();
+        return false;
+      }
+    }
+
     async function login() {
       const email = (document.getElementById("email").value || "").trim().toLowerCase();
       const password = document.getElementById("password").value || "";
@@ -430,6 +491,10 @@ let renderToken = 0;
 
       setAuthUI(true, email);
       resetInactivityTimer();
+      if (await requireAdminRole()) {
+        loadBookingRequests();
+        loadPendingNannies();
+      }
     }
 
     ["click", "mousemove", "keydown", "scroll", "touchstart"].forEach(evt =>
@@ -446,6 +511,12 @@ let renderToken = 0;
         authToken = token;
         setAuthUI(true, email);
         resetInactivityTimer();
+        requireAdminRole().then(ok => {
+          if (ok) {
+            loadBookingRequests();
+            loadPendingNannies();
+          }
+        });
       } else {
         setAuthUI(false);
       }
@@ -454,7 +525,101 @@ let renderToken = 0;
     document.addEventListener("DOMContentLoaded", () => {
       const btn = document.getElementById("loginBtn");
       if (btn) btn.addEventListener("click", login);
+      const refreshBookingRequests = document.getElementById("refreshBookingRequests");
+      if (refreshBookingRequests) refreshBookingRequests.addEventListener("click", loadBookingRequests);
+      const refreshNannyApprovals = document.getElementById("refreshNannyApprovals");
+      if (refreshNannyApprovals) refreshNannyApprovals.addEventListener("click", loadPendingNannies);
     });
+
+    async function loadBookingRequests() {
+      if (!await requireAdminRole()) return;
+      const list = document.getElementById("bookingRequestsList");
+      list.textContent = "Loading...";
+      try {
+        const data = await fetchJson("/admin/booking-requests?status=tbc", { headers: authHeaders() });
+        const items = data.results || [];
+        if (!items.length) {
+          list.textContent = "No pending booking requests.";
+          return;
+        }
+        list.innerHTML = "";
+        items.forEach(r => {
+          const div = document.createElement("div");
+          div.className = "card";
+          div.innerHTML = `
+            <div class="topLine">
+              <div><strong>${escapeHtml(r.parent_name)} → ${escapeHtml(r.nanny_name)}</strong></div>
+              <div class="small">Request #${r.id}</div>
+            </div>
+            <div class="small">${
+              (window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-"))
+            } to ${
+              (window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-"))
+            }</div>
+            <div class="small">${escapeHtml(r.location_label || "Location")}, ${escapeHtml(r.suburb || "")}${r.suburb && r.city ? ", " : ""}${escapeHtml(r.city || "")}</div>
+            <div class="actions">
+              <button type="button" data-action="approve">Approve</button>
+              <button type="button" data-action="reject">Reject</button>
+            </div>
+          `;
+          div.querySelector("button[data-action='approve']").addEventListener("click", async () => {
+            await fetchJson(`/admin/booking-requests/${r.id}/approve`, { method: "POST", headers: authHeaders() });
+            loadBookingRequests();
+          });
+          div.querySelector("button[data-action='reject']").addEventListener("click", async () => {
+            const reason = prompt("Reason for rejection?") || "";
+            const altNanny = prompt("Assign another nanny? Enter nanny ID or leave blank") || "";
+            const assignId = altNanny.trim() ? Number(altNanny.trim()) : null;
+            await fetchJson(`/admin/booking-requests/${r.id}/reject`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ reason, assign_nanny_id: Number.isFinite(assignId) ? assignId : null })
+            });
+            loadBookingRequests();
+          });
+          list.appendChild(div);
+        });
+      } catch (e) {
+        list.textContent = "Error loading requests";
+      }
+    }
+
+    async function loadPendingNannies() {
+      if (!await requireAdminRole()) return;
+      const list = document.getElementById("pendingNanniesList");
+      list.textContent = "Loading...";
+      try {
+        const data = await fetchJson("/admin/nannies/pending", { headers: authHeaders() });
+        const items = data.results || [];
+        if (!items.length) {
+          list.textContent = "No pending nannies.";
+          return;
+        }
+        list.innerHTML = "";
+        items.forEach(n => {
+          const div = document.createElement("div");
+          div.className = "card";
+          const statusLine = n.application_status ? ` | ${escapeHtml(n.application_status)}` : "";
+          div.innerHTML = `
+            <div class="topLine">
+              <div><strong>${escapeHtml(n.name)} (${escapeHtml(n.email)})</strong></div>
+              <div class="small">Nanny #${n.nanny_id}</div>
+            </div>
+            <div class="small">${escapeHtml(n.suburb || "")}${n.suburb && n.city ? ", " : ""}${escapeHtml(n.city || "")}${statusLine}</div>
+            <div class="actions">
+              <button type="button" data-action="view" data-user-id="${n.user_id}">View application</button>
+            </div>
+          `;
+          div.querySelector("button[data-action='view']").addEventListener("click", async (e) => {
+            const userId = e.target.dataset.userId;
+            window.location.href = `/static/admin_user.html?user_id=${encodeURIComponent(userId)}`;
+          });
+          list.appendChild(div);
+        });
+      } catch (e) {
+        list.textContent = "Error loading nannies";
+      }
+    }
 
     async function fetchJson(url, opts = {}) {
       const res = await fetch(url, opts);

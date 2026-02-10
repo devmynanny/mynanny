@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Login</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, Arial; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 44px; margin: 0 0 18px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
+    label { display: block; margin: 12px 0 6px; font-weight: 600; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; font-size: 16px; }
+    button { margin-top: 14px; width: 100%; padding: 12px; border: 1px solid #222; border-radius: 10px; font-size: 16px; cursor: pointer; }
+    .row { margin-top: 12px; display: flex; justify-content: space-between; gap: 12px; }
+    .err { color: #b00020; margin-top: 10px; white-space: pre-wrap; }
+    .muted { color: #555; font-size: 14px; }
+    a { color: #0b57d0; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Login</h1>
+
+  <div class="card">
+    <label>Email</label>
+    <input id="email" type="email" autocomplete="email" placeholder="you@email.com" />
+
+    <label>Password</label>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Your password" />
+
+    <button id="loginBtn">Login</button>
+
+    <div class="row">
+      <div class="muted">
+        No account?
+        <a href="/static/signup.html">Create account</a>
+      </div>
+      <div class="muted">
+        <a href="#" id="logoutLink" style="display:none">Clear token</a>
+      </div>
+    </div>
+
+    <div id="err" class="err"></div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const errEl = document.getElementById("err");
+    const logoutLink = document.getElementById("logoutLink");
+
+    async function tryAutoRoute() {
+      const token = getToken();
+      if (!token) return;
+      logoutLink.style.display = "inline";
+      try {
+        const u = await fetchJson("/me");
+        localStorage.setItem("is_admin", String(!!u.is_admin));
+        if (u.is_admin) {
+          window.location.href = "/static/admin_dashboard.html";
+          return;
+        }
+        routeByRole(u.role);
+      } catch {
+        clearToken();
+      }
+    }
+
+    logoutLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      clearToken();
+      location.reload();
+    });
+
+    document.getElementById("loginBtn").addEventListener("click", async () => {
+      errEl.textContent = "";
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+
+      try {
+        const res = await fetchJson("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+        setToken(res.access_token);
+        const u = await fetchJson("/me");
+        localStorage.setItem("is_admin", String(!!u.is_admin));
+        if (u.is_admin) {
+          window.location.href = "/static/admin_dashboard.html";
+          return;
+        }
+        routeByRole(u.role);
+      } catch (e) {
+        errEl.textContent = e.message;
+      }
+    });
+
+    tryAutoRoute();
+  </script>
+</body>
+</html>

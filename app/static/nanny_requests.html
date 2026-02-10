@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Booking Requests</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
+    .muted{color:#666}
+    .actions{display:flex;gap:8px;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <h1>Booking requests</h1>
+    <button class="btn back-btn" id="backBtn" type="button">Back to operations</button>
+  </div>
+
+  <div id="bookingRequestsList"></div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    function formatName(fullName) {
+      const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+      if (parts.length <= 1) return parts[0] || "";
+      const first = parts[0];
+      const lastInitial = parts[parts.length - 1][0] || "";
+      return `${first} ${lastInitial}.`;
+    }
+
+    async function loadBookingRequests() {
+      const data = await fetchJson("/nannies/me/booking-requests");
+      const list = document.getElementById("bookingRequestsList");
+      list.innerHTML = "";
+      const items = data.results || [];
+      if (!items.length) {
+        list.innerHTML = "<div class=\"muted\">No booking requests yet.</div>";
+        return;
+      }
+      items.forEach(r => {
+        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
+        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const loc = (r.location_label && r.location_address)
+          ? `${r.location_label} - ${r.location_address}`
+          : (r.location_label || r.location_address || "-");
+        const parentName = formatName(r.parent_name || "Parent");
+        const jobId = r.group_id || r.id;
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div><strong>${parentName || "Parent"}</strong> (${r.parent_email || "-"})</div>
+          <div class="muted">Job ID: ${jobId}</div>
+          <div class="muted">${start} to ${end}</div>
+          <div class="muted">Location: ${loc}</div>
+          ${r.notes ? `<div class="muted">Booking notes: ${r.notes}</div>` : ""}
+          <div class="muted">Status: ${r.status || "-"}</div>
+          ${r.status === "tbc" || r.status === "pending_admin" ? `<div class="actions"><button class="btn acceptBtn" data-id="${r.id}">Accept booking</button></div>` : ""}
+        `;
+        list.appendChild(card);
+      });
+      list.querySelectorAll(".acceptBtn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            await fetchJson(`/nannies/me/booking-requests/${btn.dataset.id}/accept`, { method: "POST" });
+            loadBookingRequests().catch(() => {});
+          } catch (e) {
+            btn.disabled = false;
+            alert(e.message || "Failed to accept booking");
+          }
+        });
+      });
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/nanny_home.html";
+    });
+
+    (async () => {
+      const me = await requireMe();
+      if (me.role !== "nanny") {
+        location.href = "/static/login.html";
+        return;
+      }
+      loadBookingRequests().catch(() => {});
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin Pricing</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin:10px 0 20px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+    label{font-size:12px;color:#666}
+    input{padding:10px;border-radius:10px;border:1px solid #ccc;width:100%}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+    .muted{color:#666}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <h1>Pricing Settings</h1>
+    <button class="btn back-btn" id="backBtn" type="button">Back to dashboard</button>
+  </div>
+
+  <div class="card">
+    <h3>Base Rates</h3>
+    <div class="grid">
+      <div><label>Weekday half day</label><input id="weekday_half_day" type="number"></div>
+      <div><label>Weekday full day</label><input id="weekday_full_day" type="number"></div>
+      <div><label>Weekend half day</label><input id="weekend_half_day" type="number"></div>
+      <div><label>Weekend full day</label><input id="weekend_full_day" type="number"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Sleepover</h3>
+    <div class="grid">
+      <div><label>Sleepover add</label><input id="sleepover_add" type="number"></div>
+      <div><label>Sleepover only weekday</label><input id="sleepover_only_weekday" type="number"></div>
+      <div><label>Sleepover only weekend</label><input id="sleepover_only_weekend" type="number"></div>
+      <div><label>Extra hour over 14</label><input id="sleepover_extra_hour_over14" type="number"></div>
+      <div><label>Sleepover start hour</label><input id="sleepover_start_hour" type="number"></div>
+      <div><label>Sleepover end hour</label><input id="sleepover_end_hour" type="number"></div>
+      <div><label>After 07:00 hourly</label><input id="sleepover_after7_hourly" type="number"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>After-hours & Over 9 Hours</h3>
+    <div class="grid">
+      <div><label>After 17:00 weekday</label><input id="after17_weekday" type="number"></div>
+      <div><label>After 17:00 weekend</label><input id="after17_weekend" type="number"></div>
+      <div><label>Over 9 hours weekday</label><input id="over9_weekday" type="number"></div>
+      <div><label>Over 9 hours weekend</label><input id="over9_weekend" type="number"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Booking Fees</h3>
+    <div class="grid">
+      <div><label>1–5 days (%)</label><input id="booking_fee_pct_1_5" type="number" step="0.01"></div>
+      <div><label>6–10 days (%)</label><input id="booking_fee_pct_6_10" type="number" step="0.01"></div>
+      <div><label>10+ days (%)</label><input id="booking_fee_pct_10_plus" type="number" step="0.01"></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="saveBtn" type="button">Save</button>
+  </div>
+  <div class="muted" id="status"></div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const fields = [
+      "weekday_half_day","weekday_full_day","weekend_half_day","weekend_full_day",
+      "sleepover_add","sleepover_only_weekday","sleepover_only_weekend","sleepover_extra_hour_over14",
+      "after17_weekday","after17_weekend","over9_weekday","over9_weekend",
+      "sleepover_start_hour","sleepover_end_hour","sleepover_after7_hourly",
+      "booking_fee_pct_1_5","booking_fee_pct_6_10","booking_fee_pct_10_plus"
+    ];
+
+    async function loadPricing() {
+      const data = await fetchJson("/admin/pricing");
+      fields.forEach(f => {
+        const el = document.getElementById(f);
+        if (!el) return;
+        if (String(f).includes("booking_fee_pct")) {
+          el.value = Number(data[f] * 100).toFixed(2);
+        } else {
+          el.value = data[f];
+        }
+      });
+    }
+
+    async function savePricing() {
+      const payload = {};
+      fields.forEach(f => {
+        const el = document.getElementById(f);
+        if (!el) return;
+        let val = Number(el.value);
+        if (String(f).includes("booking_fee_pct")) {
+          val = val / 100;
+        }
+        payload[f] = val;
+      });
+      await fetchJson("/admin/pricing", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      document.getElementById("status").textContent = "Saved.";
+    }
+
+    document.getElementById("saveBtn").addEventListener("click", () => {
+      savePricing().catch(e => {
+        document.getElementById("status").textContent = e.message || "Error";
+      });
+    });
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/admin_dashboard.html";
+    });
+
+    (async () => {
+      const me = await requireMe();
+      if (!me?.is_admin) { location.href = "/static/login.html"; return; }
+      loadPricing().catch(() => {});
+    })();
+  </script>
+</body>
+</html>

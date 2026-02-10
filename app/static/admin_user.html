@@ -1,0 +1,273 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>User admin</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 900px; margin: 28px auto; padding: 0 16px; }
+    h1 { margin: 8px 0 18px; }
+    h2 { margin: 22px 0 10px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .btn{ padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer }
+    .muted { color:#666; }
+    .err { color:#b00020; }
+  </style>
+</head>
+<body>
+  <div class="row" style="margin-bottom:10px;">
+    <button class="btn back-btn" id="backBtn" type="button">Back</button>
+  </div>
+  <h1>User admin</h1>
+  <div id="authMsg" class="err"></div>
+
+  <div class="card" id="profileSummary">
+    <h2>Profile summary</h2>
+    <div id="profileSummaryBody" class="muted">Loading...</div>
+  </div>
+
+  <div class="card" id="bookingStats">
+    <h2>Booking stats</h2>
+    <div id="bookingStatsBody" class="muted">Loading...</div>
+  </div>
+
+  <div class="card" id="revenue">
+    <h2>Revenue</h2>
+    <div id="revenueBody" class="muted">Loading...</div>
+  </div>
+
+  <div class="card" id="editProfile">
+    <h2>Edit profile</h2>
+    <button class="btn" id="editProfileBtn" type="button">Edit profile</button>
+  </div>
+
+  <div class="card" id="nannyApplication" style="display:none;">
+    <h2>Nanny application</h2>
+    <div id="nannyApplicationBody" class="muted">Loading...</div>
+    <div style="margin-top:12px;">
+      <label class="muted">Decision reason (optional)</label>
+      <textarea id="nannyDecisionReason" style="width:100%; min-height:70px;"></textarea>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" id="nannyApproveBtn" type="button">Approve</button>
+      <button class="btn" id="nannyHoldBtn" type="button">Hold</button>
+      <button class="btn" id="nannyDeclineBtn" type="button">Decline</button>
+      <span id="nannyDecisionStatus" class="muted"></span>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const userId = params.get("user_id");
+    const authMsg = document.getElementById("authMsg");
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      window.location.href = "/static/admin_dashboard.html";
+    });
+
+    async function ensureAdmin() {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        window.location.href = "/static/login.html";
+        return false;
+      }
+      const res = await fetch("/admin/me", {
+        headers: { "Authorization": "Bearer " + token }
+      });
+      if (!res.ok) {
+        authMsg.textContent = "Not authorized";
+        setTimeout(() => {
+          window.location.href = "/static/parent_home.html";
+        }, 1000);
+        return false;
+      }
+      return true;
+    }
+
+    async function loadUserInfo() {
+      const user = await fetchJson(`/admin/users/${userId}`);
+      return user;
+    }
+
+    async function loadParentProfile() {
+      return await fetchJson(`/admin/parents/${userId}/profile`);
+    }
+
+    async function loadNannyProfile() {
+      return await fetchJson(`/admin/nannies/${userId}/profile`);
+    }
+
+    async function loadBookingStats() {
+      return await fetchJson(`/admin/users/${userId}/booking-stats`);
+    }
+
+    async function loadRevenue() {
+      return await fetchJson(`/admin/users/${userId}/revenue`);
+    }
+
+    function renderProfileSummary(user, profile) {
+      const lines = [];
+      lines.push(`<div><strong>Name:</strong> ${profile?.name || "-"}</div>`);
+      lines.push(`<div><strong>Email:</strong> ${user.email || "-"}</div>`);
+      const phoneParts = [];
+      if (profile?.phone) phoneParts.push(profile.phone);
+      if (profile?.phone_alt) phoneParts.push(profile.phone_alt);
+      const phoneLine = phoneParts.length ? phoneParts.join(" / ") : "-";
+      lines.push(`<div><strong>Phone:</strong> ${phoneLine}</div>`);
+      if (user.role === "parent") {
+        lines.push(`<div><strong>Kids count:</strong> ${profile?.kids_count ?? "-"}</div>`);
+      }
+      const loc = [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
+      lines.push(`<div><strong>Location:</strong> ${loc}</div>`);
+      document.getElementById("profileSummaryBody").innerHTML = lines.join("");
+    }
+
+    function renderNannyApplication(user, profile) {
+      const card = document.getElementById("nannyApplication");
+      const body = document.getElementById("nannyApplicationBody");
+      const reasonInput = document.getElementById("nannyDecisionReason");
+      if (user.role !== "nanny") {
+        card.style.display = "none";
+        return;
+      }
+      card.style.display = "block";
+      const tags = (profile?.tags || []).map(t => t.name).join(", ") || "-";
+      const langs = (profile?.languages || []).map(t => t.name).join(", ") || "-";
+      const quals = (profile?.qualifications || []).map(t => t.name).join(", ") || "-";
+      const loc = [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
+      const status = profile?.application_status || "pending";
+      const reason = profile?.admin_reason || "-";
+      if (reasonInput) reasonInput.value = profile?.admin_reason || "";
+      body.innerHTML = [
+        `<div><strong>Status:</strong> ${status}</div>`,
+        `<div><strong>Reason:</strong> ${reason}</div>`,
+        `<div><strong>DOB:</strong> ${profile?.date_of_birth || "-"}</div>`,
+        `<div><strong>Nationality:</strong> ${profile?.nationality || "-"}</div>`,
+        `<div><strong>Ethnicity:</strong> ${profile?.ethnicity || "-"}</div>`,
+        `<div><strong>Tags:</strong> ${tags}</div>`,
+        `<div><strong>Languages:</strong> ${langs}</div>`,
+        `<div><strong>Qualifications:</strong> ${quals}</div>`,
+        `<div><strong>Location:</strong> ${loc}</div>`,
+        `<div><strong>Bio:</strong> ${profile?.bio || "-"}</div>`
+      ].join("");
+    }
+
+    function renderBookingStats(user, stats) {
+      const lines = [];
+      if (user.role === "parent") {
+        lines.push(`<div>Bookings made: ${stats.bookings_made_count ?? 0}</div>`);
+      } else if (user.role === "nanny") {
+        lines.push(`<div>Bookings attended: ${stats.bookings_attended_count ?? 0}</div>`);
+      }
+      lines.push(`<div>Total bookings: ${stats.total_bookings_count ?? 0}</div>`);
+      document.getElementById("bookingStatsBody").innerHTML = lines.join("");
+    }
+
+    function renderRevenue(data) {
+      const total = data?.total_revenue ?? 0;
+      document.getElementById("revenueBody").innerHTML = `Total revenue: R${total}`;
+    }
+
+    async function init() {
+      if (!userId) {
+        authMsg.textContent = "Missing user_id";
+        return;
+      }
+      const ok = await ensureAdmin();
+      if (!ok) return;
+
+      const user = await loadUserInfo();
+      let profile = null;
+      if (user.role === "parent") {
+        profile = await loadParentProfile();
+      } else if (user.role === "nanny") {
+        profile = await loadNannyProfile();
+      }
+
+      renderProfileSummary(user, profile || {});
+      renderNannyApplication(user, profile || {});
+
+      const stats = await loadBookingStats();
+      renderBookingStats(user, stats);
+
+      const revenue = await loadRevenue();
+      renderRevenue(revenue);
+
+      const editBtn = document.getElementById("editProfileBtn");
+      editBtn.addEventListener("click", async () => {
+        try {
+          const resp = await fetchJson("/admin/impersonate", {
+            method: "POST",
+            body: JSON.stringify({ user_id: Number(userId) })
+          });
+          if (resp?.access_token) {
+            sessionStorage.setItem("impersonation_token", resp.access_token);
+          }
+          if (user.role === "parent") {
+            window.location.href = "/static/parent_profile.html?admin=1";
+          } else if (user.role === "nanny") {
+            window.location.href = "/static/nanny.html?admin=1";
+          }
+        } catch (e) {
+          authMsg.textContent = e.message || "Error";
+        }
+      });
+
+      if (user.role === "nanny" && profile?.nanny_id) {
+        const reasonEl = document.getElementById("nannyDecisionReason");
+        const statusEl = document.getElementById("nannyDecisionStatus");
+        document.getElementById("nannyApproveBtn").addEventListener("click", async () => {
+          statusEl.textContent = "Saving...";
+          try {
+            const res = await fetchJson(`/admin/nannies/${profile.nanny_id}/application`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: "approved", reason: reasonEl.value })
+            });
+            statusEl.textContent = "Approved";
+            profile.application_status = res.application_status;
+            profile.admin_reason = res.admin_reason;
+            renderNannyApplication(user, profile);
+          } catch (e) {
+            statusEl.textContent = e.message || "Error";
+          }
+        });
+        document.getElementById("nannyHoldBtn").addEventListener("click", async () => {
+          statusEl.textContent = "Saving...";
+          try {
+            const res = await fetchJson(`/admin/nannies/${profile.nanny_id}/application`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: "hold", reason: reasonEl.value })
+            });
+            statusEl.textContent = "On hold";
+            profile.application_status = res.application_status;
+            profile.admin_reason = res.admin_reason;
+            renderNannyApplication(user, profile);
+          } catch (e) {
+            statusEl.textContent = e.message || "Error";
+          }
+        });
+        document.getElementById("nannyDeclineBtn").addEventListener("click", async () => {
+          statusEl.textContent = "Saving...";
+          try {
+            const res = await fetchJson(`/admin/nannies/${profile.nanny_id}/application`, {
+              method: "PATCH",
+              body: JSON.stringify({ status: "declined", reason: reasonEl.value })
+            });
+            statusEl.textContent = "Declined";
+            profile.application_status = res.application_status;
+            profile.admin_reason = res.admin_reason;
+            renderNannyApplication(user, profile);
+          } catch (e) {
+            statusEl.textContent = e.message || "Error";
+          }
+        });
+      }
+    }
+
+    init().catch(e => { authMsg.textContent = e.message || "Error"; });
+  </script>
+</body>
+</html>

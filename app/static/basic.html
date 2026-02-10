@@ -1,0 +1,338 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <title>Nanny App Basic UI</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 12px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    input, select, button { padding: 8px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin: 10px 0; }
+    .muted { color: #666; font-size: 12px; }
+    pre { background: #f6f6f6; padding: 12px; border-radius: 10px; overflow: auto; }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin: 10px 0 20px 0;
+    }
+    .btn.secondary{
+      background:#fff;
+      border:1px solid #ccc;
+    }
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+    .modal{background:#fff;border-radius:12px;border:1px solid #ddd;width:min(520px,100%);padding:16px}
+    .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <h2>Basic Click Through</h2>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="muted">Logged in as</div>
+        <div id="who" class="muted">-</div>
+      </div>
+      <div>
+        <div class="muted">Max distance km</div>
+        <input id="maxDist" type="number" step="0.1" placeholder="optional" />
+      </div>
+      <div>
+        <div class="muted">Min rating</div>
+        <input id="minRating" type="number" step="0.1" placeholder="optional" />
+      </div>
+      <div style="align-self:end">
+        <button onclick="search()">Search nannies</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="card">
+    <h3>Create booking</h3>
+    <div class="row">
+      <div>
+        <div class="muted">Nanny ID</div>
+        <input id="nannyId" type="number" />
+      </div>
+      <div>
+        <div class="muted">Starts</div>
+        <input id="startsAt" type="datetime-local" />
+      </div>
+      <div>
+        <div class="muted">Ends</div>
+        <input id="endsAt" type="datetime-local" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <div style="min-width:260px;flex:1">
+        <div class="muted">Booking location</div>
+        <select id="bookingLocation"></select>
+      </div>
+      <div style="align-self:end">
+        <button onclick="openLocationModal('Add address')">Add new address</button>
+      </div>
+      <div style="align-self:end">
+        <button onclick="createBooking()">Create booking</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="locationModal" class="modalBack">
+    <div class="modal">
+      <div style="font-weight:700; margin-bottom:8px" id="locationModalTitle">Add address</div>
+      <label class="muted" style="display:block;margin-top:8px;">Address</label>
+      <input id="locAddress" placeholder="Start typing your address" autocomplete="off" />
+
+      <label class="muted" style="display:block;margin-top:10px;">Label</label>
+      <select id="locLabel">
+        <option value="Home">Home</option>
+        <option value="Work">Work</option>
+        <option value="Other">Other</option>
+      </select>
+
+      <div class="row">
+        <button class="btn secondary" id="cancelLocationBtn" type="button">Cancel</button>
+        <button class="btn" id="saveLocationBtn" type="button">Save address</button>
+      </div>
+    </div>
+  </div>
+
+  <h3>API output</h3>
+  <pre id="out">{}</pre>
+
+<script src="/static/app.js?v=2"></script>
+<script>
+  function qs(id){ return document.getElementById(id); }
+  let currentMe = null;
+  let locationState = {
+    place_id: null,
+    formatted_address: null,
+    lat: null,
+    lng: null,
+    street: null,
+    suburb: null,
+    city: null,
+    province: null,
+    postal_code: null,
+    country: null,
+    label: "Home",
+  };
+
+  async function guard() {
+    const me = await requireMe();
+    if (me.role !== "parent") {
+      location.href = "/static/login.html";
+      throw new Error("Wrong role");
+    }
+    currentMe = me;
+    qs("who").textContent = `${me.email} (id ${me.id})`;
+    return me;
+  }
+
+  async function search(){
+    const max_distance_km = qs("maxDist").value;
+    const min_rating = qs("minRating").value;
+
+    const me = currentMe || await guard();
+
+    let url = `/nannies/search?parent_user_id=${encodeURIComponent(me.id)}`;
+    if(max_distance_km) url += `&max_distance_km=${encodeURIComponent(max_distance_km)}`;
+    if(min_rating) url += `&min_rating=${encodeURIComponent(min_rating)}`;
+
+    try{
+      const data = await fetchJson(url);
+      qs("out").textContent = JSON.stringify(data, null, 2);
+      renderResults(data.results || []);
+    }catch(e){
+      qs("out").textContent = e && e.message ? e.message : JSON.stringify(e, null, 2);
+    }
+  }
+
+  function renderResults(items){
+    const el = qs("results");
+    if(!items.length){
+      el.innerHTML = `<div class="card">No results</div>`;
+      return;
+    }
+    el.innerHTML = items.map(n => {
+      const dist = (n.distance_km === null || n.distance_km === undefined) ? "n/a" : n.distance_km.toFixed(2);
+      const rating = (n.average_rating_12m === null || n.average_rating_12m === undefined) ? "unrated" : n.average_rating_12m.toFixed(1);
+      return `
+        <div class="card">
+          <div><b>${n.name}</b> (nanny_id ${n.nanny_id})</div>
+          <div class="muted">distance ${dist} km, rating ${rating}, reviews ${n.review_count_12m}</div>
+          <div style="margin-top:8px">
+            <button onclick="prefill(${n.nanny_id})">Book this nanny</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function prefill(nannyId){
+    qs("nannyId").value = nannyId;
+
+    const now = new Date();
+    const start = new Date(now.getTime() + 24*60*60*1000);
+    start.setHours(8,0,0,0);
+    const end = new Date(start.getTime() + 4*60*60*1000);
+
+    qs("startsAt").value = start.toISOString().slice(0,16);
+    qs("endsAt").value = end.toISOString().slice(0,16);
+  }
+
+  function pickComponent(components, type) {
+    const c = (components || []).find(x => (x.types || []).includes(type));
+    return c ? c.long_name : null;
+  }
+
+  function openLocationModal(title) {
+    locationState = {
+      place_id: null,
+      formatted_address: null,
+      lat: null,
+      lng: null,
+      street: null,
+      suburb: null,
+      city: null,
+      province: null,
+      postal_code: null,
+      country: null,
+      label: "Home",
+    };
+    const addr = qs("locAddress");
+    if (addr) addr.value = "";
+    qs("locLabel").value = "Home";
+    qs("locationModalTitle").textContent = title;
+    qs("locationModal").style.display = "flex";
+  }
+
+  function closeLocationModal() {
+    qs("locationModal").style.display = "none";
+  }
+
+  async function loadBookingLocations(selectedId){
+    const sel = qs("bookingLocation");
+    const locs = await fetchJson("/parents/me/locations");
+    if (!locs || !locs.length) {
+      sel.innerHTML = `<option value="">No saved locations</option>`;
+      return;
+    }
+    sel.innerHTML = locs.map(l => {
+      const label = l.label || "Location";
+      const addr = l.formatted_address || "";
+      return `<option value="${l.id}">${label}${addr ? " - " + addr : ""}</option>`;
+    }).join("");
+    if (selectedId) {
+      sel.value = String(selectedId);
+    }
+  }
+
+  async function saveLocation(){
+    if (!locationState.lat || !locationState.lng) {
+      alert("Please select an address from the dropdown");
+      return;
+    }
+    locationState.label = qs("locLabel").value || "Home";
+    const payload = {
+      label: locationState.label,
+      place_id: locationState.place_id,
+      formatted_address: locationState.formatted_address,
+      lat: locationState.lat,
+      lng: locationState.lng,
+      street: locationState.street,
+      suburb: locationState.suburb,
+      city: locationState.city,
+      province: locationState.province,
+      postal_code: locationState.postal_code,
+      country: locationState.country,
+    };
+
+    const created = await fetchJson("/parents/me/locations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    closeLocationModal();
+    await loadBookingLocations(created && created.id ? created.id : null);
+  }
+
+  window.initAddressAutocomplete = function() {
+    const input = qs("locAddress");
+    if (!input || !window.google || !google.maps || !google.maps.places) return;
+    const ac = new google.maps.places.Autocomplete(input, {
+      types: ["address"],
+      componentRestrictions: { country: "za" }
+    });
+
+    ac.addListener("place_changed", () => {
+      const place = ac.getPlace();
+      if (!place || !place.geometry || !place.geometry.location) {
+        alert("Could not read that address, try another");
+        return;
+      }
+
+      const comps = place.address_components || [];
+      const streetNo = pickComponent(comps, "street_number");
+      const route = pickComponent(comps, "route");
+
+      locationState.place_id = place.place_id || null;
+      locationState.formatted_address = place.formatted_address || input.value || null;
+      locationState.lat = place.geometry.location.lat();
+      locationState.lng = place.geometry.location.lng();
+      locationState.street = [streetNo, route].filter(Boolean).join(" ") || null;
+      locationState.suburb = pickComponent(comps, "sublocality") || pickComponent(comps, "sublocality_level_1");
+      locationState.city = pickComponent(comps, "locality") || pickComponent(comps, "administrative_area_level_2");
+      locationState.province = pickComponent(comps, "administrative_area_level_1");
+      locationState.postal_code = pickComponent(comps, "postal_code");
+      locationState.country = pickComponent(comps, "country");
+    });
+  };
+
+  async function createBooking(){
+    const me = currentMe || await guard();
+    const locationId = qs("bookingLocation").value;
+    if (!locationId) {
+      alert("Please select a booking location");
+      return;
+    }
+    const payload = {
+      parent_user_id: Number(me.id),
+      nanny_id: Number(qs("nannyId").value),
+      starts_at: qs("startsAt").value,
+      ends_at: qs("endsAt").value,
+      location_id: Number(locationId)
+    };
+
+    try{
+      const data = await fetchJson("/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      qs("out").textContent = JSON.stringify(data, null, 2);
+    }catch(e){
+      qs("out").textContent = e && e.message ? e.message : JSON.stringify(e, null, 2);
+    }
+  }
+
+  qs("cancelLocationBtn").addEventListener("click", closeLocationModal);
+  qs("saveLocationBtn").addEventListener("click", () => {
+    saveLocation().catch(e => alert(e?.message || String(e)));
+  });
+
+  guard().then(async () => {
+    await loadBookingLocations();
+    await search();
+  });
+</script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initAddressAutocomplete" async defer></script>
+</body>
+</html>

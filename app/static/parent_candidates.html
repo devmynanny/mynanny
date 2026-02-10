@@ -1,0 +1,718 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>My Nanny, candidates</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:1100px}
+    .top{display:flex;gap:12px;align-items:center}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:16px}
+    .card{border:1px solid #ddd;border-radius:14px;padding:16px}
+    .muted{color:#666}
+    h1{margin:0;font-size:34px}
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin: 10px 0 20px 0;
+    }
+    .btn.secondary{
+      background:#fff;
+      border:1px solid #ccc;
+    }
+    .card-header{display:flex;gap:12px;align-items:center}
+    .selectBox{display:flex;align-items:center;gap:6px;font-size:12px;color:#444}
+    .avatar{width:64px;height:64px;border-radius:12px;object-fit:cover;background:#f3f4f6;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;font-weight:600;color:#6b7280}
+    .card-title{font-weight:700;font-size:18px}
+    .actions{display:flex;gap:10px;align-items:center;margin-top:10px}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px}
+    .modal{background:#fff;border-radius:10px;width:min(520px,100%);border:1px solid #ddd;padding:16px}
+    .modal input, .modal select{width:100%;padding:10px;margin-top:6px;box-sizing:border-box}
+    .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+    .search-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
+    .search-bar label{display:block;font-size:12px;color:#666}
+    .search-bar input{padding:10px;border-radius:10px;border:1px solid #ccc}
+    .previewBtn{background:#fff;border:1px solid #bbb}
+    .previewModal{background:#fff;border-radius:12px;width:min(640px,100%);border:1px solid #ddd;padding:18px;position:relative}
+    .previewHeader{display:flex;gap:12px;align-items:center}
+    .previewTitle{font-weight:700;font-size:20px}
+    .heartBtn{position:absolute;top:12px;right:12px;border:none;background:transparent;font-size:26px;cursor:pointer}
+    .heartBtn.off{color:#9ca3af}
+    .heartBtn.on{color:#ef4444}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px;margin:4px 6px 0 0}
+    .filters{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:12px}
+    .filters label{font-size:12px;color:#666}
+    .filters select,.filters input[type="number"]{padding:8px;border-radius:8px;border:1px solid #ccc}
+    .filter-group{display:flex;flex-direction:column;gap:6px}
+    .tag-filters{display:flex;flex-wrap:wrap;gap:8px}
+    .tag-filters label{display:flex;align-items:center;gap:6px;font-size:13px;color:#333}
+    .card{position:relative}
+    .card-fav{position:absolute;top:12px;right:12px;font-size:22px;color:#ef4444}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div class="top">
+    <button class="btn back-btn" onclick="location.href='/static/parent_home.html'">Back to home</button>
+    <h1>Candidates</h1>
+  </div>
+
+  <div class="search-bar">
+    <div>
+      <label id="searchDateLabel" for="searchDate">Date</label>
+      <input id="searchDate" type="date" />
+    </div>
+    <div>
+      <label for="searchStartTime">Start time</label>
+      <input id="searchStartTime" type="time" />
+    </div>
+    <div>
+      <label for="searchEndTime">End time</label>
+      <input id="searchEndTime" type="time" />
+    </div>
+    <button class="btn" id="searchBtn" type="button">Search</button>
+  </div>
+
+  <div class="filters">
+    <div class="filter-group">
+      <label>Favourites</label>
+      <label><input id="filterFavorites" type="checkbox" /> Only favourites</label>
+    </div>
+    <div class="filter-group">
+      <label>Rated</label>
+      <label><input id="filterRated" type="checkbox" /> Rated only</label>
+    </div>
+    <div class="filter-group">
+      <label for="filterDistance">Distance</label>
+      <select id="filterDistance">
+        <option value="">Any distance</option>
+        <option value="5">Up to 5 km</option>
+        <option value="10">Up to 10 km</option>
+        <option value="20">Up to 20 km</option>
+        <option value="50">Up to 50 km</option>
+        <option value="100">Up to 100 km</option>
+      </select>
+    </div>
+    <div class="filter-group" style="min-width:280px;">
+      <label>Tags</label>
+      <div id="filterTags" class="tag-filters"></div>
+    </div>
+  </div>
+  <div style="margin-top:12px;">
+    <button class="btn" id="requestSelectedBtn" type="button" disabled>Request selected nannies</button>
+  </div>
+
+  <div id="status" class="muted" style="margin-top:10px"></div>
+  <div id="multiDayNotice" class="muted" style="margin-top:6px; display:none;"></div>
+  <div id="list" class="grid"></div>
+
+  <div id="bookingModal" class="modalBack">
+    <div class="modal">
+      <div style="font-weight:700; margin-bottom:8px">Book nanny</div>
+      <div class="muted" id="bookingNannyName"></div>
+
+      <label class="muted">Start</label>
+      <input id="bookingStart" type="text" readonly />
+
+      <label class="muted" style="margin-top:8px; display:block;">End</label>
+      <input id="bookingEnd" type="text" readonly />
+
+      <label class="muted" style="margin-top:8px; display:block;">Location</label>
+      <select id="bookingLocation"></select>
+      <label class="muted" style="margin-top:8px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
+        <input id="bookingLocationConfirm" type="checkbox" style="margin:0;" />
+        I confirm this is the correct location
+      </label>
+
+      <label class="muted" style="margin-top:8px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
+        <input id="bookingSleepover" type="checkbox" style="margin:0;" />
+        Sleepover required (adds R150)
+      </label>
+
+      <label class="muted" style="margin-top:8px; display:block;">Notes (optional)</label>
+      <input id="bookingNotes" type="text" placeholder="Any notes for the nanny" />
+
+      <div id="bookingStatus" class="muted" style="margin-top:8px; min-height:18px"></div>
+
+      <div class="row">
+        <button class="btn secondary" id="cancelBookingBtn" type="button">Cancel</button>
+        <button class="btn primary" id="submitBookingBtn" type="button">Submit request</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="previewModal" class="modalBack">
+    <div class="previewModal">
+      <button id="favoriteBtn" class="heartBtn off" type="button" aria-label="Favorite">♥</button>
+      <div class="previewHeader">
+        <div id="previewAvatar" class="avatar"></div>
+        <div>
+          <div id="previewName" class="previewTitle"></div>
+          <div id="previewMeta" class="muted"></div>
+        </div>
+      </div>
+      <div id="previewBio" style="margin-top:12px"></div>
+      <div style="margin-top:12px">
+        <div style="font-weight:600;margin-bottom:6px">Proficiencies</div>
+        <div id="previewProficiencies"></div>
+      </div>
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    async function guard() {
+      const me = await requireMe();
+      if (me.role !== "parent") {
+        location.href = "/static/login.html";
+        throw new Error("Wrong role");
+      }
+      return me;
+    }
+
+    function escapeHtml(v) {
+      return String(v)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatName(fullName) {
+      const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+      if (parts.length <= 1) return parts[0] || "";
+      const first = parts[0];
+      const lastInitial = parts[parts.length - 1][0] || "";
+      return `${first} ${lastInitial}.`;
+    }
+
+    let selectedNannies = new Set();
+
+    function card(n, profileComplete, canBook){
+      const name = formatName(n.name || ("Nanny " + n.nanny_id));
+      const initials = (name || "N").trim().split(/\s+/).map(p => p[0]).join("").slice(0,2).toUpperCase();
+      const avatar = n.profile_photo_url
+        ? `<img class="avatar" src="${n.profile_photo_url}" alt="${name}" />`
+        : `<div class="avatar">${initials}</div>`;
+      const distLine = (profileComplete && n.distance_km !== null && n.distance_km !== undefined)
+        ? `<div class="muted">${Number(n.distance_km).toFixed(2)} km away</div>`
+        : "";
+      const locLine = (!profileComplete && n.location_hint)
+        ? `<div class="muted">${escapeHtml(n.location_hint)}</div>`
+        : "";
+      const reviewCount = n.review_count_12m ?? 0;
+      const ratingLine = (n.average_rating_12m === null || n.average_rating_12m === undefined)
+        ? "New"
+        : (n.average_rating_12m + " (" + reviewCount + ")");
+      const favMark = favorites.has(n.nanny_id) ? `<div class="card-fav">♥</div>` : "";
+      return `
+        <div class="card">
+          ${favMark}
+          <div class="card-header">
+            ${avatar}
+            <div class="card-title">${name}</div>
+            <label class="selectBox" style="margin-left:auto;">
+              <input type="checkbox" class="selectNanny" data-nanny-id="${n.nanny_id}" ${selectedNannies.has(n.nanny_id) ? "checked" : ""} />
+              Select
+            </label>
+          </div>
+          <div class="muted">⭐ ${ratingLine}</div>
+          ${distLine}
+          ${profileComplete ? (n.location_hint ? `<div class="muted">${escapeHtml(n.location_hint)}</div>` : "") : locLine}
+          <div style="margin-top:10px">${n.bio || ""}</div>
+          <div class="actions">
+            <button class="btn primary bookBtn" data-nanny-id="${n.nanny_id}" data-nanny-name="${escapeHtml(name)}" ${canBook ? "" : "disabled"}>Book</button>
+            <button class="btn previewBtn" data-nanny-id="${n.nanny_id}">Preview</button>
+            ${canBook ? "" : `<div class=\"muted\">Complete your profile to book</div>`}
+          </div>
+        </div>
+      `;
+    }
+
+    let bookingState = {
+      nannyId: null,
+      nannyName: "",
+      start_dt: null,
+      end_dt: null,
+      selectedNannyIds: [],
+    };
+
+    function openBookingModal(nannyId, nannyName, selectedIds = null) {
+      bookingState.nannyId = nannyId;
+      bookingState.nannyName = nannyName;
+      bookingState.selectedNannyIds = Array.isArray(selectedIds) ? selectedIds : (nannyId ? [nannyId] : []);
+      const count = bookingState.selectedNannyIds.length;
+      document.getElementById("bookingNannyName").textContent = count > 1 ? `${count} nannies selected` : nannyName;
+      document.getElementById("bookingStart").value = bookingState.start_dt
+        ? (window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.start_dt) : new Date(bookingState.start_dt).toLocaleString())
+        : "";
+      document.getElementById("bookingEnd").value = bookingState.end_dt
+        ? (window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.end_dt) : new Date(bookingState.end_dt).toLocaleString())
+        : "";
+      const locSelect = document.getElementById("bookingLocation");
+      const locConfirm = document.getElementById("bookingLocationConfirm");
+      const sleepoverEl = document.getElementById("bookingSleepover");
+      if (locConfirm) locConfirm.checked = false;
+      if (locSelect) {
+        const options = parentLocations.map(l => {
+          const label = l.label || "Location";
+          const addr = l.formatted_address || l.city || "";
+          const display = addr ? `${label} - ${addr}` : label;
+          return `<option value="${l.id}">${escapeHtml(display)}</option>`;
+        });
+        locSelect.innerHTML = options.join("");
+        const defaultLoc = parentLocations.find(l => l.is_default) || parentLocations[0];
+        if (defaultLoc) locSelect.value = String(defaultLoc.id);
+      }
+      if (sleepoverEl) {
+        sleepoverEl.checked = false;
+        const startTime = document.getElementById("searchStartTime")?.value || "";
+        const showSleepover = startTime >= "14:00";
+        sleepoverEl.parentElement.style.display = showSleepover ? "flex" : "none";
+      }
+      document.getElementById("bookingStatus").textContent = "";
+      document.getElementById("bookingModal").style.display = "flex";
+    }
+
+    function closeBookingModal() {
+      document.getElementById("bookingModal").style.display = "none";
+    }
+
+    let favorites = new Set();
+    let previewNanny = null;
+    let lastResults = [];
+    let lastProfileComplete = false;
+    let lastCanBook = false;
+    let tagOptions = [];
+    let parentLocations = [];
+
+    function updateFavoriteBtn(nannyId) {
+      const btn = document.getElementById("favoriteBtn");
+      if (!btn) return;
+      const isFav = favorites.has(nannyId);
+      btn.classList.toggle("on", isFav);
+      btn.classList.toggle("off", !isFav);
+    }
+
+    function openPreview(n) {
+      previewNanny = n;
+      const name = formatName(n.name || ("Nanny " + n.nanny_id));
+      const initials = (name || "N").trim().split(/\s+/).map(p => p[0]).join("").slice(0,2).toUpperCase();
+      const avatarEl = document.getElementById("previewAvatar");
+      if (n.profile_photo_url) {
+        avatarEl.innerHTML = `<img src="${n.profile_photo_url}" alt="${escapeHtml(name)}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`;
+      } else {
+        avatarEl.textContent = initials;
+      }
+      document.getElementById("previewName").textContent = name;
+      const parts = [];
+      if (n.average_rating_12m != null) parts.push(`⭐ ${n.average_rating_12m} (${n.review_count_12m ?? 0})`);
+      else parts.push("⭐ New");
+      if (n.distance_km != null) parts.push(`${Number(n.distance_km).toFixed(2)} km away`);
+      if (n.location_hint) parts.push(n.location_hint);
+      document.getElementById("previewMeta").textContent = parts.join(" • ");
+      document.getElementById("previewBio").textContent = n.bio || "No bio yet.";
+
+      const profs = [];
+      const tags = (n.tags || []).map(t => t.name).filter(Boolean);
+      const quals = (n.qualifications || []).map(q => q.name).filter(Boolean);
+      const langs = (n.languages || []).map(l => l.name).filter(Boolean);
+      tags.forEach(t => profs.push(t));
+      quals.forEach(q => profs.push(q));
+      langs.forEach(l => profs.push(l));
+      const box = document.getElementById("previewProficiencies");
+      if (profs.length === 0) {
+        box.textContent = "No proficiencies listed.";
+      } else {
+        box.innerHTML = profs.map(p => `<span class="pill">${escapeHtml(p)}</span>`).join("");
+      }
+      updateFavoriteBtn(n.nanny_id);
+      document.getElementById("previewModal").style.display = "flex";
+    }
+
+    function closePreview() {
+      document.getElementById("previewModal").style.display = "none";
+      previewNanny = null;
+    }
+
+    function getCurrentPosition(opts = {}) {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation not supported"));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+      });
+    }
+
+    async function submitBookingRequest() {
+      const status = document.getElementById("bookingStatus");
+      if (!bookingState.start_dt || !bookingState.end_dt) {
+        status.textContent = "Select date and time first";
+        return;
+      }
+      const locConfirm = document.getElementById("bookingLocationConfirm");
+      if (locConfirm && !locConfirm.checked) {
+        status.textContent = "Please confirm the location.";
+        return;
+      }
+      const locSelect = document.getElementById("bookingLocation");
+      if (locSelect && !locSelect.value) {
+        status.textContent = "Please select a location.";
+        return;
+      }
+      const notes = document.getElementById("bookingNotes").value || null;
+      const locationId = locSelect ? Number(locSelect.value) : null;
+      const sleepover = document.getElementById("bookingSleepover")?.checked || false;
+
+      status.textContent = "Submitting...";
+      if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length >= 1 && !bookingState.nannyId) {
+        const res = await fetchJson("/booking-requests/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nanny_ids: bookingState.selectedNannyIds,
+            start_dt: bookingState.start_dt,
+            end_dt: bookingState.end_dt,
+            notes,
+            location_id: locationId,
+            sleepover
+          })
+        });
+        const displayId = res?.group_id ?? "—";
+        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+      } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
+        const res = await fetchJson("/booking-requests/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nanny_ids: bookingState.selectedNannyIds,
+            start_dt: bookingState.start_dt,
+            end_dt: bookingState.end_dt,
+            notes,
+            location_id: locationId,
+            sleepover
+          })
+        });
+        const displayId = res?.group_id ?? "—";
+        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+      } else {
+        const res = await fetchJson("/booking-requests", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nanny_id: bookingState.nannyId,
+            start_dt: bookingState.start_dt,
+            end_dt: bookingState.end_dt,
+            notes,
+            location_id: locationId,
+            sleepover
+          })
+        });
+        const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
+        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+      }
+      document.getElementById("submitBookingBtn").disabled = true;
+      setTimeout(closeBookingModal, 2200);
+    }
+
+    function buildIso(dateStr, timeStr) {
+      if (!dateStr || !timeStr) return null;
+      const d = new Date(`${dateStr}T${timeStr}`);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toISOString();
+    }
+
+    function setInputValue(id, value) {
+      const el = document.getElementById(id);
+      if (el && value != null && value !== "") {
+        el.value = value;
+      }
+    }
+
+    function computeLastMultiDate(startDateStr, weeks, days) {
+      if (!startDateStr || !Array.isArray(days) || days.length === 0) return null;
+      const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const wanted = new Set(days.map(d => dayMap[d]).filter(d => d !== undefined));
+      if (wanted.size === 0) return null;
+      const start = new Date(startDateStr + "T00:00:00");
+      if (Number.isNaN(start.getTime())) return null;
+      let last = null;
+      const totalDays = Math.max(1, Number(weeks || 1)) * 7;
+      for (let i = 0; i < totalDays; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        if (wanted.has(d.getDay())) {
+          last = d;
+        }
+      }
+      return last;
+    }
+
+    function getSelectedTagNames() {
+      const checked = Array.from(document.querySelectorAll("#filterTags input[type=\"checkbox\"]:checked"));
+      return checked.map(i => i.value);
+    }
+
+    function applyFilters(results) {
+      let filtered = [...results];
+      const onlyFav = document.getElementById("filterFavorites").checked;
+      const onlyRated = document.getElementById("filterRated").checked;
+      const maxDist = Number(document.getElementById("filterDistance").value || 0);
+      const selectedTags = new Set(getSelectedTagNames());
+
+      if (onlyFav) {
+        filtered = filtered.filter(n => favorites.has(n.nanny_id));
+      }
+      if (onlyRated) {
+        filtered = filtered.filter(n => n.average_rating_12m !== null && n.average_rating_12m !== undefined);
+      }
+      if (maxDist) {
+        filtered = filtered.filter(n => n.distance_km !== null && n.distance_km !== undefined && Number(n.distance_km) <= maxDist);
+      }
+      if (selectedTags.size > 0) {
+        filtered = filtered.filter(n => {
+          const names = (n.tags || []).map(t => t.name);
+          return names.some(name => selectedTags.has(name));
+        });
+      }
+      return filtered;
+    }
+
+    function renderResults(results, profileComplete, canBook) {
+      const list = document.getElementById("list");
+      list.innerHTML = "";
+      results.forEach(n => {
+        try {
+          list.insertAdjacentHTML("beforeend", card(n, profileComplete, canBook));
+        } catch (e) {
+          console.error("Failed to render nanny", n?.nanny_id, e);
+        }
+      });
+
+      list.querySelectorAll(".previewBtn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const nannyId = Number(btn.dataset.nannyId);
+          const match = results.find(r => r.nanny_id === nannyId);
+          if (match) {
+            openPreview(match);
+          }
+        });
+      });
+
+      list.querySelectorAll(".bookBtn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          openBookingModal(Number(btn.dataset.nannyId), btn.dataset.nannyName || "Nanny");
+        });
+      });
+
+      list.querySelectorAll(".selectNanny").forEach(box => {
+        box.addEventListener("change", () => {
+          const id = Number(box.dataset.nannyId);
+          if (box.checked) selectedNannies.add(id);
+          else selectedNannies.delete(id);
+          updateSelectedButton();
+        });
+      });
+      updateSelectedButton();
+    }
+
+    function refreshFilters(profileComplete, canBook) {
+      const filtered = applyFilters(lastResults);
+      document.getElementById("status").textContent = filtered.length + " nannies found";
+      renderResults(filtered, profileComplete, canBook);
+    }
+
+    function updateSelectedButton() {
+      const btn = document.getElementById("requestSelectedBtn");
+      if (!btn) return;
+      const count = selectedNannies.size;
+      btn.disabled = count === 0;
+      btn.textContent = count ? `Request selected nannies (${count})` : "Request selected nannies";
+    }
+
+    async function runSearch(){
+      await guard();
+      const dateStr = document.getElementById("searchDate").value;
+      const startTime = document.getElementById("searchStartTime").value;
+      const endTime = document.getElementById("searchEndTime").value;
+      const startDt = buildIso(dateStr, startTime);
+      const endDt = buildIso(dateStr, endTime);
+
+      if (!startDt || !endDt) {
+        document.getElementById("status").textContent = "Select date, start time, and end time";
+        return;
+      }
+      if (new Date(endDt) <= new Date(startDt)) {
+        document.getElementById("status").textContent = "End time must be after start time";
+        return;
+      }
+
+      const status = await fetchJson("/parents/me/profile-status");
+      document.getElementById("status").textContent = "Loading...";
+      const profileComplete = !!status?.is_profile_complete;
+
+      const locations = await fetchJson("/parents/me/locations");
+      const defaultLoc = (locations || []).find(l => l.is_default) || (locations || []).find(l => l.lat != null && l.lng != null);
+      let lat = defaultLoc?.lat ?? null;
+      let lng = defaultLoc?.lng ?? null;
+
+      if (!profileComplete) {
+        try {
+          const pos = await getCurrentPosition({ enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 });
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        } catch {
+          // fallback to default location if geolocation fails
+        }
+      }
+
+      if (lat == null || lng == null) {
+        throw new Error("Location required");
+      }
+      const body = {
+        lat,
+        lng,
+        start_dt: startDt,
+        end_dt: endDt,
+        max_distance_km: 50
+      };
+      const data = await fetchJson("/nannies/search-by-time", {
+        method: "POST",
+        body: JSON.stringify(body)
+      });
+
+      console.log("search response", data);
+      console.log("nannies length", (data.results || []).length, data.results || []);
+
+      bookingState.start_dt = startDt;
+      bookingState.end_dt = endDt;
+
+      const results = data.results || [];
+      lastResults = Array.isArray(results) ? results : [];
+      const canBook = data?.parent_profile_complete !== false;
+      lastProfileComplete = !!profileComplete;
+      lastCanBook = !!canBook;
+      refreshFilters(lastProfileComplete, lastCanBook);
+    }
+
+    async function loadFavorites() {
+      try {
+        const data = await fetchJson("/parents/me/favorites");
+        favorites = new Set((data?.nanny_ids || []).map(Number));
+      } catch (e) {
+        favorites = new Set();
+      }
+    }
+
+    async function loadParentLocations() {
+      try {
+        const locations = await fetchJson("/parents/me/locations");
+        parentLocations = Array.isArray(locations) ? locations : [];
+      } catch (e) {
+        parentLocations = [];
+      }
+    }
+
+    document.getElementById("cancelBookingBtn").addEventListener("click", closeBookingModal);
+    document.getElementById("submitBookingBtn").addEventListener("click", () => {
+      submitBookingRequest().catch(e => {
+        document.getElementById("bookingStatus").textContent = e.message || "Error";
+      });
+    });
+
+    document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
+    document.getElementById("previewModal").addEventListener("click", (e) => {
+      if (e.target.id === "previewModal") closePreview();
+    });
+    document.getElementById("favoriteBtn").addEventListener("click", async () => {
+      if (!previewNanny) return;
+      const nannyId = previewNanny.nanny_id;
+      const isFav = favorites.has(nannyId);
+      try {
+        if (isFav) {
+          await fetchJson(`/parents/me/favorites/${nannyId}`, { method: "DELETE" });
+          favorites.delete(nannyId);
+        } else {
+          await fetchJson(`/parents/me/favorites/${nannyId}`, { method: "POST" });
+          favorites.add(nannyId);
+        }
+        updateFavoriteBtn(nannyId);
+      } catch (e) {
+        console.error("Favorite toggle failed", e);
+      }
+    });
+
+    document.getElementById("searchBtn").addEventListener("click", () => {
+      document.getElementById("submitBookingBtn").disabled = false;
+      runSearch().catch(e => { document.getElementById("status").textContent = "Error: " + e.message; });
+    });
+
+    document.getElementById("requestSelectedBtn").addEventListener("click", () => {
+      const ids = Array.from(selectedNannies);
+      if (!ids.length) return;
+      openBookingModal(null, "", ids);
+    });
+
+    guard().then(async () => {
+      await loadFavorites();
+      await loadParentLocations();
+      try {
+        const tagData = await fetchJson("/nanny-tags");
+        tagOptions = Array.isArray(tagData) ? tagData : [];
+      } catch {
+        tagOptions = [];
+      }
+      const tagRoot = document.getElementById("filterTags");
+      if (tagRoot && tagOptions.length) {
+        tagRoot.innerHTML = tagOptions.map(t => `<label><input type="checkbox" value="${escapeHtml(t.name)}"> ${escapeHtml(t.name)}</label>`).join("");
+      }
+      document.querySelectorAll("#filterFavorites,#filterRated,#filterDistance,#filterTags input[type=\"checkbox\"]").forEach(el => {
+        el.addEventListener("change", () => {
+          refreshFilters(lastProfileComplete, lastCanBook);
+        });
+      });
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("multi") === "1") {
+        try {
+          const raw = localStorage.getItem("parentMultiDayRequest");
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (data?.startDate) setInputValue("searchDate", data.startDate);
+            if (data?.startTime) setInputValue("searchStartTime", data.startTime);
+            if (data?.endTime) setInputValue("searchEndTime", data.endTime);
+            const notice = document.getElementById("multiDayNotice");
+            if (notice) {
+              const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
+              const weeks = Number(data?.weeks || 1);
+              const timeRange = (data?.startTime || data?.endTime) ? `${data?.startTime || "--:--"}–${data?.endTime || "--:--"}` : "any time";
+              notice.textContent = `Multiple days: ${days} for ${weeks} week${weeks > 1 ? "s" : ""}, ${timeRange}.`;
+              notice.style.display = "block";
+            }
+            const label = document.getElementById("searchDateLabel");
+            const last = computeLastMultiDate(data?.startDate, data?.weeks, data?.days);
+            if (label && last) {
+              const endStr = last.toISOString().slice(0,10);
+              label.textContent = `Dates (${data?.startDate} to ${endStr})`;
+            } else if (label) {
+              label.textContent = "Dates (multiple days)";
+            }
+          }
+        } catch {}
+      }
+      if (params.get("mode") === "all") {
+        runSearch().catch(err => {
+          document.getElementById("status").textContent = "Error: " + (err?.message || String(err));
+        });
+      }
+    }).catch(() => {});
+  </script>
+</body>
+</html>

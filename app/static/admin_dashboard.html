@@ -1,0 +1,425 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 900px; margin: 28px auto; padding: 0 16px; }
+    h1 { margin: 8px 0 18px; }
+    h2 { margin: 26px 0 10px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .err { color: #b00020; }
+    .topbar{ display:flex; align-items:center; justify-content:space-between; margin: 10px 0 20px 0; }
+    .btn{ padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer }
+    .clickable-row{cursor:pointer}
+    .clickable-row:hover{background:#f7f7f7}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <button class="btn" id="createAdminBtn" type="button">Create admin</button>
+      <button class="btn" id="pricingBtn" type="button">Pricing</button>
+      <button class="btn" id="reportsBtn" type="button">Reports</button>
+    </div>
+    <button class="btn" id="logoutBtn" type="button">Log out</button>
+  </div>
+  <h1>Admin</h1>
+  <div id="authMsg" class="err"></div>
+
+  <div class="card">
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn" id="btnBookingRequests" type="button">Booking requests</button>
+      <button class="btn" id="btnRefunds" type="button">Refunds</button>
+      <button class="btn" id="btnPendingNannies" type="button">Pending nannies</button>
+      <button class="btn" id="btnUsers" type="button">Users</button>
+      <button class="btn" id="btnChangeLogs" type="button">Change logs</button>
+    </div>
+  </div>
+
+  <div id="sectionUsers" style="display:none;">
+    <h2>Users</h2>
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <label>
+          Role
+          <select id="userRoleFilter">
+            <option value="">All</option>
+            <option value="parent">Parents</option>
+            <option value="nanny">Nannies</option>
+          </select>
+        </label>
+        <label>
+          Location
+          <input id="userLocationFilter" type="text" placeholder="e.g. Cape Town" />
+        </label>
+        <label>
+          Sort by
+          <select id="userSort">
+            <option value="joined_asc">First joined (oldest)</option>
+            <option value="joined_desc">Last joined (newest)</option>
+            <option value="activity_desc">Last activity (recent)</option>
+            <option value="activity_asc">Last activity (oldest)</option>
+            <option value="rating_desc">Rating (high to low)</option>
+            <option value="rating_asc">Rating (low to high)</option>
+          </select>
+        </label>
+        <button class="btn" id="applyUserFilters" type="button">Apply</button>
+        <button class="btn" id="clearUserFilters" type="button">Clear</button>
+      </div>
+    </div>
+    <div id="usersList" class="card"></div>
+  </div>
+  <div id="sectionPendingNannies" style="display:none;">
+    <h2>Pending nannies</h2>
+    <div id="pendingNanniesList" class="card"></div>
+  </div>
+  <div id="sectionBookingRequests" style="display:none;">
+    <h2>Booking requests</h2>
+    <div id="bookingRequestsList" class="card"></div>
+  </div>
+  <div id="sectionRefunds" style="display:none;">
+    <h2>Refund approvals</h2>
+    <div id="refundsList" class="card"></div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", () => {
+        localStorage.removeItem("token");
+        window.location.href = "/static/login.html";
+      });
+    }
+
+    const createAdminBtn = document.getElementById("createAdminBtn");
+    if (createAdminBtn) {
+      createAdminBtn.addEventListener("click", async () => {
+        const email = prompt("Enter email to invite as admin");
+        if (!email) return;
+        const reason = prompt("Reason (optional)") || "";
+        try {
+          await fetchJson("/admin/invites", {
+            method: "POST",
+            body: JSON.stringify({ email, reason })
+          });
+          alert("Invite sent.");
+        } catch (e) {
+          alert(e.message || "Error");
+        }
+      });
+    }
+
+    const pricingBtn = document.getElementById("pricingBtn");
+    if (pricingBtn) {
+      pricingBtn.addEventListener("click", () => {
+        window.location.href = "/static/admin_pricing.html";
+      });
+    }
+
+    const reportsBtn = document.getElementById("reportsBtn");
+    if (reportsBtn) {
+      reportsBtn.addEventListener("click", () => {
+        window.location.href = "/static/admin_reports.html";
+      });
+    }
+
+    const sections = ["sectionUsers", "sectionPendingNannies", "sectionBookingRequests"];
+    function showSection(id) {
+      sections.forEach(s => {
+        const el = document.getElementById(s);
+        if (el) el.style.display = (s === id) ? "block" : "none";
+      });
+    }
+
+    async function refreshCounts() {
+      const [nannies, requests] = await Promise.all([
+        fetchJson("/admin/nannies/pending"),
+        fetchJson("/admin/booking-requests/pending")
+      ]);
+      const nCount = (nannies?.results || nannies || []).length;
+      const rCount = (requests?.results || requests || []).length;
+      const btnNannies = document.getElementById("btnPendingNannies");
+      const btnRequests = document.getElementById("btnBookingRequests");
+      if (btnNannies) btnNannies.textContent = `Pending nannies (${nCount})`;
+      if (btnRequests) btnRequests.textContent = `Booking requests (${rCount})`;
+    }
+
+    let usersCache = [];
+
+    function renderUsers(users) {
+      const container = document.getElementById("usersList");
+      container.innerHTML = "";
+      (users || []).forEach(u => {
+        const row = document.createElement("div");
+        row.className = "clickable-row";
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "10px";
+        row.style.alignItems = "center";
+        row.style.padding = "8px 0";
+        row.style.borderBottom = "1px solid #eee";
+        const loc = u.location?.label || "-";
+        const rating = (u.rating === null || u.rating === undefined) ? "-" : `${u.rating} (${u.review_count || 0})`;
+        const joined = u.joined_at ? (window.formatDateTimeZA ? window.formatDateTimeZA(u.joined_at) : new Date(u.joined_at).toLocaleString()) : "-";
+        const lastActive = u.last_activity_at ? (window.formatDateTimeZA ? window.formatDateTimeZA(u.last_activity_at) : new Date(u.last_activity_at).toLocaleString()) : "-";
+        row.innerHTML = `
+          <div>
+            <div><strong>${u.email || "-"}</strong></div>
+            <div class="muted">Role: ${u.role || "-"} | Admin: ${u.is_admin ? "Yes" : "No"} | Rating: ${rating} | Location: ${loc}</div>
+            <div class="muted">Joined: ${joined} | Last activity: ${lastActive}</div>
+          </div>
+        `;
+        row.dataset.userId = u.id;
+        container.appendChild(row);
+      });
+    }
+
+    function applyUserFilters() {
+      const role = (document.getElementById("userRoleFilter").value || "").toLowerCase();
+      const loc = (document.getElementById("userLocationFilter").value || "").trim().toLowerCase();
+      const sort = document.getElementById("userSort").value;
+
+      let list = (usersCache || []).slice();
+      if (role) list = list.filter(u => (u.role || "").toLowerCase() === role);
+      if (loc) {
+        list = list.filter(u => {
+          const label = (u.location?.label || "").toLowerCase();
+          return label.includes(loc);
+        });
+      }
+
+      const toTs = (v) => {
+        if (!v) return 0;
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+      };
+      const toRating = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : -1;
+      };
+      if (sort === "joined_asc") list.sort((a, b) => toTs(a.joined_at) - toTs(b.joined_at));
+      if (sort === "joined_desc") list.sort((a, b) => toTs(b.joined_at) - toTs(a.joined_at));
+      if (sort === "activity_desc") list.sort((a, b) => toTs(b.last_activity_at) - toTs(a.last_activity_at));
+      if (sort === "activity_asc") list.sort((a, b) => toTs(a.last_activity_at) - toTs(b.last_activity_at));
+      if (sort === "rating_desc") list.sort((a, b) => toRating(b.rating) - toRating(a.rating));
+      if (sort === "rating_asc") list.sort((a, b) => toRating(a.rating) - toRating(b.rating));
+
+      renderUsers(list);
+    }
+
+    async function loadUsers() {
+      const users = await fetchJson("/admin/users");
+      usersCache = users || [];
+      applyUserFilters();
+    }
+
+    async function loadPendingNannies() {
+      const data = await fetchJson("/admin/nannies/pending");
+      const list = data?.results || data || [];
+      const container = document.getElementById("pendingNanniesList");
+      container.innerHTML = "";
+      list.forEach(n => {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "10px";
+        row.style.alignItems = "center";
+        row.style.padding = "8px 0";
+        row.style.borderBottom = "1px solid #eee";
+        const statusLine = n.application_status ? ` | Status: ${n.application_status}` : "";
+        row.innerHTML = `
+          <div>
+            <div><strong>${n.name || "Nanny"}</strong></div>
+            <div class="muted">${n.email || "-"}${statusLine}</div>
+          </div>
+          <div>
+            <button class="btn viewNannyBtn" data-user-id="${n.user_id}">View application</button>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    async function loadBookingRequests() {
+      const data = await fetchJson("/admin/booking-requests/pending");
+      const list = data?.results || data || [];
+      const container = document.getElementById("bookingRequestsList");
+      container.innerHTML = "";
+      list.forEach(r => {
+        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt ? new Date(r.start_dt).toLocaleString() : "-");
+        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt ? new Date(r.end_dt).toLocaleString() : "-");
+        const parentLine = r.parent_email ? r.parent_email : (r.parent_name || "Parent");
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "10px";
+        row.style.alignItems = "center";
+        row.style.padding = "8px 0";
+        row.style.borderBottom = "1px solid #eee";
+        row.innerHTML = `
+          <div>
+            <div><strong>${parentLine}</strong> → <strong>${r.nanny_name || "Nanny"}</strong></div>
+            <div class="muted">${start} to ${end}</div>
+          </div>
+          <div>
+            <button class="btn approveRequestBtn" data-id="${r.id}">Approve</button>
+            <button class="btn rejectRequestBtn" data-id="${r.id}">Reject</button>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    async function loadRefunds() {
+      const data = await fetchJson("/admin/refunds?status=pending_review");
+      const list = data?.results || data || [];
+      const container = document.getElementById("refundsList");
+      container.innerHTML = "";
+      if (!list.length) {
+        container.innerHTML = "<div class=\"muted\">No refunds awaiting review.</div>";
+        return;
+      }
+      list.forEach(r => {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "10px";
+        row.style.alignItems = "center";
+        row.style.padding = "8px 0";
+        row.style.borderBottom = "1px solid #eee";
+        const amount = r.refund_cents != null ? `R${(r.refund_cents/100).toFixed(2)}` : "-";
+        row.innerHTML = `
+          <div>
+            <div><strong>Job ID: ${r.job_id}</strong></div>
+            <div class="muted">Refund: ${amount} • Status: ${r.refund_status || "pending_review"}</div>
+          </div>
+          <div>
+            <button class="btn approveRefundBtn" data-job-id="${r.job_id}">Approve</button>
+            <button class="btn rejectRefundBtn" data-job-id="${r.job_id}">Deny</button>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    document.getElementById("btnUsers").addEventListener("click", () => {
+      showSection("sectionUsers");
+      loadUsers().catch(e => { document.getElementById("authMsg").textContent = e.message; });
+    });
+    document.getElementById("btnPendingNannies").addEventListener("click", () => {
+      showSection("sectionPendingNannies");
+      loadPendingNannies().catch(e => { document.getElementById("authMsg").textContent = e.message; });
+    });
+    document.getElementById("btnBookingRequests").addEventListener("click", () => {
+      showSection("sectionBookingRequests");
+      loadBookingRequests().catch(e => { document.getElementById("authMsg").textContent = e.message; });
+    });
+    document.getElementById("btnRefunds").addEventListener("click", () => {
+      showSection("sectionRefunds");
+      loadRefunds().catch(e => { document.getElementById("authMsg").textContent = e.message; });
+    });
+    document.getElementById("btnChangeLogs").addEventListener("click", () => {
+      window.location.href = "/static/admin_audit.html";
+    });
+
+    document.getElementById("usersList").addEventListener("click", (e) => {
+      const row = e.target.closest(".clickable-row");
+      if (!row) return;
+      const userId = row.dataset.userId;
+      if (!userId) return;
+      window.location.href = `/static/admin_user.html?user_id=${encodeURIComponent(userId)}`;
+    });
+
+    document.getElementById("applyUserFilters").addEventListener("click", () => {
+      applyUserFilters();
+    });
+    document.getElementById("clearUserFilters").addEventListener("click", () => {
+      document.getElementById("userRoleFilter").value = "";
+      document.getElementById("userLocationFilter").value = "";
+      document.getElementById("userSort").value = "joined_asc";
+      applyUserFilters();
+    });
+
+    document.getElementById("pendingNanniesList").addEventListener("click", (e) => {
+      const btn = e.target.closest(".viewNannyBtn");
+      if (!btn) return;
+      const userId = btn.dataset.userId;
+      window.location.href = `/static/admin_user.html?user_id=${encodeURIComponent(userId)}`;
+    });
+
+    document.getElementById("bookingRequestsList").addEventListener("click", (e) => {
+      const approve = e.target.closest(".approveRequestBtn");
+      const reject = e.target.closest(".rejectRequestBtn");
+      const btn = approve || reject;
+      if (!btn) return;
+      const requestId = btn.dataset.id;
+      const path = approve ? "approve" : "reject";
+      fetchJson(`/admin/booking-requests/${requestId}/${path}`, {
+        method: "POST"
+      })
+        .then(() => Promise.all([loadBookingRequests(), refreshCounts()]))
+        .catch(err => { document.getElementById("authMsg").textContent = err.message; });
+    });
+
+    document.getElementById("refundsList").addEventListener("click", async (e) => {
+      const approve = e.target.closest(".approveRefundBtn");
+      const deny = e.target.closest(".rejectRefundBtn");
+      const btn = approve || deny;
+      if (!btn) return;
+      const jobId = btn.dataset.jobId;
+      if (!jobId) return;
+      const reason = prompt("Reason (optional)") || "";
+      let amount = null;
+      if (approve) {
+        const amtStr = prompt("Refund amount in R (leave blank for default)");
+        if (amtStr) {
+          const num = parseFloat(amtStr);
+          if (!Number.isFinite(num) || num < 0) {
+            document.getElementById("authMsg").textContent = "Invalid amount.";
+            return;
+          }
+          amount = Math.round(num * 100);
+        }
+      }
+      const path = approve ? "approve" : "deny";
+      const payload = {};
+      if (reason) payload.reason = reason;
+      if (approve && amount != null) payload.amount_cents = amount;
+      try {
+        await fetchJson(`/admin/booking-requests/${encodeURIComponent(jobId)}/refund/${path}`, {
+          method: "POST",
+          body: Object.keys(payload).length ? JSON.stringify(payload) : undefined
+        });
+        await loadRefunds();
+      } catch (err) {
+        document.getElementById("authMsg").textContent = err.message || "Refund action failed";
+      }
+    });
+
+    (async function () {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        window.location.href = "/static/login.html";
+        return;
+      }
+
+      const res = await fetch("/admin/me", {
+        headers: { "Authorization": "Bearer " + token }
+      });
+
+      if (!res.ok) {
+        document.getElementById("authMsg").textContent = "Not authorized";
+        setTimeout(() => {
+          window.location.href = "/static/parent_home.html";
+        }, 1000);
+        return;
+      }
+      await refreshCounts();
+    })();
+  </script>
+</body>
+</html>

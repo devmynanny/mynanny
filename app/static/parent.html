@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Parent</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 24px; max-width: 720px; margin: 0 auto; }
+    input, button { font-size: 16px; padding: 10px; width: 100%; box-sizing: border-box; margin: 8px 0; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-top: 16px; }
+    .muted { color: #666; font-size: 14px; }
+    pre { background:#f6f6f6; padding:12px; border-radius:8px; overflow:auto; }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin: 10px 0 20px 0;
+    }
+    .btn.secondary{
+      background:#fff;
+      border:1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <h1>Parent</h1>
+
+  <div class="card">
+    <div class="muted">Default address</div>
+    <input id="address" placeholder="Start typing your street address" autocomplete="off" />
+    <div class="row">
+      <input id="label" placeholder="Label, eg Home or Work" value="Home" />
+      <button id="saveBtn">Save default location</button>
+    </div>
+    <div class="muted">This sets the lat and lng used for distance and default bookings.</div>
+  </div>
+
+  <div class="card">
+    <div class="muted">Captured data</div>
+    <pre id="out">{}</pre>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    let currentMe = null;
+    const state = {
+      place_id: null,
+      formatted_address: null,
+      lat: null,
+      lng: null,
+      street: null,
+      suburb: null,
+      city: null,
+      province: null,
+      postal_code: null,
+      country: null,
+      label: "Home"
+    };
+
+    function setOut() {
+      document.getElementById("out").textContent = JSON.stringify(state, null, 2);
+    }
+
+    function pickComponent(components, type) {
+      const c = (components || []).find(x => (x.types || []).includes(type));
+      return c ? c.long_name : null;
+    }
+
+    async function guard() {
+      const me = await requireMe();
+      if (me.role !== "parent") {
+        location.href = "/static/login.html";
+        throw new Error("Wrong role");
+      }
+      currentMe = me;
+      return me;
+    }
+
+    async function saveDefaultLocation() {
+      const me = currentMe || await guard();
+      if (!state.lat || !state.lng) {
+        alert("Pick an address from the dropdown first");
+        return;
+      }
+      state.label = document.getElementById("label").value || "Home";
+      setOut();
+
+      try {
+        await fetchJson(`/parents/${me.id}/location`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            place_id: state.place_id,
+            formatted_address: state.formatted_address,
+            lat: state.lat,
+            lng: state.lng,
+            street: state.street,
+            suburb: state.suburb,
+            city: state.city,
+            province: state.province,
+            postal_code: state.postal_code,
+            country: state.country,
+            location_label: state.label
+          })
+        });
+        alert("Saved");
+      } catch (e) {
+        alert("Save failed: " + e.message);
+      }
+    }
+
+    window.initMap = async function() {
+      await guard();
+      const input = document.getElementById("address");
+      const ac = new google.maps.places.Autocomplete(input, {
+        types: ["address"],
+        componentRestrictions: { country: "za" }
+      });
+
+      ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        if (!place || !place.geometry || !place.geometry.location) {
+          alert("Could not read that address, try another");
+          return;
+        }
+
+        const comps = place.address_components || [];
+        const streetNo = pickComponent(comps, "street_number");
+        const route = pickComponent(comps, "route");
+
+        state.place_id = place.place_id || null;
+        state.formatted_address = place.formatted_address || input.value || null;
+        state.lat = place.geometry.location.lat();
+        state.lng = place.geometry.location.lng();
+        state.street = [streetNo, route].filter(Boolean).join(" ") || null;
+        state.suburb = pickComponent(comps, "sublocality") || pickComponent(comps, "sublocality_level_1");
+        state.city = pickComponent(comps, "locality") || pickComponent(comps, "administrative_area_level_2");
+        state.province = pickComponent(comps, "administrative_area_level_1");
+        state.postal_code = pickComponent(comps, "postal_code");
+        state.country = pickComponent(comps, "country");
+        setOut();
+      });
+
+      document.getElementById("saveBtn").addEventListener("click", saveDefaultLocation);
+      document.getElementById("label").addEventListener("input", () => {
+        state.label = document.getElementById("label").value || "Home";
+        setOut();
+      });
+
+      setOut();
+    };
+  </script>
+
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initMap" async defer></script>
+</body>
+</html>

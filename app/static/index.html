@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <link rel="stylesheet" href="/static/theme.css" />
     <title>Nanny Finder</title>
     <style>
         body {
@@ -21,17 +22,45 @@
             margin-bottom: 12px;
             border-radius: 6px;
         }
+        .topbar{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            margin: 10px 0 20px 0;
+        }
+        .btn.secondary{
+            background:#fff;
+            border:1px solid #ccc;
+        }
     </style>
 </head>
 <body>
+    <div class="topbar">
+        <div></div>
+        <button id="logoutBtn" class="btn secondary" type="button">Log out</button>
+    </div>
     <h1>Nanny Finder</h1>
     <button onclick="loadNannies()">Load available nannies</button>
     <div id="results"></div>
 
+    <script src="/static/app.js?v=2"></script>
     <script>
+                (function(){
+                    const btn = document.getElementById("logoutBtn");
+                    if (!btn) return;
+                    btn.addEventListener("click", () => {
+                        localStorage.removeItem("token");
+                        window.location.href = "/static/login.html";
+                    });
+                })();
+
                 async function loadNannies() {
-                    const res = await fetch("/nannies/search?parent_user_id=1");
-                    const data = await res.json();
+                    const me = await requireMe();
+                    if (me.role !== "parent") {
+                        location.href = "/static/login.html";
+                        return;
+                    }
+                    const data = await fetchJson(`/nannies/search?parent_user_id=${me.id}`);
 
                     const nannies = data.results || [];
                     const container = document.getElementById("results");

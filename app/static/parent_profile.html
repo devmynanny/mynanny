@@ -1,0 +1,693 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>My Profile</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    .top{display:flex;gap:12px;align-items:center}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .card{border:1px solid #ddd;border-radius:14px;padding:16px;margin-top:16px}
+    label{display:block;font-weight:600;margin-top:10px}
+    input, textarea, select{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;margin-top:6px;box-sizing:border-box}
+    .muted{color:#666}
+    h1{margin:0;font-size:34px}
+    .lbl{display:block;font-weight:600;margin-top:10px}
+    .inp{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;margin-top:6px;box-sizing:border-box}
+    .input{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;margin-top:6px;box-sizing:border-box}
+    .hint{color:#666;font-size:13px;margin-top:6px}
+    .checkgrid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .chk {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #fff;
+    }
+
+    .chk input {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .chk span {
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1.2;
+    }
+
+    .chk:hover {
+      border-color: #cfcfcf;
+    }
+
+    .chk input:checked + span {
+      font-weight: 600;
+    }
+
+    @media (max-width: 720px) {
+      .checkgrid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin: 10px 0 20px 0;
+    }
+    .btn.secondary{
+      background:#fff;
+      border:1px solid #ccc;
+    }
+    .loc-card{border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-top:10px}
+    .loc-row{display:flex;justify-content:space-between;gap:16px;align-items:center}
+    .loc-actions{display:grid;grid-template-columns:140px 140px;gap:10px;align-items:center}
+    .loc-actions button, .loc-actions .pill{width:140px;height:44px}
+    .loc-actions .pill{display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:12px;background:#fff;cursor:pointer}
+    .default-indicator{color:#22c55e;font-weight:600;margin-left:6px}
+    .readonly-field input{background:#f3f4f6;color:#6b7280;cursor:not-allowed}
+    .loc-title{font-weight:700}
+    .loc-sub{color:#555;font-size:14px;margin-top:4px}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+    .modal{background:#fff;border-radius:12px;border:1px solid #ddd;width:min(520px,100%);padding:16px}
+    .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div id="profileBanner" style="display:none; background:#fff4e5; border:1px solid #f0c36d; color:#7a4b00; padding:10px 12px; border-radius:10px; margin: 10px 0 16px 0;"></div>
+  <div class="top">
+    <button class="btn back-btn" onclick="location.href='/static/parent_home.html'">Back</button>
+    <h1>My Profile</h1>
+  </div>
+
+  <div class="card" id="locationsCard">
+    <div class="muted">Saved locations</div>
+    <div id="locationsList"></div>
+    <button class="btn" id="addLocationBtn" style="margin-top:12px">Add address</button>
+  </div>
+
+  <div class="card">
+    <div class="muted">This saves basic household details used for matching.</div>
+
+    <div class="readonly-field">
+      <label>Name</label>
+      <input type="text" id="client-name" disabled />
+    </div>
+
+    <div class="readonly-field">
+      <label>Email</label>
+      <input type="email" id="client-email" disabled />
+    </div>
+
+    <label>Phone</label>
+    <input type="tel" id="phone" placeholder="+27..." required />
+
+    <label class="lbl">Kids count</label>
+    <select id="kidsCount" class="inp">
+      <option value="0" selected>0</option>
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+      <option value="5">5</option>
+      <option value="6">6</option>
+      <option value="7">7</option>
+      <option value="8">8</option>
+      <option value="9">9</option>
+      <option value="10">10</option>
+    </select>
+
+    <div id="kidsAgesWrap" style="margin-top:12px;">
+      <label class="lbl">Kids ages</label>
+      <div id="kidsAgesList"></div>
+      <div class="hint">Select one age per child.</div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label class="lbl">What are you looking for?</label>
+      <div id="tagChecklist" class="checkgrid"></div>
+      <div class="hint">Select what matters most. You can change this later.</div>
+    </div>
+
+    <label>Home language</label>
+    <select id="homeLanguage" class="input">
+      <option value="">Select language</option>
+    </select>
+
+    <label>Special notes</label>
+    <textarea id="notes" rows="3"></textarea>
+
+    <label>Family photo URL</label>
+    <input id="photo" placeholder="https://..." />
+
+    <label>Type of residence</label>
+    <select id="residenceType" class="input">
+      <option value="">Select</option>
+      <option value="open_residential_street">Open residential street</option>
+      <option value="gated_community">Gated community</option>
+      <option value="access_required">Access required</option>
+    </select>
+
+    <label>Access flags (comma)</label>
+    <input id="accessFlags" placeholder="e.g. parking, intercom" />
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:12px;">
+      <button class="btn" id="saveBtn">Save profile</button>
+      <button class="btn secondary" id="viewNanniesBtn" style="display:none;">View nannies</button>
+    </div>
+    <div id="status" class="muted" style="margin-top:10px"></div>
+    <div id="savedMsg" style="color:green; display:none; margin-top:8px;">Saved</div>
+  </div>
+
+  <div id="locationModal" class="modalBack">
+    <div class="modal">
+      <div style="font-weight:700; margin-bottom:8px" id="locationModalTitle">Add address</div>
+      <label class="lbl">Address</label>
+      <input id="locAddress" class="inp" placeholder="Start typing your address" autocomplete="off" />
+      <button class="btn secondary" id="useCurrentLocationBtn" type="button" style="margin-top:10px;width:100%">Use current location</button>
+      <div id="locStatus" class="hint" style="min-height:18px"></div>
+
+      <label class="lbl">Label</label>
+      <select id="locLabel" class="inp">
+        <option value="Home">Home</option>
+        <option value="Work">Work</option>
+        <option value="Other">Other</option>
+      </select>
+      <label class="lbl" style="display:flex;align-items:center;gap:8px;font-weight:500;">
+        <input type="checkbox" id="makeDefaultChk" style="width:auto;">
+        Make this my default
+      </label>
+
+      <div class="row">
+        <button class="btn secondary" id="cancelLocationBtn" type="button">Cancel</button>
+        <button class="btn" id="saveLocationBtn" type="button">Save address</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    let editingLocationId = null;
+    let locationState = {
+      place_id: null,
+      formatted_address: null,
+      lat: null,
+      lng: null,
+      street: null,
+      suburb: null,
+      city: null,
+      province: null,
+      postal_code: null,
+      country: null,
+      label: "Home",
+    };
+
+    async function guard() {
+      const me = await requireMe();
+      if (me.role !== "parent") {
+        location.href = "/static/login.html";
+        throw new Error("Wrong role");
+      }
+      return me;
+    }
+
+    function pickComponent(components, type) {
+      const c = (components || []).find(x => (x.types || []).includes(type));
+      return c ? c.long_name : null;
+    }
+
+    function openLocationModal(title) {
+      document.getElementById("locationModalTitle").textContent = title;
+      document.getElementById("locationModal").style.display = "flex";
+    }
+
+    function closeLocationModal() {
+      document.getElementById("locationModal").style.display = "none";
+    }
+
+    function setLocStatus(msg, durationMs) {
+      const el = document.getElementById("locStatus");
+      if (!el) return;
+      el.textContent = msg || "";
+      if (durationMs) {
+        setTimeout(() => {
+          if (el.textContent === msg) el.textContent = "";
+        }, durationMs);
+      }
+    }
+
+    function round5(v) {
+      return Number.parseFloat(Number(v).toFixed(5));
+    }
+
+    async function useCurrentLocation() {
+      const btn = document.getElementById("useCurrentLocationBtn");
+      if (!navigator.geolocation) {
+        setLocStatus("Geolocation not supported", 3000);
+        return;
+      }
+
+      btn.disabled = true;
+      const prevText = btn.textContent;
+      btn.textContent = "Locating…";
+      setLocStatus("");
+
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        try {
+          const data = await fetchJson(`/geo/reverse?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+          if (data && data.status && data.status !== "OK") {
+            setLocStatus(data.error_message || data.status || "Reverse geocode failed", 3000);
+            return;
+          }
+
+          locationState.place_id = data.place_id || null;
+          locationState.formatted_address = data.formatted_address || null;
+          locationState.lat = data.lat ?? lat;
+          locationState.lng = data.lng ?? lng;
+          locationState.street = data.street || null;
+          locationState.suburb = data.suburb || null;
+          locationState.city = data.city || null;
+          locationState.province = data.province || null;
+          locationState.postal_code = data.postal_code || null;
+          locationState.country = data.country || null;
+
+          const addressInput = document.getElementById("locAddress");
+          if (addressInput) addressInput.value = data.formatted_address || "";
+
+          setLocStatus("Location found", 2000);
+        } catch (e) {
+          setLocStatus(e?.message || "Reverse geocode failed", 3000);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = prevText;
+        }
+      }, (err) => {
+        if (err && err.code === 1) {
+          setLocStatus("Allow location access", 3000);
+        } else {
+          setLocStatus("Unable to get location", 3000);
+        }
+        btn.disabled = false;
+        btn.textContent = prevText;
+      }, { enableHighAccuracy: true, timeout: 10000 });
+    }
+
+    function renderLocations(locs) {
+      const list = document.getElementById("locationsList");
+      list.innerHTML = "";
+      if (!locs || !locs.length) {
+        list.innerHTML = "<div class='muted' style='margin-top:8px'>No saved locations yet.</div>";
+        return;
+      }
+
+      locs.forEach(loc => {
+        const card = document.createElement("div");
+        card.className = "loc-card loc-row";
+        card.innerHTML = `
+          <div>
+            <div class="loc-title">${loc.label || "Location"}${loc.is_default ? ' <span class="default-indicator">(Default ✓)</span>' : ""}</div>
+            <div class="loc-sub">${loc.formatted_address || ""}</div>
+          </div>
+          <div class="location-actions">
+            <button class="pill" type="button" data-action="default">Default</button>
+            <button class="pill" type="button" data-action="delete">Delete</button>
+          </div>
+        `;
+        list.appendChild(card);
+
+        card.querySelector("button[data-action='default']").addEventListener("click", async () => {
+          try {
+            await fetchJson(`/parents/me/locations/${loc.id}/default`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            });
+            const updated = await fetchJson("/parents/me/locations");
+            renderLocations(updated);
+          } catch (e) {
+            alert(e?.message || "Failed to set default location");
+          }
+        });
+
+        card.querySelector("button[data-action='delete']").addEventListener("click", async () => {
+          if (!confirm("Delete this address?")) return;
+          await fetchJson(`/parents/me/locations/${loc.id}`, { method: "DELETE" });
+          await loadLocations();
+        });
+      });
+    }
+
+    async function loadLocations() {
+      const locs = await fetchJson("/parents/me/locations");
+      renderLocations(locs);
+    }
+
+    function buildAgeOptions(selectedVal) {
+      const ages = Array.from({ length: 19 }, (_, i) => i);
+      return ages.map(a => {
+        const sel = (String(selectedVal) === String(a)) ? "selected" : "";
+        return `<option value="${a}" ${sel}>${a}</option>`;
+      }).join("");
+    }
+
+    function renderKidsAgeSelects(count, agesArray = []) {
+      const list = document.getElementById("kidsAgesList");
+      list.innerHTML = "";
+      for (let i = 0; i < count; i++) {
+        const row = document.createElement("div");
+        row.style.marginTop = "8px";
+        row.innerHTML = `
+          <div class="lbl" style="font-weight:600; margin-bottom:6px;">Child ${i + 1} age</div>
+          <select class="inp kidAge" data-idx="${i}">
+            <option value="">Select age</option>
+            ${buildAgeOptions(agesArray[i] ?? "")}
+          </select>
+        `;
+        list.appendChild(row);
+      }
+    }
+
+    function renderKidsAgeDropdowns() {
+      const count = parseInt(document.getElementById("kidsCount").value || "0", 10);
+      const existing = Array.from(document.querySelectorAll(".kidAge"))
+        .map(s => s.value)
+        .filter(v => v !== "")
+        .map(v => Number(v));
+      renderKidsAgeSelects(count, existing);
+    }
+
+    function getKidsAges() {
+      return Array.from(document.querySelectorAll(".kidAge"))
+        .map(s => s.value)
+        .filter(v => v !== "")
+        .map(v => Number(v))
+        .filter(n => Number.isFinite(n));
+    }
+
+    async function loadTags() {
+      const tags = await fetchJson("/nanny-tags");
+      const box = document.getElementById("tagChecklist");
+      box.innerHTML = "";
+
+      (tags || []).forEach(t => {
+        const row = document.createElement("label");
+        row.className = "chk";
+        row.innerHTML = `
+          <input type="checkbox" class="tagChk" name="tags" value="${t.id}">
+          <span>${t.name}</span>
+        `;
+        box.appendChild(row);
+      });
+      return tags || [];
+    }
+
+    function getSelectedTagIds() {
+      return Array.from(document.querySelectorAll(".tagChk:checked"))
+        .map(x => parseInt(x.value, 10))
+        .filter(n => Number.isFinite(n));
+    }
+
+    async function loadLanguages() {
+      const langs = await fetchJson("/languages");
+      const sel = document.getElementById("homeLanguage");
+      sel.innerHTML = `<option value="">Select language</option>` + (langs || [])
+        .map(l => `<option value="${l.id}">${l.name}</option>`)
+        .join("");
+      return langs || [];
+    }
+
+    function applyTagChecks(tagIds = []) {
+      const set = new Set((tagIds || []).map(n => Number(n)));
+      document.querySelectorAll(".tagChk").forEach(chk => {
+        const id = Number(chk.value);
+        chk.checked = set.has(id);
+      });
+    }
+
+    async function loadProfileAndPrefill() {
+      let profile = null;
+      try {
+        profile = await fetchJson("/parents/me/profile");
+      } catch (e) {
+        const msg = (e && e.message) ? String(e.message) : "";
+        if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+          return;
+        }
+        return;
+      }
+
+      if (!profile || profile.exists === false) return;
+
+      const clientName = document.getElementById("client-name");
+      const clientEmail = document.getElementById("client-email");
+      if (clientName) clientName.value = profile.full_name || "";
+      if (clientEmail) clientEmail.value = profile.email || "";
+
+      const phone = document.getElementById("phone");
+      phone.value = profile.phone || "";
+
+      const kidsCount = Number.isInteger(profile.kids_count) ? profile.kids_count : 0;
+      document.getElementById("kidsCount").value = String(kidsCount);
+      const ages = Array.isArray(profile.kids_ages) ? profile.kids_ages.map(a => Number(a)).filter(Number.isFinite) : [];
+      renderKidsAgeSelects(kidsCount, ages);
+
+      await loadTags();
+      applyTagChecks(profile.desired_tag_ids || []);
+
+      await loadLanguages();
+      document.getElementById("homeLanguage").value = profile.home_language_id ? String(profile.home_language_id) : "";
+
+      document.getElementById("residenceType").value = profile.residence_type || "";
+      document.getElementById("notes").value = profile.special_notes || "";
+      document.getElementById("photo").value = profile.family_photo_url || "";
+      document.getElementById("accessFlags").value = Array.isArray(profile.access_flags)
+        ? profile.access_flags.join(", ")
+        : (profile.access_flags || "");
+    }
+
+    function parseCsvStrings(s){
+      const t = (s || "").trim();
+      if (!t) return [];
+      return t.split(",").map(x => x.trim()).filter(Boolean);
+    }
+
+    async function saveLocation() {
+      if (!locationState.lat || !locationState.lng) {
+        alert("Please select an address from the dropdown");
+        return;
+      }
+      locationState.label = document.getElementById("locLabel").value || "Home";
+      const makeDefault = document.getElementById("makeDefaultChk").checked;
+      const payload = {
+        label: locationState.label,
+        place_id: locationState.place_id,
+        formatted_address: locationState.formatted_address,
+        lat: locationState.lat,
+        lng: locationState.lng,
+        street: locationState.street,
+        suburb: locationState.suburb,
+        city: locationState.city,
+        province: locationState.province,
+        postal_code: locationState.postal_code,
+        country: locationState.country,
+      };
+
+      const created = await fetchJson("/parents/me/locations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (makeDefault && created && created.id) {
+        await fetchJson(`/parents/me/locations/${created.id}/default`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+      }
+
+      editingLocationId = null;
+      closeLocationModal();
+      await loadLocations();
+    }
+
+    window.initAddressAutocomplete = function() {
+      const input = document.getElementById("locAddress");
+      if (!input || !window.google || !google.maps || !google.maps.places) return;
+      const ac = new google.maps.places.Autocomplete(input, {
+        types: ["address"],
+        componentRestrictions: { country: "za" }
+      });
+
+      ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        if (!place || !place.geometry || !place.geometry.location) {
+          alert("Could not read that address, try another");
+          return;
+        }
+
+        const comps = place.address_components || [];
+        const streetNo = pickComponent(comps, "street_number");
+        const route = pickComponent(comps, "route");
+
+        locationState.place_id = place.place_id || null;
+        locationState.formatted_address = place.formatted_address || input.value || null;
+        locationState.lat = place.geometry.location.lat();
+        locationState.lng = place.geometry.location.lng();
+        locationState.street = [streetNo, route].filter(Boolean).join(" ") || null;
+        locationState.suburb = pickComponent(comps, "sublocality") || pickComponent(comps, "sublocality_level_1");
+        locationState.city = pickComponent(comps, "locality") || pickComponent(comps, "administrative_area_level_2");
+        locationState.province = pickComponent(comps, "administrative_area_level_1");
+        locationState.postal_code = pickComponent(comps, "postal_code");
+        locationState.country = pickComponent(comps, "country");
+      });
+    };
+
+    document.getElementById("kidsCount").addEventListener("change", renderKidsAgeDropdowns);
+    renderKidsAgeDropdowns();
+    loadTags();
+    loadLanguages();
+
+    document.getElementById("addLocationBtn").addEventListener("click", () => {
+      editingLocationId = null;
+      locationState = {
+        place_id: null,
+        formatted_address: null,
+        lat: null,
+        lng: null,
+        street: null,
+        suburb: null,
+        city: null,
+        province: null,
+        postal_code: null,
+        country: null,
+        label: "Home",
+      };
+      document.getElementById("locAddress").value = "";
+      document.getElementById("locLabel").value = "Home";
+      document.getElementById("makeDefaultChk").checked = false;
+      setLocStatus("");
+      openLocationModal("Add address");
+    });
+
+    document.getElementById("cancelLocationBtn").addEventListener("click", closeLocationModal);
+    document.getElementById("saveLocationBtn").addEventListener("click", () => {
+      saveLocation().catch(e => alert(e?.message || String(e)));
+    });
+
+    document.getElementById("useCurrentLocationBtn").addEventListener("click", () => {
+      useCurrentLocation().catch(e => setLocStatus(e?.message || String(e), 3000));
+    });
+
+    document.getElementById("saveBtn").addEventListener("click", async () => {
+      const status = document.getElementById("status");
+      const saveBtn = document.getElementById("saveBtn");
+      const viewBtn = document.getElementById("viewNanniesBtn");
+      const phone = document.getElementById("phone");
+      const languageSelect = document.getElementById("homeLanguage");
+      const residenceSelect = document.getElementById("residenceType");
+      const selectedTags = document.querySelectorAll("input[name='tags']:checked");
+      const me = await guard();
+      const kids_count = parseInt(document.getElementById("kidsCount").value || "0", 10);
+      const kids_ages = getKidsAges();
+      if (!phone.value.trim()) {
+        alert("Cellphone number is required");
+        return;
+      }
+      if (selectedTags.length === 0) {
+        alert("Please select at least one option");
+        return;
+      }
+      if (!languageSelect.value) {
+        alert("Please select a home language");
+        return;
+      }
+      if (!residenceSelect.value) {
+        alert("Please select a residence type");
+        return;
+      }
+      if (kids_ages.length !== kids_count) {
+        status.textContent = "Please select an age for each child.";
+        return;
+      }
+
+      const payload = {
+        phone: document.getElementById("phone").value || null,
+        kids_count,
+        kids_ages,
+        desired_tag_ids: getSelectedTagIds(),
+        home_language_id: document.getElementById("homeLanguage").value
+          ? Number(document.getElementById("homeLanguage").value)
+          : null,
+        special_notes: document.getElementById("notes").value || null,
+        family_photo_url: document.getElementById("photo").value || null,
+        residence_type: document.getElementById("residenceType").value || null,
+        access_flags: parseCsvStrings(document.getElementById("accessFlags").value)
+      };
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+      status.textContent = "";
+      try {
+        await fetchJson(`/parents/${me.id}/profile-details`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const msg = document.getElementById("savedMsg");
+        msg.style.display = "block";
+        setTimeout(() => {
+          msg.style.display = "none";
+        }, 2000);
+        await loadProfileAndPrefill();
+        const profStatus = await fetchJson("/parents/me/profile-status");
+        viewBtn.style.display = profStatus?.is_profile_complete ? "inline-block" : "none";
+      } catch (e) {
+        status.textContent = "Save failed: " + (e?.message || String(e));
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save profile";
+      }
+    });
+
+    document.getElementById("viewNanniesBtn").addEventListener("click", () => {
+      location.href = "/static/parent_candidates.html";
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      guard().then(() => loadProfileAndPrefill()).catch(() => {});
+    });
+
+    guard().then(async () => {
+      await loadParentContext();
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("reason") === "incomplete_profile") {
+        const banner = document.getElementById("profileBanner");
+        banner.textContent = "Complete your profile to filter and book nannies.";
+        banner.style.display = "block";
+      }
+      await loadLocations();
+      try {
+        const status = await fetchJson("/parents/me/profile-status");
+        document.getElementById("viewNanniesBtn").style.display = status?.is_profile_complete ? "inline-block" : "none";
+      } catch {}
+    }).catch(() => {});
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initAddressAutocomplete" async defer></script>
+</body>
+</html>

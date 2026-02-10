@@ -1,0 +1,232 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Change Logs</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+    h1 { margin: 8px 0 18px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .btn{ padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer }
+    .err { color:#b00020; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { text-align:left; padding:8px; border-bottom:1px solid #eee; font-size:14px; }
+    tr.clickable:hover { background:#f7f7f7; cursor:pointer; }
+    .muted { color:#666; font-size:12px; }
+    .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:none; align-items:center; justify-content:center; z-index:9999; }
+    .modal { background:#fff; max-width:1000px; width:92%; border-radius:12px; padding:16px; max-height:80vh; overflow:auto; }
+    pre { background:#f7f7f7; padding:10px; border-radius:8px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <div id="topbar" style="margin-bottom:8px;"></div>
+  <h1>Change logs</h1>
+  <div id="authMsg" class="err"></div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px;">
+      <button class="btn" id="btnBookingRequests" type="button">Booking requests</button>
+      <button class="btn" id="btnPendingNannies" type="button">Pending nannies</button>
+      <button class="btn" id="btnUsers" type="button">Users</button>
+      <button class="btn" id="btnChangeLogs" type="button">Change logs</button>
+    </div>
+    <div class="row">
+      <label>
+        Search by
+        <select id="searchType">
+          <option value="job">Job number</option>
+          <option value="user">User ID</option>
+        </select>
+      </label>
+      <input id="searchValue" type="text" placeholder="Enter value" />
+      <button class="btn" id="searchBtn" type="button">Search</button>
+      <button class="btn" id="clearBtn" type="button">Clear</button>
+    </div>
+    <details style="margin-top:10px;">
+      <summary>Filters</summary>
+      <div class="row" style="margin-top:8px;">
+        <label>Entity <input id="filterEntity" type="text" placeholder="booking_requests" /></label>
+        <label>Action <input id="filterAction" type="text" placeholder="status_change" /></label>
+        <label>From <input id="filterFrom" type="datetime-local" /></label>
+        <label>To <input id="filterTo" type="datetime-local" /></label>
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Actor</th>
+          <th>Target</th>
+          <th>Entity</th>
+          <th>Entity ID</th>
+          <th>Action</th>
+          <th>Changed fields</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="row" style="justify-content:flex-end; margin-top:12px;">
+    <button class="btn back-btn" id="backBottomBtn" type="button">Back to dashboard</button>
+  </div>
+
+  <div id="modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="row" style="justify-content:space-between;">
+        <strong>Audit details</strong>
+        <button class="btn" id="closeModal" type="button">Close</button>
+      </div>
+      <div class="row" style="gap:16px; align-items:flex-start;">
+        <div style="flex:1;">
+          <h3>Before</h3>
+          <pre id="beforeJson"></pre>
+        </div>
+        <div style="flex:1;">
+          <h3>After</h3>
+          <pre id="afterJson"></pre>
+        </div>
+      </div>
+      <div style="margin-top:12px;">
+        <h3>Changed fields</h3>
+        <pre id="changedFields"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const authMsg = document.getElementById("authMsg");
+
+    document.getElementById("btnUsers").onclick = () => window.location.href = "/static/admin_dashboard.html";
+    document.getElementById("btnPendingNannies").onclick = () => window.location.href = "/static/admin_dashboard.html#pending-nannies";
+    document.getElementById("btnBookingRequests").onclick = () => window.location.href = "/static/admin_dashboard.html#booking-requests";
+    document.getElementById("btnChangeLogs").onclick = () => window.location.href = "/static/admin_audit.html";
+    document.getElementById("backBottomBtn").onclick = () => window.location.href = "/static/admin_dashboard.html";
+
+    const modal = document.getElementById("modal");
+    document.getElementById("closeModal").onclick = () => { modal.style.display = "none"; };
+    modal.addEventListener("click", (e) => { if (e.target === modal) modal.style.display = "none"; });
+
+    function toIso(value) {
+      if (!value) return null;
+      try { return new Date(value).toISOString(); } catch { return null; }
+    }
+
+    function renderRows(rows) {
+      const tbody = document.querySelector("#resultsTable tbody");
+      tbody.innerHTML = "";
+      const fmtTime = (value) => {
+        if (window.formatDateTimeZA) return window.formatDateTimeZA(value);
+        if (!value) return "-";
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return String(value);
+        return d.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
+      };
+      rows.forEach(r => {
+        const tr = document.createElement("tr");
+        tr.className = "clickable";
+        tr.dataset.id = r.id;
+        const actorRole = (r.actor_role || "").toLowerCase();
+        const actorId = r.actor_user_id;
+        let actorText = `user #${actorId}`;
+        if (actorRole === "admin") actorText = `admin #${actorId}`;
+        else if (actorRole === "parent") actorText = `parent #${actorId}`;
+        else if (actorRole === "nanny") actorText = `nanny #${actorId}`;
+        const changed = Array.isArray(r.changed_fields) ? r.changed_fields.join(", ") : (r.changed_fields || "-");
+        tr.innerHTML = `
+          <td>${fmtTime(r.created_at)}</td>
+          <td>${actorText}</td>
+          <td>${r.target_user_id || "-"}</td>
+          <td>${r.entity || "-"}</td>
+          <td>${r.entity_id || "-"}</td>
+          <td>${r.action || "-"}</td>
+          <td>${changed || "-"}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function loadAuditLogs(params) {
+      const qs = new URLSearchParams(params);
+      const data = await fetchJson(`/admin/audit-logs?${qs.toString()}`);
+      return data;
+    }
+
+    async function search() {
+      authMsg.textContent = "";
+      const searchType = document.getElementById("searchType").value;
+      const searchValue = document.getElementById("searchValue").value.trim();
+      const entity = document.getElementById("filterEntity").value.trim() || null;
+      const action = document.getElementById("filterAction").value.trim() || null;
+      const from_ts = toIso(document.getElementById("filterFrom").value);
+      const to_ts = toIso(document.getElementById("filterTo").value);
+
+      const baseParams = {};
+      if (entity) baseParams.entity = entity;
+      if (action) baseParams.action = action;
+      if (from_ts) baseParams.from_ts = from_ts;
+      if (to_ts) baseParams.to_ts = to_ts;
+
+      if (!searchValue) {
+        const data = await loadAuditLogs(baseParams);
+        renderRows(data.results || []);
+        return;
+      }
+
+      if (searchType === "job") {
+        const paramsA = { ...baseParams, entity: "booking_requests", entity_id: searchValue };
+        const paramsB = { ...baseParams, entity: "bookings", entity_id: searchValue };
+        const [a, b] = await Promise.all([loadAuditLogs(paramsA), loadAuditLogs(paramsB)]);
+        const combined = [...(a.results || []), ...(b.results || [])];
+        combined.sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime());
+        renderRows(combined);
+      } else {
+        const data = await loadAuditLogs({ ...baseParams, target_user_id: searchValue });
+        renderRows(data.results || []);
+      }
+    }
+
+    document.getElementById("searchBtn").onclick = () => search().catch(e => authMsg.textContent = e.message || "Error");
+    document.getElementById("clearBtn").onclick = () => {
+      document.getElementById("searchValue").value = "";
+      document.getElementById("filterEntity").value = "";
+      document.getElementById("filterAction").value = "";
+      document.getElementById("filterFrom").value = "";
+      document.getElementById("filterTo").value = "";
+      search().catch(() => {});
+    };
+
+    document.querySelector("#resultsTable tbody").addEventListener("click", async (e) => {
+      const row = e.target.closest("tr");
+      if (!row || !row.dataset.id) return;
+      const detail = await fetchJson(`/admin/audit-logs/${row.dataset.id}`);
+      document.getElementById("beforeJson").textContent = JSON.stringify(detail.before_json ?? {}, null, 2);
+      document.getElementById("afterJson").textContent = JSON.stringify(detail.after_json ?? {}, null, 2);
+      document.getElementById("changedFields").textContent = JSON.stringify(detail.changed_fields ?? [], null, 2);
+      modal.style.display = "flex";
+    });
+
+    (async function init(){
+      const token = localStorage.getItem("token");
+      if (!token) {
+        window.location.href = "/static/login.html";
+        return;
+      }
+      const res = await fetch("/admin/me", { headers: { "Authorization": "Bearer " + token } });
+      if (!res.ok) {
+        authMsg.textContent = "Not authorized";
+        setTimeout(() => { window.location.href = "/static/parent_home.html"; }, 1000);
+        return;
+      }
+      await search();
+    })();
+  </script>
+</body>
+</html>

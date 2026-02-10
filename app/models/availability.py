@@ -11,6 +11,9 @@ class NannyAvailability(Base):
     date = Column(Date, nullable=False)
     start_time = Column(Time, nullable=False)
     end_time = Column(Time, nullable=False)
+    start_dt = Column(Text, nullable=True)
+    end_dt = Column(Text, nullable=True)
+    type = Column(Text, nullable=False, default="available")
 
     is_available = Column(Boolean, nullable=False, default=True)
     created_by = Column(Text, nullable=False, default="admin")

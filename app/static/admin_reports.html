@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin Reports</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin:10px 0 20px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+    .filters-row{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end}
+    .filters-row .field{display:flex;flex-direction:column;gap:6px;min-width:180px}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .muted{color:#666}
+    label{font-size:12px;color:#666}
+    select,input{padding:8px;border-radius:8px;border:1px solid #ccc}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+    <h1>Reports</h1>
+    <button class="btn back-btn" id="backBtn" type="button">Back to dashboard</button>
+  </div>
+
+  <div class="card">
+    <div class="filters-row">
+      <div class="field">
+        <label>Range</label>
+        <select id="range">
+          <option value="day">Today</option>
+          <option value="week">Last 7 days</option>
+          <option value="month" selected>Last 30 days</option>
+          <option value="quarter">Last 3 months</option>
+          <option value="year">Last 12 months</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>From (optional)</label>
+        <input id="start" type="date">
+      </div>
+      <div class="field">
+        <label>To (optional)</label>
+        <input id="end" type="date">
+      </div>
+      <div class="field" style="min-width:auto;">
+        <button class="btn" id="runBtn" type="button">Run</button>
+      </div>
+    </div>
+  </div>
+
+    <div class="card">
+      <h3>Paid Jobs Only</h3>
+      <div class="grid" id="statsGrid"></div>
+    </div>
+    <div class="card">
+      <h3>Refunds</h3>
+      <div class="muted">Refund approvals are handled from the Admin dashboard.</div>
+    </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    function cents(v){ return "R" + ((v||0)/100).toFixed(2); }
+
+    async function runReport() {
+      const range = document.getElementById("range").value;
+      const start = document.getElementById("start").value;
+      const end = document.getElementById("end").value;
+      const qs = new URLSearchParams();
+      if (start && end) {
+        qs.set("start", start + "T00:00:00");
+        qs.set("end", end + "T23:59:59");
+      } else {
+        qs.set("range", range);
+      }
+      const data = await fetchJson("/admin/reports/jobs?" + qs.toString());
+      const grid = document.getElementById("statsGrid");
+      grid.innerHTML = `
+        <div><strong>Total paid jobs</strong><div class="muted">${data.total_paid_jobs}</div></div>
+        <div><strong>Accepted</strong><div class="muted">${data.accepted}</div></div>
+        <div><strong>In progress</strong><div class="muted">${data.in_progress}</div></div>
+        <div><strong>Completed</strong><div class="muted">${data.completed}</div></div>
+        <div><strong>Cancelled</strong><div class="muted">${data.cancelled}</div></div>
+        <div><strong>Total paid</strong><div class="muted">${cents(data.total_paid_cents)}</div></div>
+        <div><strong>Company income</strong><div class="muted">${cents(data.company_income_cents)}</div></div>
+        <div><strong>Refunded</strong><div class="muted">${cents(data.refunded_cents)}</div></div>
+        <div><strong>Net company income</strong><div class="muted">${cents(data.net_company_income_cents)}</div></div>
+        <div><strong>Nanny wages</strong><div class="muted">${cents(data.nanny_income_cents)}</div></div>
+      `;
+    }
+
+    document.getElementById("runBtn").addEventListener("click", () => {
+      runReport().catch(e => alert(e.message || "Error"));
+    });
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/admin_dashboard.html";
+    });
+
+    (async () => {
+      const me = await requireMe();
+      if (!me?.is_admin) { location.href = "/static/login.html"; return; }
+      runReport().catch(() => {});
+    })();
+  </script>
+</body>
+</html>

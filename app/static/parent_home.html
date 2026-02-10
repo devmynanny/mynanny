@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>My Nanny</title>
+  <style>
+    .page { max-width: 720px; margin: 40px auto; padding: 0 16px; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    .sub { color: #555; margin-top: 6px; }
+    .card { border: 1px solid #ddd; border-radius: 14px; padding: 18px; margin-top: 18px; }
+    .btn { width: 100%; padding: 14px 16px; border-radius: 12px; border: 1px solid #bbb; background: #fff; font-size: 18px; cursor: pointer; }
+    .btn.primary { border-color: #1d4ed8; }
+    .hint { margin: 8px 2px 0; color: #666; font-size: 14px; }
+    .msg { margin-top: 12px; color: #b91c1c; }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin: 10px 0 20px 0;
+    }
+    .btn.secondary{
+      background:#fff;
+      border:1px solid #ccc;
+    }
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px}
+    .modal{background:#fff;border-radius:12px;width:min(520px,100%);border:1px solid #ddd;padding:18px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .modal h3{margin:0 0 10px}
+    .modal .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .modal label{font-size:13px;color:#555}
+    .modal input,.modal select{padding:10px;border-radius:10px;border:1px solid #ccc}
+    .modal .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+    .weekdays{display:flex;flex-wrap:wrap;gap:8px}
+    .weekdays label{display:flex;align-items:center;gap:6px;font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div id="topbar" class="topbar" data-disable-logout="true"></div>
+    <h1>Welcome to My Nanny</h1>
+    <p class="sub">We’ll help you get the help you deserve</p>
+
+    <div class="card">
+      <div id="banner" class="muted" style="margin-bottom:10px;"></div>
+      <button id="btnCandidates" class="btn primary">View Candidates/Request Nannies</button>
+
+      <div style="height:12px"></div>
+
+      <button id="btnJobs" class="btn">My Bookings</button>
+
+      <div style="height:12px"></div>
+
+      <button id="btnProfile" class="btn">My Profile</button>
+    </div>
+
+    <div id="msg" class="msg"></div>
+    <button id="logoutBottom" class="btn secondary" style="margin-top:24px; display:none;">Log out</button>
+  </div>
+
+  <div id="requestTypeModal" class="modalBack">
+    <div class="modal">
+      <h3>Request type</h3>
+      <div class="row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+        <label><input type="radio" name="requestType" value="once" checked> Once‑off booking</label>
+        <label><input type="radio" name="requestType" value="multi"> Multiple days</label>
+        <label><input type="radio" name="requestType" value="permanent"> Permanent placement</label>
+      </div>
+      <div class="actions">
+        <button class="btn secondary" id="requestTypeCancel" type="button">Cancel</button>
+        <button class="btn" id="requestTypeNext" type="button">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="multiDayModal" class="modalBack">
+    <div class="modal">
+      <h3>Choose days</h3>
+      <div class="row">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label>Start date</label>
+          <input id="multiStartDate" type="date">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label>Weeks</label>
+          <input id="multiWeeks" type="number" min="1" value="1" style="width:120px;">
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label>Weekdays</label>
+        <div class="weekdays">
+          <label><input type="checkbox" value="Mon" checked> Mon</label>
+          <label><input type="checkbox" value="Tue" checked> Tue</label>
+          <label><input type="checkbox" value="Wed" checked> Wed</label>
+          <label><input type="checkbox" value="Thu" checked> Thu</label>
+          <label><input type="checkbox" value="Fri" checked> Fri</label>
+          <label><input type="checkbox" value="Sat"> Sat</label>
+          <label><input type="checkbox" value="Sun"> Sun</label>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label>Start time (optional)</label>
+          <input id="multiStartTime" type="time">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">
+          <label>End time (optional)</label>
+          <input id="multiEndTime" type="time">
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn secondary" id="multiCancel" type="button">Cancel</button>
+        <button class="btn" id="multiContinue" type="button">Continue to candidates</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="permanentModal" class="modalBack">
+    <div class="modal">
+      <h3>Permanent placement</h3>
+      <div class="muted">For permanent placements, please contact our admin team so we can assist you directly.</div>
+      <div class="actions">
+        <button class="btn" id="permanentClose" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    (async () => {
+      const me = await requireMe();
+      if (me.role !== "parent") { location.href = "/static/login.html"; return; }
+
+      const logoutBtn = document.getElementById("logoutBottom");
+      logoutBtn.style.display = "block";
+      logoutBtn.addEventListener("click", () => {
+        localStorage.removeItem("token");
+        window.location.href = "/static/login.html";
+      });
+
+      const requestTypeModal = document.getElementById("requestTypeModal");
+      const multiDayModal = document.getElementById("multiDayModal");
+      const permanentModal = document.getElementById("permanentModal");
+
+      document.getElementById("btnCandidates").addEventListener("click", () => {
+        if (requestTypeModal) requestTypeModal.style.display = "flex";
+      });
+
+      document.getElementById("btnProfile").addEventListener("click", () => {
+        location.href = "/static/parent_profile.html";
+      });
+
+      document.getElementById("requestTypeCancel").addEventListener("click", () => {
+        requestTypeModal.style.display = "none";
+      });
+      document.getElementById("requestTypeNext").addEventListener("click", () => {
+        const val = document.querySelector("input[name=\"requestType\"]:checked")?.value;
+        requestTypeModal.style.display = "none";
+        if (val === "once") {
+          location.href = "/static/parent_candidates.html?mode=all";
+        } else if (val === "multi") {
+          multiDayModal.style.display = "flex";
+        } else if (val === "permanent") {
+          permanentModal.style.display = "flex";
+        }
+      });
+
+      document.getElementById("multiCancel").addEventListener("click", () => {
+        multiDayModal.style.display = "none";
+      });
+      document.getElementById("multiContinue").addEventListener("click", () => {
+        const startDate = document.getElementById("multiStartDate").value || null;
+        const weeks = Number(document.getElementById("multiWeeks").value || 1);
+        const days = Array.from(multiDayModal.querySelectorAll(".weekdays input:checked")).map(i => i.value);
+        const startTime = document.getElementById("multiStartTime").value || null;
+        const endTime = document.getElementById("multiEndTime").value || null;
+        const payload = { startDate, weeks, days, startTime, endTime };
+        localStorage.setItem("parentMultiDayRequest", JSON.stringify(payload));
+        multiDayModal.style.display = "none";
+        location.href = "/static/parent_candidates.html?mode=all&multi=1";
+      });
+
+      document.getElementById("permanentClose").addEventListener("click", () => {
+        permanentModal.style.display = "none";
+      });
+      document.getElementById("btnJobs").addEventListener("click", () => {
+        location.href = "/static/parent_jobs.html";
+      });
+
+      try {
+        const status = await fetchJson("/parents/me/profile-status");
+        const complete = !!status?.is_profile_complete;
+        if (!complete) {
+          document.getElementById("banner").textContent = "Complete your profile to filter and book.";
+        }
+      } catch {}
+    })().catch(e => {
+      document.getElementById("msg").textContent = e.message || "Error";
+    });
+  </script>
+</body>
+</html>
