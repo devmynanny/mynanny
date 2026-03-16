@@ -1,11 +1,12 @@
 
-
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "dev-admin-change-this")
 
 class Settings:
-    database_url = "sqlite:///./nanny_app.db"
+    database_url = os.getenv("DATABASE_URL", "sqlite:///./nanny_app.db")
+    admin_api_key = os.getenv("ADMIN_API_KEY", "dev-admin-change-this")
+    jwt_secret = os.getenv("JWT_SECRET", "dev-jwt-change-this")
 
 settings = Settings()

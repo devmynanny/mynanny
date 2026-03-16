@@ -1,11 +1,12 @@
+from app.config import settings
 from datetime import date
 from fastapi import Depends, HTTPException, Header, Query
 from jose import jwt
 from sqlalchemy.orm import Session
 from app.db import SessionLocal
 
-ADMIN_API_KEY = "dev-admin-change-this"
-JWT_SECRET = "dev-jwt-change-this"
+ADMIN_API_KEY = settings.admin_api_key
+JWT_SECRET = settings.jwt_secret
 JWT_ALG = "HS256"
 
 def get_db():

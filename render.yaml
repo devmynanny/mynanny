@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: mynanny
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    disk:
+      name: app-data
+      mountPath: /opt/render/project/src/app/static/uploads
+      sizeGB: 1
+    envVars:
+      - key: APP_ENV
+        value: staging
+      - key: DATABASE_URL
+        value: sqlite:////opt/render/project/src/app/static/uploads/data/nanny_app.db
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false

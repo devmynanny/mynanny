@@ -1,6 +1,26 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
+
+
+def _ensure_sqlite_parent_dir(database_url: str) -> None:
+    prefix = "sqlite:///"
+    if not database_url.startswith(prefix):
+        return
+
+    raw_path = database_url[len(prefix):]
+    if raw_path == ":memory:":
+        return
+
+    db_path = Path(raw_path)
+    if not db_path.is_absolute():
+        db_path = Path.cwd() / db_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_sqlite_parent_dir(settings.database_url)
 
 engine = create_engine(
     settings.database_url,
