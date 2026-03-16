@@ -3,6 +3,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.config import settings
+from app import security
 
 
 def _ensure_sqlite_parent_dir(database_url: str) -> None:
@@ -513,3 +514,52 @@ def ensure_pricing_settings_schema() -> None:
             sql = f"INSERT INTO pricing_settings ({', '.join(insert_columns)}) VALUES ({placeholders})"
             params = {name: default_values[name] for name in insert_columns}
             conn.execute(text(sql), params)
+
+
+def ensure_bootstrap_admin() -> None:
+    email = settings.bootstrap_admin_email
+    password = settings.bootstrap_admin_password
+    if not email or not password:
+        return
+
+    password_hash = security.hash_password(password)
+    with engine.begin() as conn:
+        if not _table_exists(conn, "users"):
+            return
+
+        existing = conn.execute(
+            text("SELECT id FROM users WHERE lower(email) = :email LIMIT 1"),
+            {"email": email},
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                text("""
+                    UPDATE users
+                    SET
+                      name = COALESCE(NULLIF(name, ''), :name),
+                      role = 'admin',
+                      password_hash = :password_hash,
+                      is_admin = 1,
+                      is_active = 1
+                    WHERE id = :user_id
+                """),
+                {
+                    "user_id": existing[0],
+                    "name": email.split("@", 1)[0],
+                    "password_hash": password_hash,
+                },
+            )
+            return
+
+        conn.execute(
+            text("""
+                INSERT INTO users (name, role, email, password_hash, is_admin, is_active)
+                VALUES (:name, 'admin', :email, :password_hash, 1, 1)
+            """),
+            {
+                "name": email.split("@", 1)[0],
+                "email": email,
+                "password_hash": password_hash,
+            },
+        )
