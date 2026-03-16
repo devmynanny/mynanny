@@ -6,7 +6,7 @@ import os
 
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from app.routes import router
@@ -99,6 +99,6 @@ app.include_router(router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def home():
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return RedirectResponse(url="/static/login.html", status_code=307)
