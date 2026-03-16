@@ -271,7 +271,6 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password })
         });
-        setToken(res.access_token);
         const u = await fetchJson("/auth/me");
 
         // Upload documents after signup for nannies
@@ -282,15 +281,30 @@
         const permitFile = document.getElementById("permitFile")?.files?.[0];
           if (passportFile) {
             const fd = new FormData(); fd.append("file", passportFile);
-            uploads.push(fetch("/nannies/me/passport-document", { method: "POST", headers: { "Authorization": "Bearer " + getToken() }, body: fd }));
+            uploads.push(fetch("/nannies/me/passport-document", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {},
+              body: fd
+            }));
           }
           if (saIdFile) {
             const fd = new FormData(); fd.append("file", saIdFile);
-            uploads.push(fetch("/nannies/me/id-document", { method: "POST", headers: { "Authorization": "Bearer " + getToken() }, body: fd }));
+            uploads.push(fetch("/nannies/me/id-document", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {},
+              body: fd
+            }));
           }
           if (permitFile) {
             const fd = new FormData(); fd.append("file", permitFile);
-            uploads.push(fetch("/nannies/me/work-permit-document", { method: "POST", headers: { "Authorization": "Bearer " + getToken() }, body: fd }));
+            uploads.push(fetch("/nannies/me/work-permit-document", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {},
+              body: fd
+            }));
           }
           await Promise.all(uploads).catch(() => {});
         }

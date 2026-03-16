@@ -19,6 +19,32 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  margin: 0 auto;
+  padding: 24px;
+  max-width: 1100px;
+  width: min(1100px, 100%);
+}
+
+@media (max-width: 720px) {
+  body {
+    padding: 16px;
+  }
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .topbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .card {
+    padding: 14px;
+  }
+  button, .btn, input, select, textarea {
+    font-size: 15px;
+  }
 }
 h1, h2, h3, h4, h5, h6 {
   font-family: "Poppins", "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;

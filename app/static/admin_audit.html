@@ -214,12 +214,7 @@
     });
 
     (async function init(){
-      const token = localStorage.getItem("token");
-      if (!token) {
-        window.location.href = "/static/login.html";
-        return;
-      }
-      const res = await fetch("/admin/me", { headers: { "Authorization": "Bearer " + token } });
+      const res = await fetch("/admin/me", { credentials: "same-origin" });
       if (!res.ok) {
         authMsg.textContent = "Not authorized";
         setTimeout(() => { window.location.href = "/static/parent_home.html"; }, 1000);

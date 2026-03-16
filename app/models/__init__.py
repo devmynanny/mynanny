@@ -86,6 +86,14 @@ class Booking(Base):
     location_mode = Column(String, nullable=True)
     location_label = Column(String, nullable=True)
     formatted_address = Column(String, nullable=True)
+    check_in_at = Column(DateTime, nullable=True)
+    check_in_lat = Column(Float, nullable=True)
+    check_in_lng = Column(Float, nullable=True)
+    check_in_distance_m = Column(Float, nullable=True)
+    check_out_at = Column(DateTime, nullable=True)
+    check_out_lat = Column(Float, nullable=True)
+    check_out_lng = Column(Float, nullable=True)
+    check_out_distance_m = Column(Float, nullable=True)
 
 
 class Review(Base):
@@ -220,6 +228,7 @@ class PricingSettings(Base):
     booking_fee_pct_1_5 = Column(Numeric(5, 4), nullable=False, default=0.30)
     booking_fee_pct_6_10 = Column(Numeric(5, 4), nullable=False, default=0.27)
     booking_fee_pct_10_plus = Column(Numeric(5, 4), nullable=False, default=0.25)
+    cancellation_fee_window_hours = Column(Integer, nullable=False, default=12)
 
 
 class ParentLocation(Base):
@@ -290,6 +299,7 @@ class NannyProfile(Base):
     waiver = Column(Boolean, nullable=True)
     sa_id_number = Column(String, nullable=True)
     sa_id_document_url = Column(String, nullable=True)
+    previous_jobs_json = Column(Text, nullable=True)
 
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)

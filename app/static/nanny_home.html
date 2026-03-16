@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Nanny Operations</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px;width:min(900px,100%)}
     .topbar{
       display:flex;
       align-items:center;
@@ -31,6 +31,7 @@
     <div class="row">
       <button class="btn" id="goAvailabilityBtn" type="button">Set availability</button>
       <button class="btn" id="goRequestsBtn" type="button">View booking requests</button>
+      <button class="btn" id="goHistoryBtn" type="button">Booking history</button>
       <button class="btn" id="goProfileBtn" type="button">My profile</button>
     </div>
   </div>
@@ -54,6 +55,9 @@
 
     document.getElementById("goRequestsBtn").addEventListener("click", () => {
       location.href = "/static/nanny_requests.html";
+    });
+    document.getElementById("goHistoryBtn").addEventListener("click", () => {
+      location.href = "/static/nanny_history.html";
     });
     document.getElementById("goProfileBtn").addEventListener("click", () => {
       location.href = "/static/nanny.html?from=ops";

@@ -7,16 +7,21 @@
   <title>Accept Admin Invite</title>
   <style>
     body { font-family: system-ui, Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    .topbar{display:flex;justify-content:flex-end;margin-bottom:10px}
     h1 { margin: 0 0 12px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
     label { display: block; margin: 12px 0 6px; font-weight: 600; }
     input { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; font-size: 16px; }
     button { margin-top: 14px; width: 100%; padding: 12px; border: 1px solid #222; border-radius: 10px; font-size: 16px; cursor: pointer; }
+    .topbar .btn{width:auto;margin-top:0;padding:8px 12px;border:1px solid #ccc;border-radius:10px;background:#fff}
     .err { color: #b00020; margin-top: 10px; }
     .muted { color: #666; font-size: 14px; }
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <button class="btn" id="backBtn" type="button">Back</button>
+  </div>
   <h1>Accept Admin Invite</h1>
   <div class="card">
     <div class="muted" id="inviteStatus">Loading invite...</div>
@@ -36,6 +41,10 @@
 
   <script src="/static/app.js?v=2"></script>
   <script>
+    document.getElementById("backBtn").addEventListener("click", () => {
+      window.location.href = "/static/admin_login.html";
+    });
+
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     const statusEl = document.getElementById("inviteStatus");
@@ -77,7 +86,6 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token, name, password })
         });
-        setToken(res.access_token);
         localStorage.setItem("is_admin", "true");
         window.location.href = "/static/admin_dashboard.html";
       } catch (e) {

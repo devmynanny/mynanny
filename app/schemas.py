@@ -49,6 +49,10 @@ class NannySearchResult(BaseModel):
     review_count_12m: int = 0
     distance_km: Optional[float] = None
     location_hint: Optional[str] = None
+    completed_jobs_count: int = 0
+    has_identity_document: bool = False
+    has_passport_document: bool = False
+    previous_jobs: Optional[List[dict]] = None
 
 class SearchNanniesResponse(BaseModel):
     results: List[NannySearchResult] = []
@@ -97,6 +101,15 @@ class CreateNannyProfileRequest(BaseModel):
     ethnicity: Optional[str] = None
 
 
+class NannyPreviousJob(BaseModel):
+    role: Optional[str] = None
+    employer: Optional[str] = None
+    period: Optional[str] = None
+    reference_name: Optional[str] = None
+    reference_phone: Optional[str] = None
+    reference_relationship: Optional[str] = None
+
+
 class NannyMeProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     phone: Optional[str] = None
@@ -114,6 +127,7 @@ class NannyMeProfileUpdate(BaseModel):
     waiver: Optional[bool] = None
     sa_id_number: Optional[str] = None
     sa_id_document_url: Optional[str] = None
+    previous_jobs: Optional[List[NannyPreviousJob]] = None
     tag_ids: Optional[List[int]] = None
     language_ids: Optional[List[int]] = None
 
@@ -137,6 +151,7 @@ class NannyMeProfileResponse(BaseModel):
     waiver: Optional[bool] = None
     sa_id_number: Optional[str] = None
     sa_id_document_url: Optional[str] = None
+    previous_jobs: List[NannyPreviousJob] = []
     tag_ids: List[int] = []
     language_ids: List[int] = []
     is_approved: bool
@@ -256,6 +271,23 @@ class BookingRequestBulkCreate(BaseModel):
     sleepover: Optional[bool] = None
 
 
+class BookingEstimateRequest(BaseModel):
+    start_dt: str
+    end_dt: str
+    sleepover: Optional[bool] = None
+    selected_count: Optional[int] = 1
+
+
+class BookingEstimateResponse(BaseModel):
+    currency: str = "ZAR"
+    per_nanny_total_cents: int
+    per_nanny_wage_cents: int
+    per_nanny_fee_cents: int
+    booking_fee_pct: float
+    selected_count: int = 1
+    selected_total_cents: int
+
+
 class NannySearchByTimeRequest(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -318,13 +350,10 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
     user: AuthUserOut
 
 
 class AuthResponse(BaseModel):
-    access_token: str
     user: AuthUserOut
 
 
@@ -360,6 +389,11 @@ class BookingStatus(str, Enum):
 
 class BookingStatusUpdateRequest(BaseModel):
     status: BookingStatus
+
+
+class BookingDutyActionRequest(BaseModel):
+    lat: float
+    lng: float
 
 
 class ReviewCreate(BaseModel):

@@ -2,11 +2,12 @@
 <html>
 <head>
   <link rel="stylesheet" href="/static/theme.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" />
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>My Nanny, candidates</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:1100px}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:1100px;width:min(1100px,100%)}
     .top{display:flex;gap:12px;align-items:center}
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:16px}
@@ -28,17 +29,31 @@
     .avatar{width:64px;height:64px;border-radius:12px;object-fit:cover;background:#f3f4f6;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;font-weight:600;color:#6b7280}
     .card-title{font-weight:700;font-size:18px}
     .actions{display:flex;gap:10px;align-items:center;margin-top:10px}
-    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999;}
     .modal{background:#fff;border-radius:10px;width:min(520px,100%);border:1px solid #ddd;padding:16px}
     .modal input, .modal select{width:100%;padding:10px;margin-top:6px;box-sizing:border-box}
     .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
-    .search-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
+    .estimateBox{margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
+    /* The calendar itself is the primary way to select a time range, so the manual
+       date/time search bar can remain hidden while still allowing scripts to use it */
+    .search-bar{display:none;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
     .search-bar label{display:block;font-size:12px;color:#666}
     .search-bar input{padding:10px;border-radius:10px;border:1px solid #ccc}
     .previewBtn{background:#fff;border:1px solid #bbb}
     .previewModal{background:#fff;border-radius:12px;width:min(640px,100%);border:1px solid #ddd;padding:18px;position:relative}
     .previewHeader{display:flex;gap:12px;align-items:center}
     .previewTitle{font-weight:700;font-size:20px}
+    .previewSection{margin-top:12px}
+    .previewSectionTitle{font-weight:600;margin-bottom:6px}
+    .infoGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+    .infoItem{font-size:14px;color:#444}
+    .infoItem strong{color:#1f2937}
+    .trustPills{display:flex;flex-wrap:wrap;gap:8px}
+    .trustPill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px}
+    .workList{display:grid;gap:8px}
+    .workItem{border:1px solid #e5e7eb;border-radius:10px;padding:8px}
+    .workRole{font-weight:600}
+    .workMeta{font-size:13px;color:#555}
     .heartBtn{position:absolute;top:12px;right:12px;border:none;background:transparent;font-size:26px;cursor:pointer}
     .heartBtn.off{color:#9ca3af}
     .heartBtn.on{color:#ef4444}
@@ -57,7 +72,7 @@
   <div id="topbar" class="topbar"></div>
   <div class="top">
     <button class="btn back-btn" onclick="location.href='/static/parent_home.html'">Back to home</button>
-    <h1>Candidates</h1>
+    <h1>Find My Candidates</h1>
   </div>
 
   <div class="search-bar">
@@ -74,6 +89,11 @@
       <input id="searchEndTime" type="time" />
     </div>
     <button class="btn" id="searchBtn" type="button">Search</button>
+  </div>
+
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin:0 0 10px;">Pick a time range</h3>
+    <div id="searchCalendar"></div>
   </div>
 
   <div class="filters">
@@ -135,6 +155,7 @@
       <label class="muted" style="margin-top:8px; display:block;">Notes (optional)</label>
       <input id="bookingNotes" type="text" placeholder="Any notes for the nanny" />
 
+      <div id="bookingEstimate" class="estimateBox muted">Calculating estimate...</div>
       <div id="bookingStatus" class="muted" style="margin-top:8px; min-height:18px"></div>
 
       <div class="row">
@@ -155,17 +176,52 @@
         </div>
       </div>
       <div id="previewBio" style="margin-top:12px"></div>
-      <div style="margin-top:12px">
-        <div style="font-weight:600;margin-bottom:6px">Proficiencies</div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Availability fit</div>
+        <div id="previewFit" class="muted"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Price estimate</div>
+        <div id="previewPrice" class="muted"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Trust and verification</div>
+        <div id="previewTrust" class="trustPills"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Profile details</div>
+        <div id="previewDetails" class="infoGrid"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Work history</div>
+        <div id="previewWorkHistory" class="workList muted"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Proficiencies</div>
         <div id="previewProficiencies"></div>
       </div>
       <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn" id="selectPreviewBtn" type="button">Select nanny</button>
+        <button class="btn primary" id="bookPreviewBtn" type="button">Book now</button>
         <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
       </div>
     </div>
   </div>
 
+  <div id="deleteBlockModal" class="modalBack">
+    <div class="modal">
+      <div style="font-weight:700; margin-bottom:8px">Time block actions</div>
+      <div id="deleteBlockText" class="muted" style="margin-bottom:12px"></div>
+      <div class="row" style="justify-content:flex-end; gap:10px;">
+        <button class="btn secondary" id="cancelDeleteBlockBtn" type="button">Cancel</button>
+        <button class="btn" id="duplicateBlockBtn" type="button">Duplicate to next day</button>
+        <button class="btn" id="confirmDeleteBlockBtn" type="button">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
   <script>
     async function guard() {
       const me = await requireMe();
@@ -194,6 +250,7 @@
     }
 
     let selectedNannies = new Set();
+    let searchCalendar = null;
 
     function card(n, profileComplete, canBook){
       const name = formatName(n.name || ("Nanny " + n.nanny_id));
@@ -244,6 +301,45 @@
       selectedNannyIds: [],
     };
 
+    function formatCurrencyCents(cents, currency = "ZAR") {
+      const amount = Number(cents || 0) / 100;
+      return new Intl.NumberFormat("en-ZA", { style: "currency", currency }).format(amount);
+    }
+
+    async function refreshBookingEstimate() {
+      const estimateEl = document.getElementById("bookingEstimate");
+      if (!estimateEl) return;
+      if (!bookingState.start_dt || !bookingState.end_dt) {
+        estimateEl.textContent = "Select date and time to see estimate.";
+        return;
+      }
+      const selectedCount = Math.max(1, Array.isArray(bookingState.selectedNannyIds) ? bookingState.selectedNannyIds.length : 1);
+      const sleepover = document.getElementById("bookingSleepover")?.checked || false;
+      estimateEl.textContent = "Calculating estimate...";
+      try {
+        const data = await fetchJson("/booking-requests/estimate", {
+          method: "POST",
+          body: JSON.stringify({
+            start_dt: bookingState.start_dt,
+            end_dt: bookingState.end_dt,
+            sleepover,
+            selected_count: selectedCount,
+          }),
+        });
+        const cur = data?.currency || "ZAR";
+        const perNanny = formatCurrencyCents(data?.per_nanny_total_cents, cur);
+        const total = formatCurrencyCents(data?.selected_total_cents, cur);
+        const feePct = Number(data?.booking_fee_pct || 0) * 100;
+        estimateEl.innerHTML = `
+          <div><strong>Per nanny:</strong> ${escapeHtml(perNanny)}</div>
+          <div><strong>Booking fee:</strong> ${feePct.toFixed(1)}%</div>
+          <div><strong>Total${selectedCount > 1 ? ` (${selectedCount} nannies)` : ""}:</strong> ${escapeHtml(total)}</div>
+        `;
+      } catch (e) {
+        estimateEl.textContent = "Estimate unavailable right now.";
+      }
+    }
+
     function openBookingModal(nannyId, nannyName, selectedIds = null) {
       bookingState.nannyId = nannyId;
       bookingState.nannyName = nannyName;
@@ -279,6 +375,7 @@
       }
       document.getElementById("bookingStatus").textContent = "";
       document.getElementById("bookingModal").style.display = "flex";
+      refreshBookingEstimate().catch(() => {});
     }
 
     function closeBookingModal() {
@@ -320,6 +417,66 @@
       document.getElementById("previewMeta").textContent = parts.join(" • ");
       document.getElementById("previewBio").textContent = n.bio || "No bio yet.";
 
+      const fitEl = document.getElementById("previewFit");
+      if (bookingState.start_dt && bookingState.end_dt) {
+        const start = window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.start_dt) : bookingState.start_dt;
+        const end = window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.end_dt) : bookingState.end_dt;
+        fitEl.textContent = `Matches your selected slot: ${start} to ${end}.`;
+      } else {
+        fitEl.textContent = "Select a date/time range to check best fit.";
+      }
+
+      const priceEl = document.getElementById("previewPrice");
+      if (bookingState.start_dt && bookingState.end_dt) {
+        const startMs = new Date(bookingState.start_dt).getTime();
+        const endMs = new Date(bookingState.end_dt).getTime();
+        const hrs = Math.max(0, (endMs - startMs) / (1000 * 60 * 60));
+        const rounded = Number.isFinite(hrs) ? hrs.toFixed(1) : "-";
+        priceEl.textContent = `${rounded} hours selected. Final amount is confirmed when you submit the booking request.`;
+      } else {
+        priceEl.textContent = "Final amount is shown when you set date/time and submit your booking request.";
+      }
+
+      const trustEl = document.getElementById("previewTrust");
+      const trustBits = [];
+      trustBits.push(n.approved ? "Approved by My Nanny" : "Pending approval");
+      trustBits.push(n.has_identity_document ? "Identity document on file" : "Identity document pending");
+      trustBits.push(n.has_passport_document ? "Passport document on file" : "Passport document pending");
+      trustBits.push((n.review_count_12m || 0) > 0 ? `${n.review_count_12m} recent review(s)` : "No recent reviews yet");
+      trustEl.innerHTML = trustBits.map(v => `<span class="trustPill">${escapeHtml(v)}</span>`).join("");
+
+      const detailsEl = document.getElementById("previewDetails");
+      const details = [
+        ["Completed jobs", n.completed_jobs_count ?? 0],
+        ["Age", n.age ?? "Not provided"],
+        ["Nationality", n.nationality || "Not provided"],
+        ["Languages", (n.languages || []).map(l => l.name).join(", ") || "Not provided"],
+        ["Qualifications", (n.qualifications || []).map(q => q.name).join(", ") || "Not provided"],
+      ];
+      detailsEl.innerHTML = details
+        .map(([label, value]) => `<div class="infoItem"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(String(value))}</div>`)
+        .join("");
+
+      const workEl = document.getElementById("previewWorkHistory");
+      const jobs = Array.isArray(n.previous_jobs) ? n.previous_jobs.filter(Boolean) : [];
+      if (!jobs.length) {
+        workEl.textContent = "No previous positions listed yet.";
+      } else {
+        workEl.innerHTML = jobs.slice(0, 3).map((job) => {
+          const role = job.role || "Previous role";
+          const employer = job.employer || "Employer not listed";
+          const period = job.period || "Period not listed";
+          const reference = [job.reference_name, job.reference_phone].filter(Boolean).join(" • ");
+          const relationship = job.reference_relationship || "";
+          const referenceBits = [reference, relationship].filter(Boolean).join(" • ");
+          return `<div class="workItem">
+            <div class="workRole">${escapeHtml(role)}</div>
+            <div class="workMeta">${escapeHtml(employer)} • ${escapeHtml(period)}</div>
+            <div class="workMeta">${escapeHtml(referenceBits || "Reference details not provided")}</div>
+          </div>`;
+        }).join("");
+      }
+
       const profs = [];
       const tags = (n.tags || []).map(t => t.name).filter(Boolean);
       const quals = (n.qualifications || []).map(q => q.name).filter(Boolean);
@@ -334,6 +491,10 @@
         box.innerHTML = profs.map(p => `<span class="pill">${escapeHtml(p)}</span>`).join("");
       }
       updateFavoriteBtn(n.nanny_id);
+      const bookBtn = document.getElementById("bookPreviewBtn");
+      if (bookBtn) {
+        bookBtn.disabled = !lastCanBook;
+      }
       document.getElementById("previewModal").style.display = "flex";
     }
 
@@ -428,6 +589,258 @@
       const d = new Date(`${dateStr}T${timeStr}`);
       if (Number.isNaN(d.getTime())) return null;
       return d.toISOString();
+    }
+
+    function initSearchCalendar() {
+      const calendarEl = document.getElementById("searchCalendar");
+      if (!calendarEl || typeof FullCalendar === "undefined") return null;
+
+      let selectedBlockEvent = null;
+      const deleteModal = document.getElementById("deleteBlockModal");
+      const deleteText = document.getElementById("deleteBlockText");
+      const cancelBtn = document.getElementById("cancelDeleteBlockBtn");
+      const duplicateBtn = document.getElementById("duplicateBlockBtn");
+      const confirmBtn = document.getElementById("confirmDeleteBlockBtn");
+
+      const cleanupModal = () => {
+        if (deleteModal) deleteModal.style.display = "none";
+        selectedBlockEvent = null;
+      };
+
+      const onDuplicate = () => {
+        if (!selectedBlockEvent) return;
+        const start = selectedBlockEvent.start;
+        const end = selectedBlockEvent.end || selectedBlockEvent.start;
+        const durationMs = (end.getTime() - start.getTime()) || (60 * 60 * 1000);
+        const nextDayStart = new Date(start);
+        nextDayStart.setDate(nextDayStart.getDate() + 1);
+        const nextDayEnd = new Date(nextDayStart.getTime() + durationMs);
+        // Use the calendar instance rather than relying on the EventApi having a calendar property.
+        calendar.addEvent({
+          id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          start: nextDayStart.toISOString(),
+          end: nextDayEnd.toISOString(),
+          title: selectedBlockEvent.title,
+          color: selectedBlockEvent.backgroundColor || 'blue',
+          extendedProps: {
+            originalStart: start.toISOString(),
+            originalEnd: end.toISOString(),
+          }
+        });
+        cleanupModal();
+      };
+
+      const onConfirm = () => {
+        if (!selectedBlockEvent) return;
+        selectedBlockEvent.remove();
+        cleanupModal();
+      };
+
+      if (cancelBtn) cancelBtn.addEventListener("click", cleanupModal);
+      if (duplicateBtn) duplicateBtn.addEventListener("click", onDuplicate);
+      if (confirmBtn) confirmBtn.addEventListener("click", onConfirm);
+
+      const calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: "timeGridWeek",
+        headerToolbar: {
+          left: "prev,next today",
+          center: "title",
+          right: "timeGridWeek,timeGridDay",
+        },
+        nowIndicator: true,
+        // Increase height so more time slots are visible without scrolling
+        height: 600,
+        selectable: true,
+        editable: true,
+        eventStartEditable: true,
+        eventDurationEditable: true,
+        // Keep a small drag threshold so simple clicks still trigger eventClick.
+        eventDragMinDistance: 5,
+        select: (info) => {
+          const start = info.start;
+          const end = info.end;
+          const startDate = start.toISOString().slice(0, 10);
+          const endDate = end.toISOString().slice(0, 10);
+          const startTime = start.toISOString().slice(11, 16);
+          const endTime = end.toISOString().slice(11, 16);
+
+          if (startDate === endDate) {
+            // Single day selection
+            setInputValue("searchDate", startDate);
+            setInputValue("searchStartTime", startTime);
+            setInputValue("searchEndTime", endTime);
+            calendar.addEvent({
+              id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              start: start.toISOString(),
+              end: end.toISOString(),
+              title: 'Search Time',
+              color: 'blue',
+              extendedProps: {
+                originalStart: start.toISOString(),
+                originalEnd: end.toISOString(),
+              }
+            });
+            document.getElementById("searchBtn").click();
+          } else {
+            // Multi-day selection: apply the time range to each day in the range
+            const startD = new Date(startDate);
+            const endD = new Date(endDate);
+            const days = [];
+            let current = new Date(startD);
+            while (current <= endD) {
+              const dayName = current.toLocaleDateString('en-US', { weekday: 'short' });
+              days.push(dayName);
+              const dayStart = new Date(current);
+              dayStart.setHours(start.getHours(), start.getMinutes());
+              const dayEnd = new Date(current);
+              dayEnd.setHours(end.getHours(), end.getMinutes());
+              calendar.addEvent({
+                id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                start: dayStart.toISOString(),
+                end: dayEnd.toISOString(),
+                title: 'Search Time',
+                color: 'blue',
+                extendedProps: {
+                  originalStart: dayStart.toISOString(),
+                  originalEnd: dayEnd.toISOString(),
+                }
+              });
+              current.setDate(current.getDate() + 1);
+            }
+            const data = {
+              startDate: startDate,
+              endDate: endDate,
+              startTime: startTime,
+              endTime: endTime,
+              days: days,
+              weeks: 1
+            };
+            localStorage.setItem("parentMultiDayRequest", JSON.stringify(data));
+            setInputValue("searchDate", startDate);
+            setInputValue("searchStartTime", startTime);
+            setInputValue("searchEndTime", endTime);
+            const label = document.getElementById("searchDateLabel");
+            if (label) {
+              label.textContent = `Dates (${startDate} to ${endDate})`;
+            }
+            const notice = document.getElementById("multiDayNotice");
+            if (notice) {
+              notice.textContent = `Multiple days: ${days.join(", ")} for 1 week, ${startTime}–${endTime}.`;
+              notice.style.display = "block";
+            }
+            document.getElementById("searchBtn").click();
+          }
+          calendar.unselect();
+        },
+        eventClick: (info) => {
+          selectedBlockEvent = info.event;
+          const deleteText = document.getElementById("deleteBlockText");
+          if (!deleteText) return;
+          const start = info.event.start;
+          const end = info.event.end || info.event.start;
+          deleteText.textContent = `Block ${start.toLocaleString()} → ${end.toLocaleString()}`;
+          const deleteModal = document.getElementById("deleteBlockModal");
+          if (deleteModal) deleteModal.style.display = "flex";
+        },
+        eventDragStart: (info) => {
+          // Remember the original time range so we can restore it after dragging.
+          info.event.setExtendedProp("_origStart", info.event.start ? info.event.start.toISOString() : null);
+          info.event.setExtendedProp("_origEnd", info.event.end ? info.event.end.toISOString() : null);
+          if (info.el) {
+            info.el.style.opacity = "0.4";
+          }
+        },
+        eventDragStop: (info) => {
+          if (info.el) {
+            info.el.style.opacity = "";
+          }
+        },
+        eventDrop: (info) => {
+          const origStartStr = info.event.extendedProps.originalStart;
+          const origEndStr = info.event.extendedProps.originalEnd;
+          if (!origStartStr) {
+            info.revert();
+            return;
+          }
+
+          const originalStart = new Date(origStartStr);
+          const originalEnd = origEndStr ? new Date(origEndStr) : new Date(origStartStr);
+          const newStart = info.event.start;
+          if (!newStart) {
+            info.revert();
+            return;
+          }
+
+          const sameDay = originalStart.toISOString().slice(0, 10) === newStart.toISOString().slice(0, 10);
+          if (!sameDay) {
+            // Create a copy on the dropped day with the same duration.
+            const durationMs = (originalEnd.getTime() - originalStart.getTime()) || (60 * 60 * 1000);
+            const newEnd = new Date(newStart.getTime() + durationMs);
+            info.calendar.addEvent({
+              id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              start: newStart.toISOString(),
+              end: newEnd.toISOString(),
+              title: info.event.title,
+              color: info.event.backgroundColor || 'blue',
+              extendedProps: {
+                originalStart: originalStart.toISOString(),
+                originalEnd: originalEnd.toISOString(),
+              }
+            });
+          }
+
+          // Always revert so the original stays unchanged.
+          info.revert();
+        },
+        events: []
+      });
+
+      calendar.render();
+      return calendar;
+    }
+
+    function renderStoredMultiDaySelection(calendar, data) {
+      if (!calendar || !data || !data.startDate || !data.startTime || !data.endTime) return;
+      const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const wantedDays = new Set((Array.isArray(data.days) ? data.days : []).map(d => dayMap[d]).filter(d => d !== undefined));
+      if (!wantedDays.size) return;
+      const weeks = Math.max(1, Number(data.weeks || 1));
+      const startDate = new Date(`${data.startDate}T00:00:00`);
+      if (Number.isNaN(startDate.getTime())) return;
+      const [startHour, startMin] = String(data.startTime).split(":").map(v => Number(v));
+      const [endHour, endMin] = String(data.endTime).split(":").map(v => Number(v));
+      if (!Number.isFinite(startHour) || !Number.isFinite(startMin) || !Number.isFinite(endHour) || !Number.isFinite(endMin)) return;
+
+      calendar.getEvents().forEach(evt => {
+        if (String(evt.id || "").startsWith("search-")) evt.remove();
+      });
+
+      const totalDays = weeks * 7;
+      for (let i = 0; i < totalDays; i++) {
+        const day = new Date(startDate);
+        day.setDate(startDate.getDate() + i);
+        if (!wantedDays.has(day.getDay())) continue;
+
+        const blockStart = new Date(day);
+        blockStart.setHours(startHour, startMin, 0, 0);
+        const blockEnd = new Date(day);
+        blockEnd.setHours(endHour, endMin, 0, 0);
+        if (blockEnd <= blockStart) continue;
+
+        calendar.addEvent({
+          id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          start: blockStart.toISOString(),
+          end: blockEnd.toISOString(),
+          title: "Search Time",
+          color: "blue",
+          extendedProps: {
+            originalStart: blockStart.toISOString(),
+            originalEnd: blockEnd.toISOString(),
+          }
+        });
+      }
+
+      calendar.gotoDate(startDate);
     }
 
     function setInputValue(id, value) {
@@ -627,10 +1040,28 @@
         document.getElementById("bookingStatus").textContent = e.message || "Error";
       });
     });
+    document.getElementById("bookingSleepover").addEventListener("change", () => {
+      refreshBookingEstimate().catch(() => {});
+    });
 
     document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
     document.getElementById("previewModal").addEventListener("click", (e) => {
       if (e.target.id === "previewModal") closePreview();
+    });
+    document.getElementById("selectPreviewBtn").addEventListener("click", () => {
+      if (!previewNanny) return;
+      selectedNannies.add(previewNanny.nanny_id);
+      const requestBtn = document.getElementById("requestSelectedBtn");
+      if (requestBtn) requestBtn.disabled = selectedNannies.size === 0;
+      renderResults(lastResults, lastProfileComplete, lastCanBook);
+      closePreview();
+    });
+    document.getElementById("bookPreviewBtn").addEventListener("click", () => {
+      if (!previewNanny) return;
+      if (!lastCanBook) return;
+      const name = formatName(previewNanny.name || ("Nanny " + previewNanny.nanny_id));
+      openBookingModal(previewNanny.nanny_id, name);
+      closePreview();
     });
     document.getElementById("favoriteBtn").addEventListener("click", async () => {
       if (!previewNanny) return;
@@ -680,11 +1111,13 @@
         });
       });
       const params = new URLSearchParams(window.location.search);
+      let multiData = null;
       if (params.get("multi") === "1") {
         try {
           const raw = localStorage.getItem("parentMultiDayRequest");
           if (raw) {
             const data = JSON.parse(raw);
+            multiData = data;
             if (data?.startDate) setInputValue("searchDate", data.startDate);
             if (data?.startTime) setInputValue("searchStartTime", data.startTime);
             if (data?.endTime) setInputValue("searchEndTime", data.endTime);
@@ -707,6 +1140,12 @@
           }
         } catch {}
       }
+
+      searchCalendar = initSearchCalendar();
+      if (searchCalendar && multiData) {
+        renderStoredMultiDaySelection(searchCalendar, multiData);
+      }
+
       if (params.get("mode") === "all") {
         runSearch().catch(err => {
           document.getElementById("status").textContent = "Error: " + (err?.message || String(err));

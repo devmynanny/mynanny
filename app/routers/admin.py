@@ -61,6 +61,7 @@ def get_pricing_settings(db: Session = Depends(get_db)):
             booking_fee_pct_1_5=0.30,
             booking_fee_pct_6_10=0.27,
             booking_fee_pct_10_plus=0.25,
+            cancellation_fee_window_hours=12,
         )
         db.add(row)
         db.commit()
@@ -84,6 +85,7 @@ def get_pricing_settings(db: Session = Depends(get_db)):
         "booking_fee_pct_1_5": float(row.booking_fee_pct_1_5),
         "booking_fee_pct_6_10": float(row.booking_fee_pct_6_10),
         "booking_fee_pct_10_plus": float(row.booking_fee_pct_10_plus),
+        "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 12) or 12),
     }
 
 
@@ -101,10 +103,17 @@ def update_pricing_settings(payload: dict, db: Session = Depends(get_db)):
         "sleepover_add","sleepover_only_weekday","sleepover_only_weekend","sleepover_extra_hour_over14",
         "after17_weekday","after17_weekend","over9_weekday","over9_weekend",
         "sleepover_start_hour","sleepover_end_hour","sleepover_after7_hourly",
-        "booking_fee_pct_1_5","booking_fee_pct_6_10","booking_fee_pct_10_plus"
+        "booking_fee_pct_1_5","booking_fee_pct_6_10","booking_fee_pct_10_plus",
+        "cancellation_fee_window_hours",
     ]:
         if key in payload:
-            setattr(row, key, payload[key])
+            value = payload[key]
+            if key == "cancellation_fee_window_hours":
+                try:
+                    value = max(0, int(value))
+                except Exception:
+                    raise HTTPException(status_code=400, detail="cancellation_fee_window_hours must be a valid number")
+            setattr(row, key, value)
     db.commit()
     return {"ok": True}
 

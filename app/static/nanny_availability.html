@@ -2,97 +2,66 @@
 <html>
 <head>
   <link rel="stylesheet" href="/static/theme.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" />
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Set Availability</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px;width:min(900px,100%)}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
     .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .muted{color:#666}
+    .statusBadge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;color:#fff;}
+    .statusActive{background:#16a34a;}
+    .statusInactive{background:#dc2626;}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
     input, select{padding:10px;border-radius:10px;border:1px solid #ccc}
+    #calendar { max-width: 100%; margin-top: 12px; }
+
+    /* Simple modal picker */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    .modal {
+      background: #fff;
+      border-radius: 14px;
+      padding: 18px;
+      width: min(420px, 90vw);
+      box-shadow: 0 14px 30px rgba(0,0,0,0.2);
+    }
+    .modal h2 { margin: 0 0 12px; }
+    .modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+    .modal .actions button { flex: 1; }
   </style>
 </head>
 <body>
   <div id="topbar" class="topbar"></div>
   <div class="row" style="justify-content:space-between;">
     <h1>Set availability</h1>
-    <button class="btn back-btn" id="backBtn" type="button">Back to operations</button>
+    <button class="btn" id="backBtn" type="button">Back to operations</button>
   </div>
 
   <div class="card">
     <div class="row" style="justify-content:space-between; align-items:center;">
       <div>
-        <div style="font-weight:600;">Inactive mode</div>
-        <div class="muted">When enabled, you are inactive until you turn it off.</div>
+        <div style="font-weight:600;">Working status</div>
+        <div class="muted">Turn this off to get booking requests.</div>
       </div>
-      <label class="row" style="gap:8px;">
+      <label class="row" style="gap:8px;align-items:center;">
         <input id="inactiveToggle" type="checkbox" />
-        <span>Inactive</span>
+        <span>Away</span>
       </label>
     </div>
     <div class="row" style="margin-top:8px;">
-      <span id="inactiveStatus" class="muted"></span>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="row" style="margin-bottom:8px;">
-      <div>
-        <div class="muted">Date</div>
-        <input id="availDate" type="date" />
-      </div>
-      <div>
-        <div class="muted">Start time</div>
-        <input id="availStart" type="time" />
-      </div>
-      <div>
-        <div class="muted">End time</div>
-        <input id="availEnd" type="time" />
-      </div>
-      <div>
-        <div class="muted">Type</div>
-        <select id="availType">
-          <option value="available">Available</option>
-          <option value="blocked">Blocked</option>
-        </select>
-      </div>
-      <button class="btn" id="addAvailabilityBtn" type="button">Add</button>
-      <span id="availStatus" class="muted"></span>
-    </div>
-  </div>
-
-  <div class="card">
-    <h3 style="margin:0 0 10px;">Apply Date Range</h3>
-    <div class="row" style="margin-bottom:8px;">
-      <div>
-        <div class="muted">Start date</div>
-        <input id="rangeStartDate" type="date" />
-      </div>
-      <div>
-        <div class="muted">End date</div>
-        <input id="rangeEndDate" type="date" />
-      </div>
-      <div>
-        <div class="muted">Start time (optional)</div>
-        <input id="rangeStartTime" type="time" />
-      </div>
-      <div>
-        <div class="muted">End time (optional)</div>
-        <input id="rangeEndTime" type="time" />
-      </div>
-      <div>
-        <div class="muted">Type</div>
-        <select id="rangeType">
-          <option value="available">Available</option>
-          <option value="blocked">Blocked</option>
-        </select>
-      </div>
-      <button class="btn" id="applyRangeBtn" type="button">Apply range</button>
-      <span id="rangeStatus" class="muted"></span>
+      <span id="inactiveStatus" class="statusBadge statusActive">Ready for bookings</span>
     </div>
   </div>
 
@@ -131,7 +100,7 @@
         <div class="muted">Type</div>
         <select id="weeklyType">
           <option value="available">Available</option>
-          <option value="blocked">Blocked</option>
+          <option value="blocked">Unavailable</option>
         </select>
       </div>
       <button class="btn" id="applyWeeklyBtn" type="button">Apply weekly</button>
@@ -139,9 +108,26 @@
     </div>
   </div>
 
-  <div id="availabilityList" class="grid"></div>
+  <div class="card">
+    <h3 style="margin:0 0 10px;">Calendar view</h3>
+    <div id="calendar"></div>
+  </div>
+
+  <div id="availabilityChooser" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <h2>Set availability type</h2>
+      <p id="chooserRangeText" class="muted" style="margin:0 0 12px;">&nbsp;</p>
+      <p>Select whether this time range should be <strong>Available</strong> or <strong>Unavailable</strong>.</p>
+      <div class="actions">
+        <button id="chooserCancel" class="btn">Cancel</button>
+        <button id="chooserBlocked" class="btn">Unavailable</button>
+        <button id="chooserAvailable" class="btn">Available</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/app.js?v=2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
   <script>
     function buildIso(dateStr, timeStr) {
       if (!dateStr || !timeStr) return null;
@@ -151,73 +137,248 @@
       return d.toISOString();
     }
 
-    async function loadAvailability() {
-      const data = await fetchJson("/nannies/me/availability");
-      const list = document.getElementById("availabilityList");
-      list.innerHTML = "";
-      (data.results || []).forEach(r => {
-        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
-        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
-        const card = document.createElement("div");
-        card.className = "card";
-        card.innerHTML = `
-          <div><strong>${r.type || "-"}</strong></div>
-          <div class="muted">${start} to ${end}</div>
-          <button class="btn" data-id="${r.id}">Remove</button>
-        `;
-        card.querySelector("button").addEventListener("click", async () => {
-          await fetchJson(`/nannies/me/availability/${r.id}`, { method: "DELETE" });
-          loadAvailability();
-        });
-        list.appendChild(card);
+    let calendarInstance = null;
+
+    function showAvailabilityTypePicker(rangeText) {
+      return new Promise(resolve => {
+        const overlay = document.getElementById("availabilityChooser");
+        const rangeLabel = document.getElementById("chooserRangeText");
+        const availableBtn = document.getElementById("chooserAvailable");
+        const blockedBtn = document.getElementById("chooserBlocked");
+        const cancelBtn = document.getElementById("chooserCancel");
+
+        const cleanup = () => {
+          overlay.style.display = "none";
+          availableBtn.removeEventListener("click", onAvailable);
+          blockedBtn.removeEventListener("click", onBlocked);
+          cancelBtn.removeEventListener("click", onCancel);
+        };
+
+        const onAvailable = () => {
+          cleanup();
+          resolve("available");
+        };
+        const onBlocked = () => {
+          cleanup();
+          resolve("blocked");
+        };
+        const onCancel = () => {
+          cleanup();
+          resolve(null);
+        };
+
+        rangeLabel.textContent = rangeText;
+        overlay.style.display = "flex";
+        availableBtn.addEventListener("click", onAvailable);
+        blockedBtn.addEventListener("click", onBlocked);
+        cancelBtn.addEventListener("click", onCancel);
       });
     }
 
-    document.getElementById("addAvailabilityBtn").addEventListener("click", async () => {
-      const date = document.getElementById("availDate").value;
-      const startT = document.getElementById("availStart").value;
-      const endT = document.getElementById("availEnd").value;
-      const type = document.getElementById("availType").value;
-      const status = document.getElementById("availStatus");
-      status.textContent = "";
-      let start_dt = buildIso(date, startT);
-      let end_dt = buildIso(date, endT);
-      if (!start_dt && !end_dt) {
-        // full-day window when no times selected
-        if (!date) {
-          status.textContent = "Select a date.";
-          return;
-        }
-        start_dt = buildIso(date, "00:00");
-        end_dt = buildIso(date, "23:59");
+    function normalizeSelectEnd(startStr, endStr) {
+      if (!endStr || !startStr) return endStr;
+
+      const start = new Date(startStr);
+      const end = new Date(endStr);
+      const sameDay = start.toISOString().slice(0, 10) === new Date(end.getTime() - 1).toISOString().slice(0, 10);
+
+      // FullCalendar uses an exclusive end when selecting a whole day range.
+      // If the selection is effectively one day (end is the next midnight), use 23:59 on that day.
+      if (endStr.endsWith("T00:00:00") && sameDay) {
+        const d = new Date(start);
+        d.setHours(23, 59, 0, 0);
+        return d.toISOString();
       }
-      if (!start_dt || !end_dt) {
-        status.textContent = "Select a date and start/end times.";
-        return;
-      }
-      if (new Date(end_dt) <= new Date(start_dt)) {
-        status.textContent = "End time must be after start time.";
-        return;
-      }
-      try {
-        await fetchJson("/nannies/me/availability", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ start_dt, end_dt, type })
+
+      return endStr;
+    }
+
+    function renderCalendar(entries = []) {
+      const calendarEl = document.getElementById("calendar");
+      if (!calendarEl) return;
+
+      if (!calendarInstance) {
+        calendarInstance = new FullCalendar.Calendar(calendarEl, {
+          initialView: "dayGridMonth",
+          headerToolbar: {
+            left: "prev,next today",
+            center: "title",
+            right: "dayGridMonth,timeGridWeek,timeGridDay",
+          },
+          nowIndicator: true,
+          height: 520,
+          eventDisplay: "block",
+          selectable: true,
+          editable: true,
+          select: async (info) => {
+            const start = new Date(info.startStr);
+            const end = new Date(info.endStr);
+
+            const formatDT = (d) => {
+              const dt = new Date(d);
+              return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+            };
+
+            const rangeText = `${formatDT(start)} → ${formatDT(new Date(end.getTime() - 1))}`;
+            const type = await showAvailabilityTypePicker(rangeText);
+            if (!type) {
+              calendarInstance.unselect();
+              return;
+            }
+
+            const selectSpanMs = end.getTime() - start.getTime();
+            const isMultiDay = selectSpanMs >= 24 * 60 * 60 * 1000;
+
+            try {
+              if (isMultiDay) {
+                // FullCalendar uses exclusive end times; convert to inclusive day range.
+                const startDate = start.toISOString().slice(0, 10);
+                const endDate = new Date(end.getTime() - 1).toISOString().slice(0, 10);
+
+                // Use start/end time only if selection includes non-midnight times.
+                const startTime = info.startStr.slice(11) !== "00:00:00" ? info.startStr.slice(11) : null;
+                const endTime = info.endStr.slice(11) !== "00:00:00" ? info.endStr.slice(11) : null;
+
+                await fetchJson("/nannies/me/availability/bulk", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    start_date: startDate,
+                    end_date: endDate,
+                    start_time: startTime,
+                    end_time: endTime,
+                    type,
+                  }),
+                });
+              } else {
+                const endIso = normalizeSelectEnd(info.startStr, info.endStr);
+                await fetchJson("/nannies/me/availability", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ start_dt: info.startStr, end_dt: endIso, type }),
+                });
+              }
+
+              loadAvailability();
+            } catch (e) {
+              alert("Error creating availability: " + (e.message || "Unknown"));
+            }
+            calendarInstance.unselect();
+          },
+          eventResize: async (info) => {
+            try {
+              await fetchJson(`/nannies/me/availability/${info.event.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ start_dt: info.event.startStr, end_dt: info.event.endStr })
+              });
+              loadAvailability();
+            } catch (e) {
+              alert("Error updating availability: " + (e.message || "Unknown"));
+              info.revert();
+            }
+          },
+          eventDrop: async (info) => {
+            try {
+              await fetchJson(`/nannies/me/availability/${info.event.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ start_dt: info.event.startStr, end_dt: info.event.endStr })
+              });
+              loadAvailability();
+            } catch (e) {
+              alert("Error updating availability: " + (e.message || "Unknown"));
+              info.revert();
+            }
+          },
+          eventClick: async (info) => {
+            const formatDT = (d) => {
+              const dt = new Date(d);
+              return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+            };
+            const start = info.event.start;
+            const end = info.event.end || info.event.start;
+            const title = info.event.title || "availability";
+            const confirmed = confirm(
+              `Remove ${title} from ${formatDT(start)} to ${formatDT(end)}?`
+            );
+            if (!confirmed) return;
+
+            try {
+              await fetchJson(`/nannies/me/availability/${info.event.id}`, { method: "DELETE" });
+              loadAvailability();
+            } catch (e) {
+              alert("Error removing availability: " + (e.message || "Unknown"));
+            }
+          },
+          events: [],
         });
-        status.textContent = "Saved.";
-        loadAvailability();
-      } catch (e) {
-        status.textContent = e.message || "Error";
+        calendarInstance.render();
       }
-    });
+
+      const expandEntry = (r) => {
+        const start = new Date(r.start_dt);
+        const end = new Date(r.end_dt);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+          return [];
+        }
+        // Month/day views can render multi-day timed events only once; split blocked ranges into day chunks.
+        if (r.type !== "blocked" || start.toDateString() === end.toDateString()) {
+          return [r];
+        }
+        const chunks = [];
+        let cursor = new Date(start);
+        while (cursor < end) {
+          const nextDay = new Date(cursor);
+          nextDay.setHours(24, 0, 0, 0);
+          const chunkEnd = nextDay < end ? nextDay : end;
+          chunks.push({
+            ...r,
+            id: `${r.id}-${cursor.toISOString().slice(0, 10)}`,
+            start_dt: cursor.toISOString(),
+            end_dt: chunkEnd.toISOString(),
+          });
+          cursor = new Date(chunkEnd);
+        }
+        return chunks;
+      };
+
+      const events = (entries || [])
+        .flatMap(expandEntry)
+        .map(r => ({
+          id: String(r.id),
+          title: r.type === "blocked" ? "Unavailable" : "Available",
+          start: r.start_dt,
+          end: r.end_dt,
+          color: r.type === "blocked" ? "#f8d7da" : "#d4edda",
+          textColor: "#000",
+        }));
+
+      calendarInstance.removeAllEventSources();
+      calendarInstance.addEventSource(events);
+    }
+
+    async function loadAvailability() {
+      const data = await fetchJson("/nannies/me/availability");
+      renderCalendar(data.results || []);
+    }
 
     const inactiveToggle = document.getElementById("inactiveToggle");
     const inactiveStatus = document.getElementById("inactiveStatus");
     const disableSections = (disabled) => {
-      document.getElementById("addAvailabilityBtn").disabled = disabled;
-      document.getElementById("applyRangeBtn").disabled = disabled;
       document.getElementById("applyWeeklyBtn").disabled = disabled;
+    };
+
+    const setWorkingStatus = (isActive) => {
+      if (isActive) {
+        inactiveStatus.textContent = "Ready for bookings";
+        inactiveStatus.classList.add("statusActive");
+        inactiveStatus.classList.remove("statusInactive");
+      } else {
+        inactiveStatus.textContent = "Away — no booking requests";
+        inactiveStatus.classList.add("statusInactive");
+        inactiveStatus.classList.remove("statusActive");
+      }
     };
 
     inactiveToggle.addEventListener("change", async () => {
@@ -230,41 +391,10 @@
         });
         const isActive = !!res.is_active;
         inactiveToggle.checked = !isActive;
-        inactiveStatus.textContent = inactiveToggle.checked ? "You are inactive." : "You are active.";
+        setWorkingStatus(isActive);
         disableSections(inactiveToggle.checked);
       } catch (e) {
         inactiveStatus.textContent = e.message || "Error";
-      }
-    });
-
-    document.getElementById("applyRangeBtn").addEventListener("click", async () => {
-      const startDate = document.getElementById("rangeStartDate").value;
-      const endDate = document.getElementById("rangeEndDate").value;
-      const startTime = document.getElementById("rangeStartTime").value || null;
-      const endTime = document.getElementById("rangeEndTime").value || null;
-      const type = document.getElementById("rangeType").value;
-      const status = document.getElementById("rangeStatus");
-      status.textContent = "";
-      if (!startDate || !endDate) {
-        status.textContent = "Select start and end dates.";
-        return;
-      }
-      try {
-        const res = await fetchJson("/nannies/me/availability/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            start_date: startDate,
-            end_date: endDate,
-            start_time: startTime,
-            end_time: endTime,
-            type
-          })
-        });
-        status.textContent = `Created ${res.created || 0} entries.`;
-        loadAvailability();
-      } catch (e) {
-        status.textContent = e.message || "Error";
       }
     });
 
@@ -310,7 +440,7 @@
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {
-      location.href = "/static/nanny_home.html";
+      location.href = "/static/nanny_home.html?v=2";
     });
 
     (async () => {
@@ -322,7 +452,7 @@
       try {
         const me2 = await fetchJson("/auth/me");
         inactiveToggle.checked = !(me2?.is_active ?? true);
-        inactiveStatus.textContent = inactiveToggle.checked ? "You are inactive." : "You are active.";
+        setWorkingStatus(!inactiveToggle.checked);
         disableSections(inactiveToggle.checked);
       } catch {}
       loadAvailability().catch(() => {});

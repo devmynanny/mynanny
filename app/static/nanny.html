@@ -30,13 +30,28 @@
       .doc-upload{display:flex;flex-direction:column;gap:6px;min-width:220px}
       .doc-upload input[type="file"]{width:100%}
       .err { color: #b00020; margin-top: 6px; }
+      .help-tip{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:16px;
+        height:16px;
+        margin-left:6px;
+        border-radius:50%;
+        border:1px solid #bbb;
+        font-size:11px;
+        line-height:1;
+        cursor:help;
+        color:#333;
+        background:#fff;
+      }
     </style>
   </head>
   <body>
     <div id="topbar" class="topbar"></div>
     <div class="row">
       <h2 style="margin-right: auto;">Nanny onboarding and profile setup</h2>
-      <button class="btn secondary back-btn" id="backToOpsBtn" type="button" style="display:none;">Back to operations</button>
+      <button class="btn secondary" id="backToOpsBtn" type="button" style="display:none;">Back to operations</button>
     </div>
 
     <div class="card" id="approvalBanner"></div>
@@ -62,7 +77,7 @@
           <input id="phoneAlt" style="width:100%; padding:8px;" placeholder="Alternative phone number" />
         </div>
         <div style="min-width:200px;">
-          <label class="small">Date of birth</label>
+          <label class="small">Date of birth <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
           <input id="dob" type="date" style="width:100%; padding:8px;" />
         </div>
       </div>
@@ -113,7 +128,7 @@
       </div>
       <div class="row" id="passportRow" style="margin-top:10px;">
         <div style="flex:1; min-width:240px;">
-          <label class="small">Passport number (if not South African)</label>
+          <label class="small">Passport number (if not South African) <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
           <input id="passportNumber" style="width:100%; padding:8px;" placeholder="Passport number" />
           <div class="err" id="passportError" style="display:none;"></div>
         </div>
@@ -132,7 +147,7 @@
       </div>
       <div class="row" id="saIdRow" style="margin-top:10px;">
         <div style="flex:1; min-width:240px;">
-          <label class="small">South African ID number</label>
+          <label class="small">South African ID number <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
           <input id="saIdNumber" style="width:100%; padding:8px;" placeholder="ID number" />
           <div class="err" id="saIdError" style="display:none;"></div>
         </div>
@@ -177,6 +192,12 @@
       </div>
     </div>
 
+    <div class="card" id="docsLockNotice" style="display:none;">
+      <div class="small" style="color:#444; font-weight:600;">
+        Approved profile policy: you may update contact details and address. Date of birth, passport/ID numbers are locked. Uploaded documents can be replaced, but not removed.
+      </div>
+    </div>
+
     <div class="card" id="permitWarning" style="display:none;">
       <div class="small" style="color:#b00020; font-weight:600;">
         Please get permit or waiver to proceed with your application
@@ -205,6 +226,15 @@
     <div class="card">
       <div style="font-weight:600; margin-bottom:8px;">Languages</div>
       <div id="languagesList" class="row"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">
+        <div style="font-weight:600;">Previous jobs and contactable references</div>
+        <button id="addPreviousJobBtn" type="button">Add previous job</button>
+      </div>
+      <div id="previousJobsList"></div>
+      <div class="small muted">Add each prior role and at least one contactable reference per position where possible.</div>
     </div>
 
     <div class="card">
@@ -257,6 +287,18 @@
           : "Profile submitted, waiting for admin approval";
       }
 
+      function applyApprovedFieldPolicy(isApproved) {
+        const dobEl = document.getElementById("dob");
+        const passportNumberEl = document.getElementById("passportNumber");
+        const saIdNumberEl = document.getElementById("saIdNumber");
+        const lockNoticeEl = document.getElementById("docsLockNotice");
+
+        if (dobEl) dobEl.disabled = !!isApproved;
+        if (passportNumberEl) passportNumberEl.disabled = !!isApproved;
+        if (saIdNumberEl) saIdNumberEl.disabled = !!isApproved;
+        if (lockNoticeEl) lockNoticeEl.style.display = isApproved ? "block" : "none";
+      }
+
       function renderTags(tags, selectedIds) {
         const root = document.getElementById("tagsList");
         root.innerHTML = "";
@@ -298,6 +340,80 @@
       function getSelectedIds(name) {
         return Array.from(document.querySelectorAll(`input[name='${name}']:checked`))
           .map(cb => Number(cb.value));
+      }
+
+      function createPreviousJobCard(item = {}) {
+        const card = document.createElement("div");
+        card.className = "card previous-job-card";
+        card.style.margin = "8px 0";
+        card.innerHTML = `
+          <div class="row" style="justify-content:space-between;align-items:center;">
+            <div style="font-weight:600;">Position held</div>
+            <button type="button" class="removePreviousJobBtn">Remove</button>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <div style="flex:1;min-width:220px;">
+              <label class="small">Role</label>
+              <input class="prev-role" style="width:100%; padding:8px;" placeholder="e.g. Live-in nanny" />
+            </div>
+            <div style="flex:1;min-width:220px;">
+              <label class="small">Employer/Family</label>
+              <input class="prev-employer" style="width:100%; padding:8px;" placeholder="Family or employer name" />
+            </div>
+            <div style="flex:1;min-width:220px;">
+              <label class="small">Period</label>
+              <input class="prev-period" style="width:100%; padding:8px;" placeholder="e.g. Jan 2022 - Dec 2024" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <div style="flex:1;min-width:220px;">
+              <label class="small">Reference name</label>
+              <input class="prev-ref-name" style="width:100%; padding:8px;" placeholder="Reference full name" />
+            </div>
+            <div style="flex:1;min-width:220px;">
+              <label class="small">Reference phone</label>
+              <input class="prev-ref-phone" style="width:100%; padding:8px;" placeholder="Contact number" />
+            </div>
+            <div style="flex:1;min-width:220px;">
+              <label class="small">Relationship</label>
+              <input class="prev-ref-relationship" style="width:100%; padding:8px;" placeholder="e.g. Employer / Parent" />
+            </div>
+          </div>
+        `;
+        card.querySelector(".prev-role").value = item.role || "";
+        card.querySelector(".prev-employer").value = item.employer || "";
+        card.querySelector(".prev-period").value = item.period || "";
+        card.querySelector(".prev-ref-name").value = item.reference_name || "";
+        card.querySelector(".prev-ref-phone").value = item.reference_phone || "";
+        card.querySelector(".prev-ref-relationship").value = item.reference_relationship || "";
+        card.querySelector(".removePreviousJobBtn").addEventListener("click", () => {
+          card.remove();
+        });
+        return card;
+      }
+
+      function renderPreviousJobs(items) {
+        const root = document.getElementById("previousJobsList");
+        root.innerHTML = "";
+        const rows = Array.isArray(items) ? items : [];
+        if (!rows.length) {
+          root.appendChild(createPreviousJobCard({}));
+          return;
+        }
+        rows.forEach((item) => root.appendChild(createPreviousJobCard(item || {})));
+      }
+
+      function collectPreviousJobs() {
+        const rows = Array.from(document.querySelectorAll("#previousJobsList .previous-job-card"));
+        const jobs = rows.map((row) => ({
+          role: row.querySelector(".prev-role")?.value?.trim() || null,
+          employer: row.querySelector(".prev-employer")?.value?.trim() || null,
+          period: row.querySelector(".prev-period")?.value?.trim() || null,
+          reference_name: row.querySelector(".prev-ref-name")?.value?.trim() || null,
+          reference_phone: row.querySelector(".prev-ref-phone")?.value?.trim() || null,
+          reference_relationship: row.querySelector(".prev-ref-relationship")?.value?.trim() || null,
+        })).filter((job) => Object.values(job).some(Boolean));
+        return jobs;
       }
 
       async function saveLocation() {
@@ -438,10 +554,17 @@
         status.textContent = "Uploading...";
         const form = new FormData();
         form.append("file", input.files[0]);
+        const uploadHeaders = {};
+        const impersonationToken = sessionStorage.getItem("impersonation_token");
+        const legacyToken = localStorage.getItem("token");
+        const authToken = impersonationToken || legacyToken;
+        if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+        if (getCsrfToken && getCsrfToken()) uploadHeaders["X-CSRF-Token"] = getCsrfToken();
 
         const res = await fetch("/nannies/me/photo", {
           method: "POST",
-          headers: { Authorization: "Bearer " + getToken() },
+          credentials: "same-origin",
+          headers: uploadHeaders,
           body: form,
         });
 
@@ -485,9 +608,16 @@
         const formData = new FormData();
         formData.append("file", file);
         try {
+          const uploadHeaders = {};
+          const impersonationToken = sessionStorage.getItem("impersonation_token");
+          const legacyToken = localStorage.getItem("token");
+          const authToken = impersonationToken || legacyToken;
+          if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+          if (getCsrfToken && getCsrfToken()) uploadHeaders["X-CSRF-Token"] = getCsrfToken();
           const res = await fetch("/nannies/me/id-document", {
             method: "POST",
-            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            credentials: "same-origin",
+            headers: uploadHeaders,
             body: formData
           });
           if (!res.ok) {
@@ -514,9 +644,16 @@
         const formData = new FormData();
         formData.append("file", file);
         try {
+          const uploadHeaders = {};
+          const impersonationToken = sessionStorage.getItem("impersonation_token");
+          const legacyToken = localStorage.getItem("token");
+          const authToken = impersonationToken || legacyToken;
+          if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+          if (getCsrfToken && getCsrfToken()) uploadHeaders["X-CSRF-Token"] = getCsrfToken();
           const res = await fetch("/nannies/me/passport-document", {
             method: "POST",
-            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            credentials: "same-origin",
+            headers: uploadHeaders,
             body: formData
           });
           if (!res.ok) {
@@ -543,9 +680,16 @@
         const formData = new FormData();
         formData.append("file", file);
         try {
+          const uploadHeaders = {};
+          const impersonationToken = sessionStorage.getItem("impersonation_token");
+          const legacyToken = localStorage.getItem("token");
+          const authToken = impersonationToken || legacyToken;
+          if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+          if (getCsrfToken && getCsrfToken()) uploadHeaders["X-CSRF-Token"] = getCsrfToken();
           const res = await fetch("/nannies/me/work-permit-document", {
             method: "POST",
-            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            credentials: "same-origin",
+            headers: uploadHeaders,
             body: formData
           });
           if (!res.ok) {
@@ -755,6 +899,7 @@
               waiver: document.getElementById("waiver").value === "yes" ? true : (document.getElementById("waiver").value === "no" ? false : null),
               sa_id_number: document.getElementById("saIdNumber").value || null,
               sa_id_document_url: document.getElementById("saIdFile").dataset.url || null,
+              previous_jobs: collectPreviousJobs(),
               tag_ids: tagIds,
               language_ids: languageIds,
             })
@@ -779,7 +924,7 @@
         if (fromOps && backBtn) {
           backBtn.style.display = "inline-block";
           backBtn.addEventListener("click", () => {
-            window.location.href = "/static/nanny_home.html";
+            window.location.href = "/static/nanny_home.html?v=2";
           });
         }
         if (!fromOps && !isAdminView) {
@@ -792,7 +937,9 @@
           fetchJson("/languages"),
         ]);
 
-        renderBanner(!!profile.is_approved);
+        const isApproved = !!profile.is_approved;
+        renderBanner(isApproved);
+        applyApprovedFieldPolicy(isApproved);
 
         document.getElementById("fullName").value = profile.full_name || "";
         document.getElementById("phone").value = profile.phone || "";
@@ -819,6 +966,7 @@
         if (profile.sa_id_document_url) {
           document.getElementById("saIdStatus").textContent = "ID uploaded.";
         }
+        renderPreviousJobs(profile.previous_jobs || []);
 
         toggleNationalityFields();
         const waiverSelect = document.getElementById("waiver");
@@ -847,6 +995,12 @@
 
         renderTags(tags, profile.tag_ids || []);
         renderLanguages(langs, profile.language_ids || []);
+        const addPreviousJobBtn = document.getElementById("addPreviousJobBtn");
+        if (addPreviousJobBtn) {
+          addPreviousJobBtn.addEventListener("click", () => {
+            document.getElementById("previousJobsList").appendChild(createPreviousJobCard({}));
+          });
+        }
       }).catch(() => {});
     </script>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initAddressAutocomplete" async defer></script>

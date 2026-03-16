@@ -2,10 +2,9 @@
 import math
 import os
 import json
-import base64
 import hmac
 import hashlib
-import time
+import secrets
 import uuid
 from functools import cmp_to_key
 from urllib.request import urlopen, Request as UrlRequest
@@ -13,12 +12,14 @@ from urllib.parse import urlencode
 from pathlib import Path
 from typing import Optional, List, Union
 from datetime import date, datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, File, UploadFile, Response
+from jose import jwt, JWTError
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, text, distinct, or_
 from sqlalchemy.exc import IntegrityError
 from app.db import SessionLocal
 from app import models, schemas
+from app.request_context import auth_token_ctx
 from app.schemas import NannyReviewsResponse, SetParentAreaRequest, SetParentDefaultLocationRequest, ParentLocationResponse, NannyLocationResponse, ReviewOut, ReviewCreate, SetNannyAreasRequest, CreateNannyProfileRequest, UpdateNannyProfileRequest, BulkBookingRequest, SearchNanniesResponse, NannyMeProfileUpdate, NannyMeProfileResponse, BookingRequestCreate, BookingRequestReject, BookingRequestBulkCreate
 from app.utils.email import EmailMessage, admin_emails, app_base_url, get_email_client
 from app import security
@@ -199,89 +200,165 @@ def get_db():
 
 
 def _auth_secret() -> str:
-    return os.getenv("AUTH_SECRET", "dev-auth-secret")
+    secret = (os.getenv("AUTH_SECRET") or "").strip()
+    app_env = (os.getenv("APP_ENV") or os.getenv("ENV") or "").strip().lower()
+    is_prod_like = app_env in {"prod", "production", "staging"}
+    if secret:
+        if is_prod_like and len(secret) < 32:
+            raise RuntimeError("AUTH_SECRET must be at least 32 characters in production/staging")
+        return secret
+    if is_prod_like:
+        raise RuntimeError("AUTH_SECRET is required in production/staging")
+    return "dev-auth-secret"
+
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_TTL = timedelta(days=30)
+IMPERSONATION_TOKEN_TTL = timedelta(minutes=10)
+ACCESS_COOKIE_NAME = "access_token"
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_HEADER_NAME = "X-CSRF-Token"
 
 
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+def _is_prod_like_env() -> bool:
+    app_env = (os.getenv("APP_ENV") or os.getenv("ENV") or "").strip().lower()
+    return app_env in {"prod", "production", "staging"}
 
 
-def _b64url_decode(data: str) -> bytes:
-    padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
+def _set_access_cookie(response: Response, token: str) -> None:
+    secure = _is_prod_like_env()
+    response.set_cookie(
+        key=ACCESS_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=int(ACCESS_TOKEN_TTL.total_seconds()),
+        path="/",
+    )
 
 
-def _sign(payload_b64: str, secret: str) -> str:
-    sig = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).digest()
-    return _b64url_encode(sig)
+def _set_csrf_cookie(response: Response, token: Optional[str] = None) -> None:
+    secure = _is_prod_like_env()
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=token or secrets.token_urlsafe(32),
+        httponly=False,
+        secure=secure,
+        samesite="lax",
+        max_age=int(ACCESS_TOKEN_TTL.total_seconds()),
+        path="/",
+    )
+
+
+def _clear_access_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=ACCESS_COOKIE_NAME,
+        path="/",
+    )
+
+
+def _clear_csrf_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=CSRF_COOKIE_NAME,
+        path="/",
+    )
+
+
+def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    return None
+
+
+def _resolve_auth_token(authorization: Optional[str]) -> Optional[str]:
+    token = _extract_bearer_token(authorization)
+    if token:
+        return token
+    return auth_token_ctx.get()
 
 
 def _create_access_token(user: models.User) -> str:
-    now = int(time.time())
+    now = datetime.now(timezone.utc)
     payload = {
-        "sub": user.id,
+        "sub": str(user.id),
         "email": user.email,
         "role": user.role,
         "name": user.name,
         "iat": now,
-        "exp": now + 60 * 60 * 24 * 30,
+        "exp": now + ACCESS_TOKEN_TTL,
     }
-    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    sig = _sign(payload_b64, _auth_secret())
-    return f"{payload_b64}.{sig}"
+    return jwt.encode(payload, _auth_secret(), algorithm=JWT_ALGORITHM)
 
 
 def _create_impersonation_token(target_user: models.User, admin_user_id: int) -> str:
-    now = int(time.time())
+    now = datetime.now(timezone.utc)
     payload = {
-        "sub": target_user.id,
+        "sub": str(target_user.id),
         "email": target_user.email,
         "role": target_user.role,
         "name": target_user.name,
         "impersonated_by": admin_user_id,
         "iat": now,
-        "exp": now + 60 * 10,
+        "exp": now + IMPERSONATION_TOKEN_TTL,
     }
-    payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
-    sig = _sign(payload_b64, _auth_secret())
-    return f"{payload_b64}.{sig}"
+    return jwt.encode(payload, _auth_secret(), algorithm=JWT_ALGORITHM)
 
 
 def hash_password(pw: str) -> str:
-    return "sha256$" + hashlib.sha256(pw.encode("utf-8")).hexdigest()
+    return security.hash_password(pw)
 
 
 def _decode_access_token(token: str) -> Optional[dict]:
     try:
-        parts = token.split(".")
-        if len(parts) != 2:
+        payload = jwt.decode(
+            token,
+            _auth_secret(),
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_aud": False},
+        )
+        sub = payload.get("sub")
+        if sub is None:
             return None
-        payload_b64, sig = parts
-        expected = _sign(payload_b64, _auth_secret())
-        if not hmac.compare_digest(sig, expected):
-            return None
-        payload = json.loads(_b64url_decode(payload_b64))
-        exp = payload.get("exp")
-        if exp and time.time() > exp:
+        try:
+            payload["sub"] = int(sub)
+        except (TypeError, ValueError):
             return None
         return payload
-    except Exception:
+    except JWTError:
         return None
 
 
 def _verify_password(raw_password: str, stored_hash: str) -> bool:
     if not stored_hash:
         return False
+    try:
+        if security.verify_password(raw_password, stored_hash):
+            return True
+    except Exception:
+        pass
+
+    # Legacy compatibility for older local/dev hashes so accounts can migrate
     if stored_hash == "test_hash":
         return raw_password == "password123"
     if stored_hash.startswith("sha256$"):
-        return stored_hash == hash_password(raw_password)
+        legacy = "sha256$" + hashlib.sha256(raw_password.encode("utf-8")).hexdigest()
+        return hmac.compare_digest(stored_hash, legacy)
     if stored_hash == raw_password:
         return True
-    try:
-        return security.verify_password(raw_password, stored_hash)
-    except Exception:
+    return False
+
+
+def _password_needs_rehash(stored_hash: Optional[str]) -> bool:
+    if not stored_hash:
+        return True
+    # Current secure formats in this app:
+    # - bcrypt: $2a$, $2b$, $2y$
+    # - pbkdf2_sha256 (passlib): $pbkdf2-sha256$
+    if stored_hash.startswith("$2"):
         return False
+    if stored_hash.startswith("$pbkdf2-sha256$"):
+        return False
+    return True
 
 
 def _parse_iso_dt(value: Union[str, datetime]) -> datetime:
@@ -346,6 +423,7 @@ def _get_pricing_settings(db: Session) -> dict:
             "booking_fee_pct_1_5": 0.30,
             "booking_fee_pct_6_10": 0.27,
             "booking_fee_pct_10_plus": 0.25,
+            "cancellation_fee_window_hours": 12,
         }
     return {
         "weekday_half_day": row.weekday_half_day,
@@ -366,7 +444,18 @@ def _get_pricing_settings(db: Session) -> dict:
         "booking_fee_pct_1_5": float(row.booking_fee_pct_1_5),
         "booking_fee_pct_6_10": float(row.booking_fee_pct_6_10),
         "booking_fee_pct_10_plus": float(row.booking_fee_pct_10_plus),
+        "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 12) or 12),
     }
+
+
+@router.get("/settings/cancellation-window-hours")
+def get_cancellation_window_hours(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _ = _require_user(authorization, db)
+    settings = _get_pricing_settings(db)
+    return {"cancellation_fee_window_hours": int(settings.get("cancellation_fee_window_hours") or 12)}
 
 
 def _sa_public_holidays(year: int) -> set:
@@ -546,6 +635,33 @@ def _booking_window(row) -> Optional[tuple]:
     return None
 
 
+def _booking_request_windows(db: Session, req: models.BookingRequest) -> List[tuple]:
+    slots = (
+        db.query(models.BookingRequestSlot)
+        .filter(models.BookingRequestSlot.booking_request_id == req.id)
+        .order_by(models.BookingRequestSlot.starts_at.asc())
+        .all()
+    )
+    windows: List[tuple] = []
+    for slot in slots:
+        start = getattr(slot, "starts_at", None)
+        end = getattr(slot, "ends_at", None)
+        if not start or not end or end <= start:
+            continue
+        windows.append((start, end))
+    if windows:
+        return windows
+
+    try:
+        start = _parse_iso_dt(req.start_dt or req.requested_starts_at)
+        end = _parse_iso_dt(req.end_dt or req.requested_ends_at)
+    except Exception:
+        return []
+    if end <= start:
+        return []
+    return [(start, end)]
+
+
 def _is_nanny_available(db: Session, nanny_id: int, start_dt: datetime, end_dt: datetime) -> bool:
     available_rows = (
         db.query(models.NannyAvailability)
@@ -707,6 +823,104 @@ def notify_booking_reassigned(parent_user_id: int, nanny_id: int, request_id: in
         db.close()
 
 
+def _send_whatsapp_message(phone: Optional[str], message: str) -> bool:
+    to = (phone or "").strip()
+    if not to:
+        return False
+
+    webhook = (os.getenv("WHATSAPP_WEBHOOK_URL") or "").strip()
+    token = (os.getenv("WHATSAPP_WEBHOOK_TOKEN") or "").strip()
+    if not webhook:
+        print("[WHATSAPP][LOG]")
+        print(f"to: {to}")
+        print("message:")
+        print(message)
+        print("[WHATSAPP][END]")
+        return True
+
+    payload = json.dumps({"to": to, "message": message}).encode("utf-8")
+    headers = {"Content-Type": "application/json", "User-Agent": "nanny-app/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = UrlRequest(webhook, data=payload, headers=headers, method="POST")
+    try:
+        with urlopen(req, timeout=10) as resp:
+            _ = resp.read()
+        return True
+    except Exception as e:
+        print(f"[WHATSAPP][SEND_FAIL] {e!r}")
+        return False
+
+
+def _resolve_parent_notification_channels(parent_profile: Optional[models.ParentProfile]) -> set:
+    channels = set()
+    flags = []
+    if parent_profile and getattr(parent_profile, "access_flags_json", None):
+        try:
+            parsed = json.loads(parent_profile.access_flags_json) or []
+            if isinstance(parsed, list):
+                flags = [str(x).strip().lower() for x in parsed if str(x).strip()]
+        except Exception:
+            flags = []
+
+    for flag in flags:
+        if "email" in flag:
+            channels.add("email")
+        if "whatsapp" in flag:
+            channels.add("whatsapp")
+
+    # Fallback when no explicit channel is configured.
+    if not channels:
+        channels.add("email")
+    return channels
+
+
+def notify_parent_nanny_checked_in(db: Session, booking: models.Booking, nanny_user: Optional[models.User]) -> dict:
+    parent_user = db.query(models.User).filter(models.User.id == booking.client_user_id).first()
+    if not parent_user:
+        return {"email": False, "whatsapp": False}
+    parent_profile = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == parent_user.id).first()
+    channels = _resolve_parent_notification_channels(parent_profile)
+
+    start_str = booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else "-")
+    end_str = booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else "-")
+    location = getattr(booking, "formatted_address", None) or getattr(booking, "location_label", None) or "your booking location"
+    nanny_name = getattr(nanny_user, "name", None) or "Your nanny"
+
+    email_sent = False
+    if "email" in channels and getattr(parent_user, "email", None):
+        subject = f"Nanny checked in for booking #{booking.id}"
+        body = "\n".join(
+            [
+                f"{nanny_name} has checked in and started the booking.",
+                f"Booking ID: {booking.id}",
+                f"Scheduled time: {start_str} to {end_str}",
+                f"Location: {location}",
+            ]
+        )
+        try:
+            get_email_client().send(EmailMessage(to=[parent_user.email], subject=subject, body=body))
+            email_sent = True
+        except Exception as e:
+            print(f"[EMAIL][CHECKIN_NOTIFY_FAIL] {e!r}")
+
+    whatsapp_sent = False
+    whatsapp_phone = None
+    if parent_profile and getattr(parent_profile, "phone", None):
+        whatsapp_phone = parent_profile.phone
+    elif getattr(parent_user, "phone", None):
+        whatsapp_phone = parent_user.phone
+    if "whatsapp" in channels and whatsapp_phone:
+        msg = (
+            f"{nanny_name} checked in for booking #{booking.id}. "
+            f"Time: {start_str} to {end_str}. "
+            f"Location: {location}."
+        )
+        whatsapp_sent = _send_whatsapp_message(whatsapp_phone, msg)
+
+    return {"email": email_sent, "whatsapp": whatsapp_sent}
+
+
 @router.get("/qualifications")
 def list_qualifications(db: Session = Depends(get_db)):
     rows = db.query(models.Qualification).order_by(models.Qualification.name.asc()).all()
@@ -753,7 +967,7 @@ def health(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/login", response_model=schemas.LoginResponse)
-def auth_login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
+def auth_login(payload: schemas.LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = (
         db.query(models.User)
         .filter(func.lower(models.User.email) == payload.email.lower())
@@ -761,6 +975,13 @@ def auth_login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
     )
     if not user or not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if _password_needs_rehash(user.password_hash):
+        try:
+            user.password_hash = hash_password(payload.password)
+            db.commit()
+        except Exception:
+            # Never block successful auth due to best-effort hash migration.
+            db.rollback()
 
     nanny_id = None
     if user.role == "nanny":
@@ -769,9 +990,9 @@ def auth_login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
             nanny_id = nanny.id
 
     token = _create_access_token(user)
+    _set_access_cookie(response, token)
+    _set_csrf_cookie(response)
     return {
-        "access_token": token,
-        "token_type": "bearer",
         "user": {
             "id": user.id,
             "name": user.name,
@@ -785,7 +1006,7 @@ def auth_login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/auth/signup", response_model=schemas.AuthResponse)
-def auth_signup(payload: schemas.SignupRequest, request: Request, db: Session = Depends(get_db)):
+def auth_signup(payload: schemas.SignupRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
 
     existing = db.query(models.User).filter(func.lower(models.User.email) == email).first()
@@ -889,8 +1110,9 @@ def auth_signup(payload: schemas.SignupRequest, request: Request, db: Session = 
                 )
 
     token = _create_access_token(user)
+    _set_access_cookie(response, token)
+    _set_csrf_cookie(response)
     return {
-        "access_token": token,
         "user": {
             "id": user.id,
             "name": user.name,
@@ -904,9 +1126,9 @@ def auth_signup(payload: schemas.SignupRequest, request: Request, db: Session = 
 
 @router.get("/auth/me", response_model=schemas.AuthUserOut)
 def auth_me(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
-    if not authorization or not authorization.startswith("Bearer "):
+    token = _resolve_auth_token(authorization)
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization.split(" ", 1)[1].strip()
     payload = _decode_access_token(token)
     if not payload or "sub" not in payload:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -935,6 +1157,13 @@ def me_alias(authorization: Optional[str] = Header(default=None), db: Session = 
     return auth_me(authorization=authorization, db=db)
 
 
+@router.post("/auth/logout")
+def auth_logout(response: Response):
+    _clear_access_cookie(response)
+    _clear_csrf_cookie(response)
+    return {"ok": True}
+
+
 @router.get("/admin/me")
 def admin_me(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     user = _require_user(authorization, db)
@@ -958,9 +1187,9 @@ def admin_impersonate(
 
 
 def _require_user(authorization: Optional[str], db: Session) -> models.User:
-    if not authorization or not authorization.startswith("Bearer "):
+    token = _resolve_auth_token(authorization)
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    token = authorization.split(" ", 1)[1].strip()
     payload = _decode_access_token(token)
     if not payload or "sub" not in payload:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -984,10 +1213,20 @@ def _require_admin_user(authorization: Optional[str], db: Session) -> models.Use
 def _nanny_profile_snapshot(user: models.User, profile: models.NannyProfile) -> dict:
     tag_ids = [t.id for t in (profile.tags or [])]
     language_ids = [l.id for l in (profile.languages or [])]
+    previous_jobs = []
+    raw_jobs = getattr(profile, "previous_jobs_json", None)
+    if raw_jobs:
+        try:
+            parsed = json.loads(raw_jobs)
+            if isinstance(parsed, list):
+                previous_jobs = parsed
+        except Exception:
+            previous_jobs = []
     return {
         "full_name": user.name,
         "dob": getattr(profile, "date_of_birth", None),
         "bio": getattr(profile, "bio", None),
+        "previous_jobs": previous_jobs,
         "tag_ids": sorted(tag_ids),
         "language_ids": sorted(language_ids),
     }
@@ -1353,6 +1592,15 @@ def get_nanny_me_profile(
         location_hint = f"{profile.suburb}, {profile.city}"
     elif getattr(profile, "city", None):
         location_hint = profile.city
+    previous_jobs = []
+    raw_jobs = getattr(profile, "previous_jobs_json", None)
+    if raw_jobs:
+        try:
+            parsed = json.loads(raw_jobs)
+            if isinstance(parsed, list):
+                previous_jobs = parsed
+        except Exception:
+            previous_jobs = []
 
     return {
         "nanny_id": nanny.id,
@@ -1373,6 +1621,7 @@ def get_nanny_me_profile(
         "waiver": getattr(profile, "waiver", None),
         "sa_id_number": getattr(profile, "sa_id_number", None),
         "sa_id_document_url": getattr(profile, "sa_id_document_url", None),
+        "previous_jobs": previous_jobs,
         "tag_ids": tag_ids,
         "language_ids": language_ids,
         "is_approved": bool(getattr(profile, "is_approved", 0)),
@@ -1410,6 +1659,13 @@ def update_nanny_me_profile(
         db.refresh(profile)
 
     before = _nanny_profile_snapshot(user, profile)
+    is_approved = bool(getattr(profile, "is_approved", 0))
+
+    def _norm_text(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        v = value.strip()
+        return v or None
 
     if payload.full_name is not None:
         user.name = payload.full_name.strip() if payload.full_name else ""
@@ -1421,6 +1677,8 @@ def update_nanny_me_profile(
         user.phone_alt = payload.phone_alt.strip() if payload.phone_alt else None
 
     if payload.dob is not None:
+        if is_approved and payload.dob != profile.date_of_birth:
+            raise HTTPException(status_code=400, detail="Date of birth cannot be changed after approval")
         profile.date_of_birth = payload.dob
 
     if payload.bio is not None:
@@ -1434,13 +1692,21 @@ def update_nanny_me_profile(
         profile.ethnicity = payload.ethnicity.strip() if payload.ethnicity else None
 
     if payload.passport_number is not None:
-        profile.passport_number = payload.passport_number.strip() if payload.passport_number else None
+        new_passport_number = _norm_text(payload.passport_number)
+        current_passport_number = _norm_text(getattr(profile, "passport_number", None))
+        if is_approved and new_passport_number != current_passport_number:
+            raise HTTPException(status_code=400, detail="Passport number cannot be changed after approval")
+        profile.passport_number = new_passport_number
 
     if payload.passport_expiry is not None:
         profile.passport_expiry = payload.passport_expiry.strip() if payload.passport_expiry else None
 
     if payload.passport_document_url is not None:
-        profile.passport_document_url = payload.passport_document_url.strip() if payload.passport_document_url else None
+        new_passport_doc = _norm_text(payload.passport_document_url)
+        current_passport_doc = _norm_text(getattr(profile, "passport_document_url", None))
+        if is_approved and current_passport_doc and not new_passport_doc:
+            raise HTTPException(status_code=400, detail="Approved nannies cannot remove uploaded passport documents")
+        profile.passport_document_url = new_passport_doc
 
     if payload.work_permit is not None:
         profile.work_permit = bool(payload.work_permit)
@@ -1449,14 +1715,41 @@ def update_nanny_me_profile(
         profile.work_permit_expiry = payload.work_permit_expiry.strip() if payload.work_permit_expiry else None
 
     if payload.work_permit_document_url is not None:
-        profile.work_permit_document_url = payload.work_permit_document_url.strip() if payload.work_permit_document_url else None
+        new_permit_doc = _norm_text(payload.work_permit_document_url)
+        current_permit_doc = _norm_text(getattr(profile, "work_permit_document_url", None))
+        if is_approved and current_permit_doc and not new_permit_doc:
+            raise HTTPException(status_code=400, detail="Approved nannies cannot remove uploaded permit documents")
+        profile.work_permit_document_url = new_permit_doc
 
     if payload.waiver is not None:
         profile.waiver = bool(payload.waiver)
     if payload.sa_id_number is not None:
-        profile.sa_id_number = payload.sa_id_number.strip() if payload.sa_id_number else None
+        new_sa_id = _norm_text(payload.sa_id_number)
+        current_sa_id = _norm_text(getattr(profile, "sa_id_number", None))
+        if is_approved and new_sa_id != current_sa_id:
+            raise HTTPException(status_code=400, detail="South African ID number cannot be changed after approval")
+        profile.sa_id_number = new_sa_id
     if payload.sa_id_document_url is not None:
-        profile.sa_id_document_url = payload.sa_id_document_url.strip() if payload.sa_id_document_url else None
+        new_sa_doc = _norm_text(payload.sa_id_document_url)
+        current_sa_doc = _norm_text(getattr(profile, "sa_id_document_url", None))
+        if is_approved and current_sa_doc and not new_sa_doc:
+            raise HTTPException(status_code=400, detail="Approved nannies cannot remove uploaded ID documents")
+        profile.sa_id_document_url = new_sa_doc
+    if payload.previous_jobs is not None:
+        cleaned_jobs = []
+        for item in payload.previous_jobs:
+            job = item.dict() if hasattr(item, "dict") else dict(item or {})
+            cleaned = {
+                "role": _norm_text(job.get("role")),
+                "employer": _norm_text(job.get("employer")),
+                "period": _norm_text(job.get("period")),
+                "reference_name": _norm_text(job.get("reference_name")),
+                "reference_phone": _norm_text(job.get("reference_phone")),
+                "reference_relationship": _norm_text(job.get("reference_relationship")),
+            }
+            if any(cleaned.values()):
+                cleaned_jobs.append(cleaned)
+        profile.previous_jobs_json = json.dumps(cleaned_jobs)
 
     if payload.tag_ids is not None:
         profile.tags = (
@@ -1806,6 +2099,36 @@ def delete_nanny_me_availability(
     return {"ok": True}
 
 
+@router.patch("/nannies/me/availability/{availability_id}")
+def update_nanny_me_availability(
+    availability_id: int,
+    payload: dict,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    row = (
+        db.query(models.NannyAvailability)
+        .filter(models.NannyAvailability.id == availability_id, models.NannyAvailability.nanny_id == nanny.id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Availability not found")
+    if "start_dt" in payload:
+        row.start_dt = payload["start_dt"]
+    if "end_dt" in payload:
+        row.end_dt = payload["end_dt"]
+    if "type" in payload:
+        row.type = payload["type"]
+    db.commit()
+    return {"ok": True}
+
+
 @router.patch("/nannies/me/inactive")
 def set_nanny_inactive(
     payload: dict,
@@ -1858,6 +2181,16 @@ def list_nanny_me_booking_requests(
                 .order_by(models.ParentLocation.is_default.desc(), models.ParentLocation.id.desc())
                 .first()
             )
+        windows = _booking_request_windows(db, req)
+        slots = [
+            {
+                "start_dt": _to_iso_z(w[0]),
+                "end_dt": _to_iso_z(w[1]),
+                "date": w[0].date().isoformat(),
+            }
+            for w in windows
+        ]
+        day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
         results.append({
             "id": req.id,
             "group_id": req.group_id or req.id,
@@ -1868,10 +2201,253 @@ def list_nanny_me_booking_requests(
             "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
             "notes": req.client_notes,
             "location_label": loc.label if loc else None,
-            "location_address": getattr(loc, "formatted_address", None) if loc else None,
+            "location_address": (getattr(loc, "formatted_address", None) if loc else None) or getattr(prof, "formatted_address", None),
+            "location_lat": (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None),
+            "location_lng": (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None),
+            "slots": slots,
+            "days_required": day_count,
             "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
         })
     return {"results": results}
+
+
+@router.get("/nannies/me/bookings")
+def list_nanny_me_bookings(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    parent_user = aliased(models.User)
+    location = aliased(models.ParentLocation)
+    parent_profile = aliased(models.ParentProfile)
+    rows = (
+        db.query(models.BookingRequest, parent_user, location, parent_profile)
+        .join(parent_user, parent_user.id == models.BookingRequest.parent_user_id)
+        .outerjoin(location, location.id == models.BookingRequest.location_id)
+        .outerjoin(parent_profile, parent_profile.user_id == models.BookingRequest.parent_user_id)
+        .filter(
+            models.BookingRequest.nanny_id == nanny.id,
+            models.BookingRequest.status.in_(["approved", "rejected", "cancelled"]),
+        )
+        .order_by(models.BookingRequest.created_at.desc())
+        .all()
+    )
+    results = []
+    for req, parent, loc, prof in rows:
+        if not loc:
+            loc = (
+                db.query(models.ParentLocation)
+                .filter(models.ParentLocation.parent_user_id == parent.id)
+                .order_by(models.ParentLocation.is_default.desc(), models.ParentLocation.id.desc())
+                .first()
+            )
+        windows = _booking_request_windows(db, req)
+        slots = [
+            {
+                "start_dt": _to_iso_z(w[0]),
+                "end_dt": _to_iso_z(w[1]),
+                "date": w[0].date().isoformat(),
+            }
+            for w in windows
+        ]
+        day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
+        results.append({
+            "id": req.id,
+            "group_id": req.group_id or req.id,
+            "status": req.status,
+            "parent_name": parent.name,
+            "parent_email": parent.email,
+            "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
+            "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            "notes": req.client_notes,
+            "location_label": loc.label if loc else None,
+            "location_address": (getattr(loc, "formatted_address", None) if loc else None) or getattr(prof, "formatted_address", None),
+            "location_lat": (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None),
+            "location_lng": (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None),
+            "slots": slots,
+            "days_required": day_count,
+            "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
+        })
+    return {"results": results}
+
+
+def _ensure_booking_geo(booking: models.Booking) -> tuple:
+    if booking.lat is None or booking.lng is None:
+        raise HTTPException(status_code=400, detail="Booking location is missing")
+    return float(booking.lat), float(booking.lng)
+
+
+def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    return float(haversine_km(lat1, lng1, lat2, lng2) * 1000.0)
+
+
+def _nanny_owned_booking_or_404(db: Session, booking_id: int, user_id: int) -> models.Booking:
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user_id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    booking = (
+        db.query(models.Booking)
+        .filter(models.Booking.id == booking_id, models.Booking.nanny_id == nanny.id)
+        .first()
+    )
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return booking
+
+
+@router.get("/nannies/me/duty-bookings")
+def list_nanny_me_duty_bookings(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+
+    parent_user = aliased(models.User)
+    rows = (
+        db.query(models.Booking, parent_user)
+        .join(parent_user, parent_user.id == models.Booking.client_user_id)
+        .filter(models.Booking.nanny_id == nanny.id)
+        .order_by(models.Booking.starts_at.desc())
+        .all()
+    )
+    return {
+        "results": [
+            {
+                "booking_id": b.id,
+                "parent_name": p.name,
+                "parent_email": p.email,
+                "start_dt": b.start_dt or (b.starts_at.isoformat() if b.starts_at else None),
+                "end_dt": b.end_dt or (b.ends_at.isoformat() if b.ends_at else None),
+                "status": b.status,
+                "location_label": getattr(b, "location_label", None),
+                "location_address": getattr(b, "formatted_address", None),
+                "location_lat": getattr(b, "lat", None),
+                "location_lng": getattr(b, "lng", None),
+                "check_in_at": b.check_in_at.isoformat() if getattr(b, "check_in_at", None) else None,
+                "check_in_lat": getattr(b, "check_in_lat", None),
+                "check_in_lng": getattr(b, "check_in_lng", None),
+                "check_in_distance_m": getattr(b, "check_in_distance_m", None),
+                "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
+                "check_out_lat": getattr(b, "check_out_lat", None),
+                "check_out_lng": getattr(b, "check_out_lng", None),
+                "check_out_distance_m": getattr(b, "check_out_distance_m", None),
+            }
+            for b, p in rows
+        ]
+    }
+
+
+@router.post("/nannies/me/bookings/{booking_id}/check-in")
+def nanny_check_in_booking(
+    booking_id: int,
+    payload: schemas.BookingDutyActionRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
+    target_lat, target_lng = _ensure_booking_geo(booking)
+    distance_m = _distance_m(payload.lat, payload.lng, target_lat, target_lng)
+    if distance_m > 100:
+        raise HTTPException(status_code=409, detail=f"You must be within 100m to check in (current distance: {distance_m:.1f}m)")
+    if booking.check_in_at:
+        return {
+            "ok": True,
+            "booking_id": booking.id,
+            "check_in_at": booking.check_in_at.isoformat(),
+            "check_in_distance_m": booking.check_in_distance_m,
+        }
+
+    before_status = booking.status
+    booking.check_in_at = datetime.utcnow()
+    booking.check_in_lat = float(payload.lat)
+    booking.check_in_lng = float(payload.lng)
+    booking.check_in_distance_m = float(round(distance_m, 2))
+    if booking.status in ("approved", "pending"):
+        booking.status = "accepted"
+    db.commit()
+    db.refresh(booking)
+    log_booking_status_change(
+        db,
+        actor_user=user,
+        target_user_id=booking.client_user_id,
+        booking_id=booking.id,
+        before_status=before_status,
+        after_status=booking.status,
+        request=request,
+    )
+    notifications = notify_parent_nanny_checked_in(db, booking, user)
+    return {
+        "ok": True,
+        "booking_id": booking.id,
+        "check_in_at": booking.check_in_at.isoformat() if booking.check_in_at else None,
+        "check_in_distance_m": booking.check_in_distance_m,
+        "notifications": notifications,
+    }
+
+
+@router.post("/nannies/me/bookings/{booking_id}/check-out")
+def nanny_check_out_booking(
+    booking_id: int,
+    payload: schemas.BookingDutyActionRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
+    if not booking.check_in_at:
+        raise HTTPException(status_code=400, detail="Check in first before checking out")
+    target_lat, target_lng = _ensure_booking_geo(booking)
+    distance_m = _distance_m(payload.lat, payload.lng, target_lat, target_lng)
+    if distance_m > 100:
+        raise HTTPException(status_code=409, detail=f"You must be within 100m to check out (current distance: {distance_m:.1f}m)")
+    if booking.check_out_at:
+        return {
+            "ok": True,
+            "booking_id": booking.id,
+            "check_out_at": booking.check_out_at.isoformat(),
+            "check_out_distance_m": booking.check_out_distance_m,
+        }
+
+    before_status = booking.status
+    booking.check_out_at = datetime.utcnow()
+    booking.check_out_lat = float(payload.lat)
+    booking.check_out_lng = float(payload.lng)
+    booking.check_out_distance_m = float(round(distance_m, 2))
+    booking.status = "completed"
+    db.commit()
+    db.refresh(booking)
+    log_booking_status_change(
+        db,
+        actor_user=user,
+        target_user_id=booking.client_user_id,
+        booking_id=booking.id,
+        before_status=before_status,
+        after_status=booking.status,
+        request=request,
+    )
+    return {
+        "ok": True,
+        "booking_id": booking.id,
+        "check_out_at": booking.check_out_at.isoformat() if booking.check_out_at else None,
+        "check_out_distance_m": booking.check_out_distance_m,
+    }
 
 
 @router.post("/nannies/me/booking-requests/{request_id}/accept")
@@ -1894,14 +2470,14 @@ def accept_nanny_booking_request(
     if req.status not in ("tbc", "pending_admin"):
         raise HTTPException(status_code=400, detail="Booking request is not pending")
 
-    try:
-        start_dt = _parse_iso_dt(req.start_dt or req.requested_starts_at)
-        end_dt = _parse_iso_dt(req.end_dt or req.requested_ends_at)
-    except Exception:
+    windows = _booking_request_windows(db, req)
+    if not windows:
         raise HTTPException(status_code=400, detail="Invalid booking window")
-
-    if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
-        raise HTTPException(status_code=409, detail="Requested time is not available")
+    for start_dt, end_dt in windows:
+        if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
+            raise HTTPException(status_code=409, detail="Requested time is not available")
+    start_dt = min(w[0] for w in windows)
+    end_dt = max(w[1] for w in windows)
 
     if not req.group_id:
         req.group_id = req.id
@@ -1948,23 +2524,26 @@ def accept_nanny_booking_request(
         db.commit()
         raise HTTPException(status_code=409, detail="Another nanny with a higher rating has been selected for this job")
 
-    booking = models.Booking(
-        nanny_id=req.nanny_id,
-        client_user_id=req.parent_user_id,
-        day=start_dt.date(),
-        status="approved",
-        price_cents=0,
-        starts_at=start_dt,
-        ends_at=end_dt,
-        start_dt=_to_iso_z(start_dt),
-        end_dt=_to_iso_z(end_dt),
-        lat=location.lat if location else None,
-        lng=location.lng if location else None,
-        location_mode="saved" if location else None,
-        location_label=(location.label or "Location").strip() if location else None,
-        formatted_address=getattr(location, "formatted_address", None) if location else None,
-    )
-    db.add(booking)
+    created_bookings = []
+    for slot_start, slot_end in windows:
+        booking = models.Booking(
+            nanny_id=req.nanny_id,
+            client_user_id=req.parent_user_id,
+            day=slot_start.date(),
+            status="approved",
+            price_cents=0,
+            starts_at=slot_start,
+            ends_at=slot_end,
+            start_dt=_to_iso_z(slot_start),
+            end_dt=_to_iso_z(slot_end),
+            lat=location.lat if location else None,
+            lng=location.lng if location else None,
+            location_mode="saved" if location else None,
+            location_label=(location.label or "Location").strip() if location else None,
+            formatted_address=getattr(location, "formatted_address", None) if location else None,
+        )
+        db.add(booking)
+        created_bookings.append(booking)
 
     # Reject other pending requests for same parent & time window
     others = (
@@ -1982,26 +2561,33 @@ def accept_nanny_booking_request(
             other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
         except Exception:
             continue
-        if _overlaps(start_dt, end_dt, other_start, other_end):
+        if any(_overlaps(slot_start, slot_end, other_start, other_end) for slot_start, slot_end in windows):
             other.status = "rejected"
             other.admin_reason = "filled"
             other.admin_decided_at = datetime.utcnow()
 
-    block_row = models.NannyAvailability(
-        nanny_id=req.nanny_id,
-        date=start_dt.date(),
-        start_time=start_dt.time(),
-        end_time=end_dt.time(),
-        is_available=False,
-        created_by="nanny",
-        type="blocked",
-        start_dt=_to_iso_z(start_dt),
-        end_dt=_to_iso_z(end_dt),
-    )
-    db.add(block_row)
+    for slot_start, slot_end in windows:
+        block_row = models.NannyAvailability(
+            nanny_id=req.nanny_id,
+            date=slot_start.date(),
+            start_time=slot_start.time(),
+            end_time=slot_end.time(),
+            is_available=False,
+            created_by="nanny",
+            type="blocked",
+            start_dt=_to_iso_z(slot_start),
+            end_dt=_to_iso_z(slot_end),
+        )
+        db.add(block_row)
 
     db.commit()
-    return {"ok": True, "booking_id": booking.id, "booking_request_id": req.id}
+    primary_booking_id = created_bookings[0].id if created_bookings else None
+    return {
+        "ok": True,
+        "booking_id": primary_booking_id,
+        "booking_ids": [b.id for b in created_bookings],
+        "booking_request_id": req.id,
+    }
 
 
 # ...existing code...
@@ -2113,6 +2699,47 @@ def _search_nannies_by_area(
     def simple_list(items):
         return [{"id": x.id, "name": x.name} for x in (items or [])]
 
+    nanny_ids = [p.nanny_id for p in profiles]
+    completed_jobs_map = {}
+    if nanny_ids:
+        completed_rows = (
+            db.query(models.BookingRequest.nanny_id, func.count(models.BookingRequest.id))
+            .filter(
+                models.BookingRequest.nanny_id.in_(nanny_ids),
+                models.BookingRequest.status == "approved",
+            )
+            .group_by(models.BookingRequest.nanny_id)
+            .all()
+        )
+        completed_jobs_map = {int(nanny_id): int(count or 0) for nanny_id, count in completed_rows}
+
+    def normalize_previous_jobs(raw: object) -> List[dict]:
+        if raw is None:
+            return []
+        parsed = raw
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                return []
+        if not isinstance(parsed, list):
+            return []
+        cleaned: List[dict] = []
+        for row in parsed[:5]:
+            if not isinstance(row, dict):
+                continue
+            item = {
+                "role": (row.get("role") or "").strip(),
+                "employer": (row.get("employer") or "").strip(),
+                "period": (row.get("period") or "").strip(),
+                "reference_name": (row.get("reference_name") or "").strip(),
+                "reference_phone": (row.get("reference_phone") or "").strip(),
+                "reference_relationship": (row.get("reference_relationship") or "").strip(),
+            }
+            if any(item.values()):
+                cleaned.append(item)
+        return cleaned
+
     results = []
     for p in profiles:
         nanny = db.query(models.Nanny).filter(models.Nanny.id == p.nanny_id).first()
@@ -2171,6 +2798,10 @@ def _search_nannies_by_area(
                 "review_count_12m": cnt or 0,
                 "distance_km": distance_km,
                 "location_hint": location_hint,
+                "completed_jobs_count": completed_jobs_map.get(int(p.nanny_id), 0),
+                "has_identity_document": bool(getattr(p, "sa_id_document_url", None) or getattr(p, "work_permit_document_url", None)),
+                "has_passport_document": bool(getattr(p, "passport_document_url", None)),
+                "previous_jobs": normalize_previous_jobs(getattr(p, "previous_jobs_json", None)),
             }
         )
 
@@ -2697,6 +3328,9 @@ def cancel_parent_booking_request(job_id: int, request: Request, authorization: 
     if not rows:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    settings = _get_pricing_settings(db)
+    cancellation_window_hours = int(settings.get("cancellation_fee_window_hours") or 12)
+
     # Fee window applies only after a nanny has accepted
     any_accepted = any(r.status == "approved" for r in rows)
     if any_accepted:
@@ -2708,8 +3342,11 @@ def cancel_parent_booking_request(job_id: int, request: Request, authorization: 
                 continue
         if start_times:
             earliest = min(start_times)
-            if (earliest - datetime.utcnow()) < timedelta(hours=12):
-                raise HTTPException(status_code=400, detail="Cancellation within 12 hours will incur a fee. Please contact support.")
+            if (earliest - datetime.utcnow()) < timedelta(hours=cancellation_window_hours):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cancellation within {cancellation_window_hours} hours will incur a fee. Please contact support.",
+                )
 
     for req in rows:
         if req.status == "cancelled":
@@ -2723,13 +3360,13 @@ def cancel_parent_booking_request(job_id: int, request: Request, authorization: 
         if req.payment_status == "paid":
             wage = req.wage_cents or 0
             fee = req.booking_fee_cents or 0
-            within_12h = False
+            within_fee_window = False
             try:
                 start_dt = _parse_iso_dt(req.start_dt or req.requested_starts_at)
-                within_12h = (start_dt - datetime.utcnow()) < timedelta(hours=12)
+                within_fee_window = (start_dt - datetime.utcnow()) < timedelta(hours=cancellation_window_hours)
             except Exception:
-                within_12h = False
-            if within_12h:
+                within_fee_window = False
+            if within_fee_window:
                 company_retained = int(round(fee * 1.0))
                 nanny_retained = int(round(wage * 0.40))
             else:
@@ -3525,6 +4162,10 @@ def list_parent_bookings(
                 "lat": b.lat,
                 "lng": b.lng,
                 "location_label": getattr(b, "location_label", None),
+                "check_in_at": b.check_in_at.isoformat() if getattr(b, "check_in_at", None) else None,
+                "check_in_distance_m": getattr(b, "check_in_distance_m", None),
+                "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
+                "check_out_distance_m": getattr(b, "check_out_distance_m", None),
             }
             for b in rows
         ]
@@ -3557,6 +4198,10 @@ def list_nanny_bookings(
                 "lng": b.lng,
                 "location_mode": getattr(b, "location_mode", None),
                 "location_label": getattr(b, "location_label", None),
+                "check_in_at": b.check_in_at.isoformat() if getattr(b, "check_in_at", None) else None,
+                "check_in_distance_m": getattr(b, "check_in_distance_m", None),
+                "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
+                "check_out_distance_m": getattr(b, "check_out_distance_m", None),
             }
             for b in rows
         ]
@@ -3740,6 +4385,45 @@ def create_booking_request(
     return {"booking_request_id": req.id, "group_id": req.group_id, "status": req.status}
 
 
+@router.post("/booking-requests/estimate", response_model=schemas.BookingEstimateResponse)
+def estimate_booking_request(
+    payload: schemas.BookingEstimateRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        start_dt = _parse_iso_dt(payload.start_dt)
+        end_dt = _parse_iso_dt(payload.end_dt)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid start_dt or end_dt")
+    if end_dt <= start_dt:
+        raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
+
+    selected_count = int(payload.selected_count or 1)
+    if selected_count < 1:
+        selected_count = 1
+
+    pricing = _compute_booking_pricing(start_dt, end_dt, bool(payload.sleepover), _get_pricing_settings(db))
+    per_nanny_total = int(pricing.get("total_cents") or 0)
+    per_nanny_wage = int(pricing.get("wage_cents") or 0)
+    per_nanny_fee = int(pricing.get("booking_fee_cents") or 0)
+    booking_fee_pct = float(pricing.get("booking_fee_pct") or 0.0)
+
+    return {
+        "currency": "ZAR",
+        "per_nanny_total_cents": per_nanny_total,
+        "per_nanny_wage_cents": per_nanny_wage,
+        "per_nanny_fee_cents": per_nanny_fee,
+        "booking_fee_pct": booking_fee_pct,
+        "selected_count": selected_count,
+        "selected_total_cents": per_nanny_total * selected_count,
+    }
+
+
 @router.post("/booking-requests/bulk")
 def create_booking_request_bulk(
     payload: BookingRequestBulkCreate,
@@ -3894,37 +4578,40 @@ def approve_booking_request(
     if req.status not in ("pending_admin", "tbc"):
         raise HTTPException(status_code=400, detail="Booking request is not pending")
 
-    try:
-        start_dt = _parse_iso_dt(req.start_dt or req.requested_starts_at)
-        end_dt = _parse_iso_dt(req.end_dt or req.requested_ends_at)
-    except Exception:
+    windows = _booking_request_windows(db, req)
+    if not windows:
         raise HTTPException(status_code=400, detail="Invalid booking window")
-
-    if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
-        raise HTTPException(status_code=409, detail="Requested time is not available")
+    for start_dt, end_dt in windows:
+        if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
+            raise HTTPException(status_code=409, detail="Requested time is not available")
+    start_dt = min(w[0] for w in windows)
+    end_dt = max(w[1] for w in windows)
 
     location = None
     if req.location_id:
         location = db.query(models.ParentLocation).filter(models.ParentLocation.id == req.location_id).first()
 
     before_status = req.status
-    booking = models.Booking(
-        nanny_id=req.nanny_id,
-        client_user_id=req.parent_user_id,
-        day=start_dt.date(),
-        status="approved",
-        price_cents=0,
-        starts_at=start_dt,
-        ends_at=end_dt,
-        start_dt=_to_iso_z(start_dt),
-        end_dt=_to_iso_z(end_dt),
-        lat=location.lat if location else None,
-        lng=location.lng if location else None,
-        location_mode="saved" if location else None,
-        location_label=(location.label or "Location").strip() if location else None,
-        formatted_address=getattr(location, "formatted_address", None) if location else None,
-    )
-    db.add(booking)
+    created_bookings = []
+    for slot_start, slot_end in windows:
+        booking = models.Booking(
+            nanny_id=req.nanny_id,
+            client_user_id=req.parent_user_id,
+            day=slot_start.date(),
+            status="approved",
+            price_cents=0,
+            starts_at=slot_start,
+            ends_at=slot_end,
+            start_dt=_to_iso_z(slot_start),
+            end_dt=_to_iso_z(slot_end),
+            lat=location.lat if location else None,
+            lng=location.lng if location else None,
+            location_mode="saved" if location else None,
+            location_label=(location.label or "Location").strip() if location else None,
+            formatted_address=getattr(location, "formatted_address", None) if location else None,
+        )
+        db.add(booking)
+        created_bookings.append(booking)
 
     req.status = "approved"
     req.start_dt = req.start_dt or _to_iso_z(start_dt)
@@ -3933,19 +4620,19 @@ def approve_booking_request(
     req.admin_decided_at = datetime.utcnow()
 
     db.commit()
-    db.refresh(booking)
-    block_row = models.NannyAvailability(
-        nanny_id=req.nanny_id,
-        date=start_dt.date(),
-        start_time=start_dt.time(),
-        end_time=end_dt.time(),
-        is_available=False,
-        created_by="admin",
-        type="blocked",
-        start_dt=_to_iso_z(start_dt),
-        end_dt=_to_iso_z(end_dt),
-    )
-    db.add(block_row)
+    for slot_start, slot_end in windows:
+        block_row = models.NannyAvailability(
+            nanny_id=req.nanny_id,
+            date=slot_start.date(),
+            start_time=slot_start.time(),
+            end_time=slot_end.time(),
+            is_available=False,
+            created_by="admin",
+            type="blocked",
+            start_dt=_to_iso_z(slot_start),
+            end_dt=_to_iso_z(slot_end),
+        )
+        db.add(block_row)
     db.commit()
     log_booking_request_status_change(
         db,
@@ -3961,21 +4648,28 @@ def approve_booking_request(
         actor_user=admin,
         target_user_id=booking.client_user_id,
         entity="bookings",
-        entity_id=booking.id,
+        entity_id=created_bookings[0].id if created_bookings else None,
         action="create",
         before_obj={},
         after_obj={
-            "status": booking.status,
-            "parent_user_id": booking.client_user_id,
-            "nanny_id": booking.nanny_id,
-            "start_dt": booking.start_dt,
-            "end_dt": booking.end_dt,
-            "location_label": booking.location_label,
+            "status": "approved",
+            "parent_user_id": req.parent_user_id,
+            "nanny_id": req.nanny_id,
+            "start_dt": _to_iso_z(start_dt),
+            "end_dt": _to_iso_z(end_dt),
+            "location_label": (location.label if location else None),
+            "booking_count": len(created_bookings),
         },
         changed_fields=None,
         request=request,
     )
-    return {"ok": True, "booking_id": booking.id, "booking_request_id": req.id}
+    primary_booking_id = created_bookings[0].id if created_bookings else None
+    return {
+        "ok": True,
+        "booking_id": primary_booking_id,
+        "booking_ids": [b.id for b in created_bookings],
+        "booking_request_id": req.id,
+    }
 
 
 @router.post("/admin/booking-requests/{request_id}/approve")
@@ -4776,6 +5470,7 @@ def get_admin_invite(token: str, db: Session = Depends(get_db)):
 def accept_admin_invite(
     payload: schemas.AdminInviteAcceptRequest,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     invite = db.query(models.AdminInvite).filter(models.AdminInvite.token == payload.token).first()
@@ -4826,9 +5521,9 @@ def accept_admin_invite(
     )
 
     token = _create_access_token(user)
+    _set_access_cookie(response, token)
+    _set_csrf_cookie(response)
     return {
-        "access_token": token,
-        "token_type": "bearer",
         "user": {
             "id": user.id,
             "name": user.name,

@@ -133,8 +133,7 @@
       const logoutBtn = document.getElementById("logoutBottom");
       logoutBtn.style.display = "block";
       logoutBtn.addEventListener("click", () => {
-        localStorage.removeItem("token");
-        window.location.href = "/static/login.html";
+        logout();
       });
 
       const requestTypeModal = document.getElementById("requestTypeModal");

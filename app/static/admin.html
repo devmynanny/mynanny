@@ -397,7 +397,7 @@
         }
     let nannyData = [];
     let nannyCards = [];
-    let authToken = null;
+    let isAuthenticated = false;
     let authUser = null; // { id, name, email, role }
     let inactivityTimer = null;
     const INACTIVITY_MS = 15 * 60 * 1000;
@@ -414,9 +414,16 @@
     }
 
     function logout(showAlert = false) {
-      localStorage.removeItem("token");
       localStorage.removeItem("userEmail");
-      authToken = null;
+      isAuthenticated = false;
+      fetch("/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: Object.assign(
+          { "Content-Type": "application/json" },
+          getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {}
+        )
+      }).catch(() => {});
 
       if (inactivityTimer) clearTimeout(inactivityTimer);
 
@@ -431,14 +438,12 @@
     }
 
     function authHeaders() {
-      const token = localStorage.getItem("token");
-      if (!token) return {};
-      return { Authorization: `Bearer ${token}` };
+      const token = sessionStorage.getItem("impersonation_token");
+      return token ? { Authorization: `Bearer ${token}` } : {};
     }
 
     function requireLogin() {
-      const token = localStorage.getItem("token");
-      if (!token) {
+      if (!isAuthenticated) {
         alert("Please login first");
         return false;
       }
@@ -472,7 +477,11 @@
 
       const res = await fetch("/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        headers: Object.assign(
+          { "Content-Type": "application/json" },
+          getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {}
+        ),
         body: JSON.stringify({ email, password })
       });
 
@@ -483,11 +492,9 @@
         return;
       }
 
-      const data = await res.json();
-
-      localStorage.setItem("token", data.access_token);
+      await res.json();
       localStorage.setItem("userEmail", email);
-      authToken = data.access_token;
+      isAuthenticated = true;
 
       setAuthUI(true, email);
       resetInactivityTimer();
@@ -499,16 +506,22 @@
 
     ["click", "mousemove", "keydown", "scroll", "touchstart"].forEach(evt =>
       document.addEventListener(evt, () => {
-        if (localStorage.getItem("token")) resetInactivityTimer();
+        if (isAuthenticated) resetInactivityTimer();
       })
     );
 
-    window.addEventListener("load", () => {
-      const token = localStorage.getItem("token");
+    window.addEventListener("load", async () => {
       const email = localStorage.getItem("userEmail");
+      let hasSession = false;
+      try {
+        const me = await fetchJson("/auth/me", { headers: authHeaders() });
+        hasSession = !!me;
+      } catch {
+        hasSession = false;
+      }
 
-      if (token && email) {
-        authToken = token;
+      if (hasSession && email) {
+        isAuthenticated = true;
         setAuthUI(true, email);
         resetInactivityTimer();
         requireAdminRole().then(ok => {
@@ -622,7 +635,17 @@
     }
 
     async function fetchJson(url, opts = {}) {
-      const res = await fetch(url, opts);
+      const method = String(opts.method || "GET").toUpperCase();
+      const mergedHeaders = Object.assign({}, opts.headers || {});
+      const isUnsafe = ["POST", "PUT", "PATCH", "DELETE"].includes(method);
+      if (isUnsafe && !mergedHeaders.Authorization) {
+        const csrfToken = getCsrfToken();
+        if (csrfToken) mergedHeaders["X-CSRF-Token"] = csrfToken;
+      }
+      const res = await fetch(url, Object.assign({}, opts, {
+        credentials: "same-origin",
+        headers: mergedHeaders
+      }));
       if (res.status === 401) {
         logout();
         throw new Error("Unauthorized");

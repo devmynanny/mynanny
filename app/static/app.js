@@ -1,10 +1,11 @@
 // app/static/app.js
 function setToken(token) {
-  localStorage.setItem("token", token);
+  // Cookie-based auth is primary; keep this as a no-op for legacy callers.
+  if (!token) return;
 }
 
 function getToken() {
-  return localStorage.getItem("token");
+  return null;
 }
 
 function clearToken() {
@@ -50,16 +51,40 @@ function getImpersonationToken() {
   return sessionStorage.getItem("impersonation_token");
 }
 
+function getCookie(name) {
+  const key = `${name}=`;
+  const parts = document.cookie ? document.cookie.split(";") : [];
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(key)) {
+      return decodeURIComponent(trimmed.slice(key.length));
+    }
+  }
+  return null;
+}
+
+function getCsrfToken() {
+  return getCookie("csrf_token");
+}
+
+window.getCsrfToken = getCsrfToken;
+
 async function fetchJson(url, opts = {}) {
-  const token = getImpersonationToken() || localStorage.getItem("token");
+  const token = getImpersonationToken();
   const headers = Object.assign(
     { "Content-Type": "application/json" },
     opts.headers || {}
   );
 
   if (token) headers["Authorization"] = "Bearer " + token;
-
-  const res = await fetch(url, Object.assign({}, opts, { headers }));
+  const method = String(opts.method || "GET").toUpperCase();
+  const isUnsafe = ["POST", "PUT", "PATCH", "DELETE"].includes(method);
+  if (isUnsafe && !headers["Authorization"]) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  }
+  const fetchOpts = Object.assign({}, opts, { headers, credentials: "same-origin" });
+  const res = await fetch(url, fetchOpts);
 
   let data = null;
   let text = "";
@@ -104,12 +129,11 @@ async function fetchJson(url, opts = {}) {
 }
 
 async function requireMe() {
-  const t = getToken();
-  if (!t) {
+  const me = await fetchJson("/auth/me").catch(() => null);
+  if (!me) {
     location.href = "/static/login.html";
     throw new Error("Not logged in");
   }
-  const me = await fetchJson("/auth/me");
   localStorage.setItem("is_admin", String(!!me.is_admin));
   return me;
 }
@@ -121,10 +145,17 @@ function routeByRole(role) {
 }
 
 function logout() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("is_admin");
-  sessionStorage.removeItem("impersonation_token");
-  window.location.href = "/static/login.html";
+  clearToken();
+  fetch("/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: Object.assign(
+      { "Content-Type": "application/json" },
+      getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {}
+    )
+  }).finally(() => {
+    window.location.href = "/static/login.html";
+  });
 }
 
 function renderTopbar(container, me, profileComplete) {
@@ -217,11 +248,10 @@ window.loadParentContext = loadParentContext;
 })();
 
 (async function setupLogout(){
-  const token = localStorage.getItem("token");
   const topbar = document.getElementById("topbar");
   const path = window.location.pathname || "";
 
-  if (!token || !topbar) return;
+  if (!topbar) return;
   const disableLogout = topbar.dataset && topbar.dataset.disableLogout === "true";
   if (path.endsWith("/login.html") || path.endsWith("/signup.html")) return;
 

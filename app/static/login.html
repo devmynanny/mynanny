@@ -50,11 +50,9 @@
     const logoutLink = document.getElementById("logoutLink");
 
     async function tryAutoRoute() {
-      const token = getToken();
-      if (!token) return;
-      logoutLink.style.display = "inline";
       try {
         const u = await fetchJson("/me");
+        logoutLink.style.display = "inline";
         localStorage.setItem("is_admin", String(!!u.is_admin));
         if (u.is_admin) {
           window.location.href = "/static/admin_dashboard.html";
@@ -68,8 +66,7 @@
 
     logoutLink.addEventListener("click", (e) => {
       e.preventDefault();
-      clearToken();
-      location.reload();
+      logout();
     });
 
     document.getElementById("loginBtn").addEventListener("click", async () => {
@@ -83,7 +80,6 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password })
         });
-        setToken(res.access_token);
         const u = await fetchJson("/me");
         localStorage.setItem("is_admin", String(!!u.is_admin));
         if (u.is_admin) {

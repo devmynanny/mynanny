@@ -269,6 +269,14 @@ def ensure_bookings_schema() -> None:
 
         add_col("start_dt", "TEXT")
         add_col("end_dt", "TEXT")
+        add_col("check_in_at", "DATETIME")
+        add_col("check_in_lat", "FLOAT")
+        add_col("check_in_lng", "FLOAT")
+        add_col("check_in_distance_m", "FLOAT")
+        add_col("check_out_at", "DATETIME")
+        add_col("check_out_lat", "FLOAT")
+        add_col("check_out_lng", "FLOAT")
+        add_col("check_out_distance_m", "FLOAT")
 
 
 def ensure_nanny_profiles_schema() -> None:
@@ -296,6 +304,7 @@ def ensure_nanny_profiles_schema() -> None:
         add_col("waiver", "BOOLEAN")
         add_col("sa_id_number", "TEXT")
         add_col("sa_id_document_url", "TEXT")
+        add_col("previous_jobs_json", "TEXT")
 
 
 def ensure_admin_invites_schema() -> None:
@@ -405,7 +414,8 @@ def ensure_pricing_settings_schema() -> None:
                   sleepover_after7_hourly INTEGER NOT NULL DEFAULT 45,
                   booking_fee_pct_1_5 NUMERIC(5,4) NOT NULL DEFAULT 0.30,
                   booking_fee_pct_6_10 NUMERIC(5,4) NOT NULL DEFAULT 0.27,
-                  booking_fee_pct_10_plus NUMERIC(5,4) NOT NULL DEFAULT 0.25
+                  booking_fee_pct_10_plus NUMERIC(5,4) NOT NULL DEFAULT 0.25,
+                  cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 12
                 );
             """))
             conn.execute(text("INSERT INTO pricing_settings (id) VALUES (1)"))
@@ -414,3 +424,8 @@ def ensure_pricing_settings_schema() -> None:
         rows = conn.execute(text("SELECT COUNT(*) FROM pricing_settings")).fetchone()
         if rows and rows[0] == 0:
             conn.execute(text("INSERT INTO pricing_settings (id) VALUES (1)"))
+
+        cols = conn.execute(text("PRAGMA table_info(pricing_settings)"))
+        existing = {row[1] for row in cols.fetchall()}
+        if "cancellation_fee_window_hours" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 12"))

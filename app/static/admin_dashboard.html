@@ -19,11 +19,7 @@
 </head>
 <body>
   <div class="topbar">
-    <div>
-      <button class="btn" id="createAdminBtn" type="button">Create admin</button>
-      <button class="btn" id="pricingBtn" type="button">Pricing</button>
-      <button class="btn" id="reportsBtn" type="button">Reports</button>
-    </div>
+    <div></div>
     <button class="btn" id="logoutBtn" type="button">Log out</button>
   </div>
   <h1>Admin</h1>
@@ -32,10 +28,13 @@
   <div class="card">
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn" id="btnBookingRequests" type="button">Booking requests</button>
-      <button class="btn" id="btnRefunds" type="button">Refunds</button>
       <button class="btn" id="btnPendingNannies" type="button">Pending nannies</button>
       <button class="btn" id="btnUsers" type="button">Users</button>
-      <button class="btn" id="btnChangeLogs" type="button">Change logs</button>
+      <button class="btn" id="btnBilling" type="button">Billing</button>
+      <button class="btn" id="reportsBtn" type="button">Reports</button>
+      <button class="btn" id="pricingBtn" type="button">Pricing</button>
+      <button class="btn" id="createAdminBtn" type="button">Create admin</button>
+      <button class="btn" id="btnChangeLogs" type="button" onclick="window.location.href='/static/admin_audit.html'">Change logs</button>
     </div>
   </div>
 
@@ -80,6 +79,13 @@
     <h2>Booking requests</h2>
     <div id="bookingRequestsList" class="card"></div>
   </div>
+  <div id="sectionBilling" style="display:none;">
+    <h2>Billing</h2>
+    <div class="card" style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn" id="btnInvoicing" type="button">Invoicing</button>
+      <button class="btn" id="btnBillingRefunds" type="button">Refunds</button>
+    </div>
+  </div>
   <div id="sectionRefunds" style="display:none;">
     <h2>Refund approvals</h2>
     <div id="refundsList" class="card"></div>
@@ -90,8 +96,7 @@
     const logoutBtn = document.getElementById("logoutBtn");
     if (logoutBtn) {
       logoutBtn.addEventListener("click", () => {
-        localStorage.removeItem("token");
-        window.location.href = "/static/login.html";
+        logout();
       });
     }
 
@@ -127,7 +132,7 @@
       });
     }
 
-    const sections = ["sectionUsers", "sectionPendingNannies", "sectionBookingRequests"];
+    const sections = ["sectionUsers", "sectionPendingNannies", "sectionBookingRequests", "sectionBilling", "sectionRefunds"];
     function showSection(id) {
       sections.forEach(s => {
         const el = document.getElementById(s);
@@ -318,7 +323,13 @@
       showSection("sectionBookingRequests");
       loadBookingRequests().catch(e => { document.getElementById("authMsg").textContent = e.message; });
     });
-    document.getElementById("btnRefunds").addEventListener("click", () => {
+    document.getElementById("btnBilling").addEventListener("click", () => {
+      showSection("sectionBilling");
+    });
+    document.getElementById("btnInvoicing").addEventListener("click", () => {
+      window.location.href = "/static/admin_reports.html";
+    });
+    document.getElementById("btnBillingRefunds").addEventListener("click", () => {
       showSection("sectionRefunds");
       loadRefunds().catch(e => { document.getElementById("authMsg").textContent = e.message; });
     });
@@ -401,14 +412,8 @@
     });
 
     (async function () {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        window.location.href = "/static/login.html";
-        return;
-      }
-
       const res = await fetch("/admin/me", {
-        headers: { "Authorization": "Bearer " + token }
+        credentials: "same-origin"
       });
 
       if (!res.ok) {

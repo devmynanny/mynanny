@@ -69,13 +69,8 @@
     });
 
     async function ensureAdmin() {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        window.location.href = "/static/login.html";
-        return false;
-      }
       const res = await fetch("/admin/me", {
-        headers: { "Authorization": "Bearer " + token }
+        credentials: "same-origin"
       });
       if (!res.ok) {
         authMsg.textContent = "Not authorized";

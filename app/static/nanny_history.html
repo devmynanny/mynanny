@@ -1,0 +1,170 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Nanny Booking History</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
+    .muted{color:#666}
+    .actions{display:flex;gap:8px;margin-top:8px}
+    .statusLine{margin-top:8px}
+    .dutyBadge{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid #ddd;font-size:12px}
+    .dutyOn{background:#ecfdf5;border-color:#86efac;color:#166534}
+    .dutyDone{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+    .warn{margin-top:8px;padding:8px;border:1px solid #f3d9a7;background:#fff8e6;border-radius:10px;color:#5f4a1a;font-size:13px}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div class="topbar"><button class="btn" id="backBtn" type="button">Back to home</button></div>
+  <h1>Booking history</h1>
+
+  <div id="bookingHistoryList"></div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    function formatName(fullName) {
+      const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+      if (parts.length <= 1) return parts[0] || "";
+      const first = parts[0];
+      const lastInitial = parts[parts.length - 1][0] || "";
+      return `${first} ${lastInitial}.`;
+    }
+
+    let dutyTimerId = null;
+
+    function formatDuration(ms) {
+      const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const s = totalSeconds % 60;
+      return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+    }
+
+    function renderDutyElapsed() {
+      document.querySelectorAll("[data-check-in-at]").forEach(el => {
+        const start = el.dataset.checkInAt;
+        if (!start) return;
+        const startMs = new Date(start).getTime();
+        if (Number.isNaN(startMs)) return;
+        el.textContent = formatDuration(Date.now() - startMs);
+      });
+    }
+
+    async function currentCoords() {
+      return await new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation is not available on this device."));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          err => reject(new Error(err?.message || "Unable to get your location.")),
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
+        );
+      });
+    }
+
+    async function doDutyAction(bookingId, action, btn) {
+      btn.disabled = true;
+      try {
+        const coords = await currentCoords();
+        await fetchJson(`/nannies/me/bookings/${bookingId}/${action}`, {
+          method: "POST",
+          body: JSON.stringify(coords),
+        });
+        await loadBookingHistory();
+      } catch (e) {
+        btn.disabled = false;
+        alert(e.message || "Failed to update duty status.");
+      }
+    }
+
+    async function loadBookingHistory() {
+      const data = await fetchJson("/nannies/me/duty-bookings");
+      const list = document.getElementById("bookingHistoryList");
+      list.innerHTML = "";
+      const items = data.results || [];
+      if (!items.length) {
+        list.innerHTML = "<div class=\"muted\">No historical bookings yet.</div>";
+        return;
+      }
+      items.forEach(r => {
+        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
+        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const loc = (r.location_label && r.location_address)
+          ? `${r.location_label} - ${r.location_address}`
+          : (r.location_label || r.location_address || "-");
+        const parentName = formatName(r.parent_name || "Parent");
+        const jobId = r.booking_id;
+        const isCompleted = String(r.status || "").toLowerCase() === "completed";
+        const checkedIn = !!r.check_in_at;
+        const checkedOut = !!r.check_out_at;
+        const dutyBadge = checkedOut
+          ? `<span class="dutyBadge dutyDone">Checked out</span>`
+          : checkedIn
+            ? `<span class="dutyBadge dutyOn">On duty</span>`
+            : "";
+        const checkInLine = checkedIn
+          ? `<div class="muted">Check in: ${window.formatDateTimeZA ? window.formatDateTimeZA(r.check_in_at) : r.check_in_at}${r.check_in_distance_m != null ? ` (${Number(r.check_in_distance_m).toFixed(1)}m from location)` : ""}</div>`
+          : "";
+        const checkOutLine = checkedOut
+          ? `<div class="muted">Check out: ${window.formatDateTimeZA ? window.formatDateTimeZA(r.check_out_at) : r.check_out_at}${r.check_out_distance_m != null ? ` (${Number(r.check_out_distance_m).toFixed(1)}m from location)` : ""}</div>`
+          : "";
+        const timerLine = checkedIn && !checkedOut
+          ? `<div class="muted">On-duty timer: <strong data-check-in-at="${r.check_in_at}">00:00:00</strong></div>`
+          : "";
+        const canCheckIn = !checkedIn && !isCompleted;
+        const canCheckOut = checkedIn && !checkedOut && !isCompleted;
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div><strong>${parentName || "Parent"}</strong> (${r.parent_email || "-"})</div>
+          <div class="muted">Job ID: ${jobId}</div>
+          <div class="muted">${start} to ${end}</div>
+          <div class="muted">Location: ${loc}</div>
+          <div class="muted statusLine">Status: ${r.status || "-"}</div>
+          ${dutyBadge}
+          ${checkInLine}
+          ${checkOutLine}
+          ${timerLine}
+          <div class="warn">Check in and check out are allowed only when you are within 100m of the booking location.</div>
+          <div class="actions">
+            ${canCheckIn ? `<button class="btn dutyBtn" data-id="${r.booking_id}" data-action="check-in">Report for duty (Check in)</button>` : ""}
+            ${canCheckOut ? `<button class="btn dutyBtn" data-id="${r.booking_id}" data-action="check-out">Check out and end shift</button>` : ""}
+          </div>
+        `;
+        list.appendChild(card);
+      });
+      list.querySelectorAll(".dutyBtn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          doDutyAction(btn.dataset.id, btn.dataset.action, btn);
+        });
+      });
+      renderDutyElapsed();
+      if (dutyTimerId) clearInterval(dutyTimerId);
+      if (document.querySelector("[data-check-in-at]")) {
+        dutyTimerId = setInterval(renderDutyElapsed, 1000);
+      }
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/nanny_home.html?v=2";
+    });
+
+    (async () => {
+      const me = await requireMe();
+      if (me.role !== "nanny") {
+        location.href = "/static/login.html";
+        return;
+      }
+      loadBookingHistory().catch(() => {});
+    })();
+  </script>
+</body>
+</html>

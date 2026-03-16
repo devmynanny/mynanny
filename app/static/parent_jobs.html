@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>My Bookings</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;max-width:900px}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
     .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;cursor:pointer}
@@ -39,6 +39,8 @@
 
   <script src="/static/app.js?v=2"></script>
   <script>
+    let cancellationWindowHours = 12;
+
     function mapStatus(status) {
       if (status === "approved") return "Accepted";
       if (status === "tbc" || status === "pending_admin") return "Requested";
@@ -113,7 +115,7 @@
       });
       list.querySelectorAll(".cancelBtn").forEach(btn => {
         btn.addEventListener("click", async () => {
-          if (!confirm("Cancel this job? If within 12 hours, a cancellation fee may apply.")) return;
+          if (!confirm(`Cancel this job? If within ${cancellationWindowHours} hours, a cancellation fee may apply.`)) return;
           btn.disabled = true;
           try {
             await fetchJson(`/parents/me/booking-requests/${btn.dataset.id}/cancel`, { method: "PATCH" });
@@ -136,6 +138,11 @@
         location.href = "/static/login.html";
         return;
       }
+      try {
+        const cfg = await fetchJson("/settings/cancellation-window-hours");
+        const hrs = Number(cfg?.cancellation_fee_window_hours);
+        if (Number.isFinite(hrs) && hrs >= 0) cancellationWindowHours = Math.floor(hrs);
+      } catch {}
       loadJobs().catch(() => {});
       document.getElementById("statusFilter").addEventListener("change", () => {
         loadJobs().catch(() => {});

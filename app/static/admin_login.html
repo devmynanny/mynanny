@@ -7,14 +7,19 @@
   <title>Admin Login</title>
   <style>
     body { font-family: system-ui, Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    .topbar{display:flex;justify-content:flex-end;margin-bottom:10px}
     h1 { margin: 0 0 16px; }
     label { display:block; margin: 12px 0 6px; font-weight: 600; }
     input { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; }
     button { margin-top: 14px; width: 100%; padding: 12px; border: 1px solid #222; border-radius: 10px; cursor: pointer; }
+    .topbar .btn{width:auto;margin-top:0;padding:8px 12px;border:1px solid #ccc;border-radius:10px;background:#fff}
     #msg { color: #b00020; margin-top: 10px; white-space: pre-wrap; }
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <button class="btn" id="backBtn" type="button">Back</button>
+  </div>
   <h1>Admin Login</h1>
   <form id="admin-login-form">
     <label>Email</label>
@@ -27,6 +32,10 @@
 
   <script src="/static/app.js?v=2"></script>
   <script>
+    document.getElementById("backBtn").addEventListener("click", () => {
+      window.location.href = "/static/login.html";
+    });
+
     document.getElementById("admin-login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const email = document.getElementById("email").value.trim();
@@ -34,7 +43,11 @@
 
       const res = await fetch("/auth/login", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
+        credentials: "same-origin",
+        headers: Object.assign(
+          {"Content-Type":"application/json"},
+          getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {}
+        ),
         body: JSON.stringify({email, password})
       });
 
@@ -45,17 +58,20 @@
       }
 
       const data = await res.json();
-      localStorage.setItem("token", data.access_token);
 
       const adminRes = await fetch("/admin/me", {
-        headers: { "Authorization": "Bearer " + data.access_token }
+        credentials: "same-origin"
       });
       if (adminRes.ok) {
         window.location.href = "/static/admin_dashboard.html";
         return;
       }
 
-      localStorage.removeItem("token");
+      await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {}
+      }).catch(() => {});
       document.getElementById("msg").textContent = "Not authorized";
     });
   </script>
