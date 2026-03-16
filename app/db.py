@@ -32,6 +32,14 @@ SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 
+def _index_exists(conn, name: str) -> bool:
+    row = conn.execute(
+        text("SELECT name FROM sqlite_master WHERE type='index' AND name=:name"),
+        {"name": name},
+    ).fetchone()
+    return row is not None
+
+
 def ensure_audit_log_schema() -> None:
     with engine.begin() as conn:
         exists = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_logs'"))
@@ -61,12 +69,17 @@ def ensure_audit_log_schema() -> None:
         add_col("event_type", "TEXT")
         add_col("details", "TEXT")
 
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_actor_user_id ON audit_logs(actor_user_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_target_user_id ON audit_logs(target_user_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_entity ON audit_logs(entity)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_entity_id ON audit_logs(entity_id)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs(action)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_created_at ON audit_logs(created_at)"))
+        index_specs = [
+            ("ix_audit_logs_actor_user_id", "actor_user_id"),
+            ("ix_audit_logs_target_user_id", "target_user_id"),
+            ("ix_audit_logs_entity", "entity"),
+            ("ix_audit_logs_entity_id", "entity_id"),
+            ("ix_audit_logs_action", "action"),
+            ("ix_audit_logs_created_at", "created_at"),
+        ]
+        for index_name, column_name in index_specs:
+            if column_name in existing and not _index_exists(conn, index_name):
+                conn.execute(text(f"CREATE INDEX {index_name} ON audit_logs({column_name})"))
 
 
 def _table_exists(conn, name: str) -> bool:
@@ -438,14 +451,65 @@ def ensure_pricing_settings_schema() -> None:
                   cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 12
                 );
             """))
-            conn.execute(text("INSERT INTO pricing_settings (id) VALUES (1)"))
+            conn.execute(text("""
+                INSERT INTO pricing_settings (
+                  id,
+                  weekday_half_day,
+                  weekday_full_day,
+                  weekend_half_day,
+                  weekend_full_day,
+                  sleepover_add,
+                  sleepover_only_weekday,
+                  sleepover_only_weekend,
+                  sleepover_extra_hour_over14,
+                  after17_weekday,
+                  after17_weekend,
+                  over9_weekday,
+                  over9_weekend,
+                  sleepover_start_hour,
+                  sleepover_end_hour,
+                  sleepover_after7_hourly,
+                  booking_fee_pct_1_5,
+                  booking_fee_pct_6_10,
+                  booking_fee_pct_10_plus,
+                  cancellation_fee_window_hours
+                ) VALUES (
+                  1, 250, 300, 300, 350, 150, 400, 450, 50, 30, 35, 45, 50, 14, 7, 45, 0.30, 0.27, 0.25, 12
+                )
+            """))
             return
-
-        rows = conn.execute(text("SELECT COUNT(*) FROM pricing_settings")).fetchone()
-        if rows and rows[0] == 0:
-            conn.execute(text("INSERT INTO pricing_settings (id) VALUES (1)"))
 
         cols = conn.execute(text("PRAGMA table_info(pricing_settings)"))
         existing = {row[1] for row in cols.fetchall()}
         if "cancellation_fee_window_hours" not in existing:
             conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 12"))
+
+        rows = conn.execute(text("SELECT COUNT(*) FROM pricing_settings")).fetchone()
+        if rows and rows[0] == 0:
+            default_values = {
+                "id": 1,
+                "weekday_half_day": 250,
+                "weekday_full_day": 300,
+                "weekend_half_day": 300,
+                "weekend_full_day": 350,
+                "sleepover_add": 150,
+                "sleepover_only_weekday": 400,
+                "sleepover_only_weekend": 450,
+                "sleepover_extra_hour_over14": 50,
+                "after17_weekday": 30,
+                "after17_weekend": 35,
+                "over9_weekday": 45,
+                "over9_weekend": 50,
+                "sleepover_start_hour": 14,
+                "sleepover_end_hour": 7,
+                "sleepover_after7_hourly": 45,
+                "booking_fee_pct_1_5": 0.30,
+                "booking_fee_pct_6_10": 0.27,
+                "booking_fee_pct_10_plus": 0.25,
+                "cancellation_fee_window_hours": 12,
+            }
+            insert_columns = [name for name in default_values if name in existing]
+            placeholders = ", ".join(f":{name}" for name in insert_columns)
+            sql = f"INSERT INTO pricing_settings ({', '.join(insert_columns)}) VALUES ({placeholders})"
+            params = {name: default_values[name] for name in insert_columns}
+            conn.execute(text(sql), params)
