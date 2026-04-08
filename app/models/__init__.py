@@ -166,7 +166,7 @@ class ParentProfile(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
-    area_id = Column(Integer, ForeignKey("areas.id"), nullable=False)
+    area_id = Column(Integer, ForeignKey("areas.id"), nullable=True)
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
     location_confirmed_at = Column(DateTime, nullable=True)
