@@ -341,6 +341,73 @@ def ensure_nanny_profiles_schema() -> None:
         add_col("previous_jobs_json", "TEXT")
 
 
+def ensure_parent_profiles_schema() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "parent_profiles"):
+            return
+
+        if engine.dialect.name == "sqlite":
+            cols = conn.execute(text("PRAGMA table_info(parent_profiles)")).fetchall()
+            area_col = next((row for row in cols if row[1] == "area_id"), None)
+            if not area_col or not area_col[3]:
+                if not _index_exists(conn, "idx_parent_profiles_lat_lng"):
+                    conn.execute(text("CREATE INDEX idx_parent_profiles_lat_lng ON parent_profiles(lat, lng)"))
+                return
+
+            conn.execute(text("ALTER TABLE parent_profiles RENAME TO parent_profiles_old"))
+            conn.execute(text("""
+                CREATE TABLE parent_profiles (
+                  id INTEGER NOT NULL PRIMARY KEY,
+                  user_id INTEGER NOT NULL UNIQUE,
+                  area_id INTEGER,
+                  lat REAL,
+                  lng REAL,
+                  location_confirmed_at DATETIME,
+                  location_confirm_version TEXT,
+                  place_id TEXT,
+                  formatted_address TEXT,
+                  street TEXT,
+                  suburb TEXT,
+                  city TEXT,
+                  province TEXT,
+                  postal_code TEXT,
+                  country TEXT,
+                  location_label TEXT,
+                  phone TEXT,
+                  kids_count INTEGER DEFAULT 0,
+                  kids_ages_json TEXT,
+                  desired_tag_ids_json TEXT,
+                  home_language_id INTEGER,
+                  special_notes TEXT,
+                  family_photo_url TEXT,
+                  residence_type TEXT,
+                  access_flags_json TEXT,
+                  FOREIGN KEY(user_id) REFERENCES users (id),
+                  FOREIGN KEY(area_id) REFERENCES areas (id)
+                );
+            """))
+            conn.execute(text("""
+                INSERT INTO parent_profiles (
+                  id, user_id, area_id, lat, lng, location_confirmed_at, location_confirm_version,
+                  place_id, formatted_address, street, suburb, city, province, postal_code,
+                  country, location_label, phone, kids_count, kids_ages_json, desired_tag_ids_json,
+                  home_language_id, special_notes, family_photo_url, residence_type, access_flags_json
+                )
+                SELECT
+                  id, user_id, area_id, lat, lng, location_confirmed_at, location_confirm_version,
+                  place_id, formatted_address, street, suburb, city, province, postal_code,
+                  country, location_label, phone, kids_count, kids_ages_json, desired_tag_ids_json,
+                  home_language_id, special_notes, family_photo_url, residence_type, access_flags_json
+                FROM parent_profiles_old
+            """))
+            conn.execute(text("DROP TABLE parent_profiles_old"))
+            if not _index_exists(conn, "idx_parent_profiles_lat_lng"):
+                conn.execute(text("CREATE INDEX idx_parent_profiles_lat_lng ON parent_profiles(lat, lng)"))
+            return
+
+        conn.execute(text("ALTER TABLE parent_profiles ALTER COLUMN area_id DROP NOT NULL"))
+
+
 def ensure_admin_invites_schema() -> None:
     with engine.begin() as conn:
         if _table_exists(conn, "admin_invites"):

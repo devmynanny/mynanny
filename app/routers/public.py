@@ -1031,10 +1031,7 @@ def auth_signup(payload: schemas.SignupRequest, request: Request, response: Resp
     nanny_id = None
 
     if payload.role == "parent":
-        first_area = db.query(models.Area).order_by(models.Area.id.asc()).first()
-        if not first_area:
-            raise HTTPException(status_code=500, detail="No areas configured")
-        db.add(models.ParentProfile(user_id=user.id, area_id=first_area.id))
+        db.add(models.ParentProfile(user_id=user.id))
     elif payload.role == "nanny":
         nat = payload.nationality.strip().lower() if payload.nationality else ""
         if nat == "south african":
@@ -3074,9 +3071,8 @@ def get_parent_location_status(user_id: int, db: Session = Depends(get_db)):
 def set_parent_location(user_id: int, payload: schemas.SetLocationRequest, db: Session = Depends(get_db)):
     parent = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user_id).first()
     if not parent:
-        raise HTTPException(status_code=400, detail="Parent area not set")
-    if parent.area_id is None:
-        raise HTTPException(status_code=400, detail="Parent area not set")
+        parent = models.ParentProfile(user_id=user_id)
+        db.add(parent)
     parent.lat = payload.lat
     parent.lng = payload.lng
     parent.place_id = payload.place_id
@@ -3668,7 +3664,8 @@ def update_parent_profile_details(
 ):
     prof = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user_id).first()
     if not prof:
-        raise HTTPException(status_code=404, detail="Parent profile not found")
+        prof = models.ParentProfile(user_id=user_id)
+        db.add(prof)
 
     before = _parent_profile_snapshot(prof)
 
