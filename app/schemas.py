@@ -37,6 +37,7 @@ class NannySearchResult(BaseModel):
     nickname: Optional[str] = None
     last_initial: Optional[str] = None
     profile_photo_url: Optional[str] = None
+    profile_summary: Optional[str] = None
     bio: Optional[str] = None
     date_of_birth: Optional[date] = None
     age: Optional[int] = None
@@ -255,8 +256,9 @@ class BookingCreateRequest(BaseModel):
 
 class BookingRequestCreate(BaseModel):
     nanny_id: int
-    start_dt: str
-    end_dt: str
+    start_dt: Optional[str] = None
+    end_dt: Optional[str] = None
+    slots: Optional[List[BookingSlot]] = None
     notes: Optional[str] = None
     location_id: Optional[int] = None
     sleepover: Optional[bool] = None
@@ -264,16 +266,18 @@ class BookingRequestCreate(BaseModel):
 
 class BookingRequestBulkCreate(BaseModel):
     nanny_ids: List[int]
-    start_dt: str
-    end_dt: str
+    start_dt: Optional[str] = None
+    end_dt: Optional[str] = None
+    slots: Optional[List[BookingSlot]] = None
     notes: Optional[str] = None
     location_id: Optional[int] = None
     sleepover: Optional[bool] = None
 
 
 class BookingEstimateRequest(BaseModel):
-    start_dt: str
-    end_dt: str
+    start_dt: Optional[str] = None
+    end_dt: Optional[str] = None
+    slots: Optional[List[BookingSlot]] = None
     sleepover: Optional[bool] = None
     selected_count: Optional[int] = 1
 
@@ -291,8 +295,9 @@ class BookingEstimateResponse(BaseModel):
 class NannySearchByTimeRequest(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
-    start_dt: str
-    end_dt: str
+    start_dt: Optional[str] = None
+    end_dt: Optional[str] = None
+    slots: Optional[List[BookingSlot]] = None
     max_distance_km: Optional[float] = 50
 
 

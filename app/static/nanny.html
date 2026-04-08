@@ -45,6 +45,15 @@
         color:#333;
         background:#fff;
       }
+      .dob-fields {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .dob-fields select,
+      .dob-fields input {
+        flex: 1 1 90px;
+      }
     </style>
   </head>
   <body>
@@ -78,7 +87,16 @@
         </div>
         <div style="min-width:200px;">
           <label class="small">Date of birth <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
-          <input id="dob" type="date" style="width:100%; padding:8px;" />
+          <input id="dob" type="hidden" />
+          <div class="dob-fields">
+            <select id="dobDay" style="padding:8px;">
+              <option value="">Day</option>
+            </select>
+            <select id="dobMonth" style="padding:8px;">
+              <option value="">Month</option>
+            </select>
+            <input id="dobYear" type="number" inputmode="numeric" min="1900" max="2100" placeholder="Year" style="padding:8px;" />
+          </div>
         </div>
       </div>
       <div style="margin-top:10px;">
@@ -287,13 +305,118 @@
           : "Profile submitted, waiting for admin approval";
       }
 
+      function daysInMonth(year, month) {
+        if (!year || !month) return 31;
+        return new Date(year, month, 0).getDate();
+      }
+
+      function padDobPart(value) {
+        return String(value).padStart(2, "0");
+      }
+
+      function populateDobFields() {
+        const monthEl = document.getElementById("dobMonth");
+        const dayEl = document.getElementById("dobDay");
+        if (!monthEl || !dayEl || monthEl.options.length > 1) return;
+
+        const months = [
+          "January", "February", "March", "April", "May", "June",
+          "July", "August", "September", "October", "November", "December"
+        ];
+        months.forEach((name, index) => {
+          const option = document.createElement("option");
+          option.value = String(index + 1);
+          option.textContent = name;
+          monthEl.appendChild(option);
+        });
+
+        for (let day = 1; day <= 31; day += 1) {
+          const option = document.createElement("option");
+          option.value = String(day);
+          option.textContent = String(day);
+          dayEl.appendChild(option);
+        }
+      }
+
+      function refreshDobDays() {
+        const dayEl = document.getElementById("dobDay");
+        const monthEl = document.getElementById("dobMonth");
+        const yearEl = document.getElementById("dobYear");
+        if (!dayEl || !monthEl || !yearEl) return;
+
+        const selectedDay = dayEl.value;
+        const maxDays = daysInMonth(parseInt(yearEl.value, 10), parseInt(monthEl.value, 10));
+        Array.from(dayEl.options).forEach((option, index) => {
+          if (index === 0) return;
+          const day = parseInt(option.value, 10);
+          option.hidden = day > maxDays;
+        });
+        if (selectedDay && parseInt(selectedDay, 10) > maxDays) {
+          dayEl.value = "";
+        }
+      }
+
+      function syncDobInput() {
+        const hiddenDobEl = document.getElementById("dob");
+        const dayEl = document.getElementById("dobDay");
+        const monthEl = document.getElementById("dobMonth");
+        const yearEl = document.getElementById("dobYear");
+        if (!hiddenDobEl || !dayEl || !monthEl || !yearEl) return;
+
+        refreshDobDays();
+
+        const year = yearEl.value.trim();
+        const month = monthEl.value;
+        const day = dayEl.value;
+        const currentYear = new Date().getFullYear();
+        if (!/^\d{4}$/.test(year) || parseInt(year, 10) < 1900 || parseInt(year, 10) > currentYear || !month || !day) {
+          hiddenDobEl.value = "";
+          return;
+        }
+
+        hiddenDobEl.value = `${year}-${padDobPart(month)}-${padDobPart(day)}`;
+      }
+
+      function setDobValue(value) {
+        const hiddenDobEl = document.getElementById("dob");
+        const dayEl = document.getElementById("dobDay");
+        const monthEl = document.getElementById("dobMonth");
+        const yearEl = document.getElementById("dobYear");
+        if (!hiddenDobEl || !dayEl || !monthEl || !yearEl) return;
+
+        hiddenDobEl.value = value || "";
+        dayEl.value = "";
+        monthEl.value = "";
+        yearEl.value = "";
+
+        if (value) {
+          const parts = value.split("-");
+          if (parts.length === 3) {
+            yearEl.value = parts[0];
+            monthEl.value = String(parseInt(parts[1], 10));
+            refreshDobDays();
+            dayEl.value = String(parseInt(parts[2], 10));
+          }
+        }
+
+        syncDobInput();
+      }
+
+      function setDobDisabled(isDisabled) {
+        const ids = ["dob", "dobDay", "dobMonth", "dobYear"];
+        ids.forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = !!isDisabled;
+        });
+      }
+
       function applyApprovedFieldPolicy(isApproved) {
         const dobEl = document.getElementById("dob");
         const passportNumberEl = document.getElementById("passportNumber");
         const saIdNumberEl = document.getElementById("saIdNumber");
         const lockNoticeEl = document.getElementById("docsLockNotice");
 
-        if (dobEl) dobEl.disabled = !!isApproved;
+        if (dobEl) setDobDisabled(!!isApproved);
         if (passportNumberEl) passportNumberEl.disabled = !!isApproved;
         if (saIdNumberEl) saIdNumberEl.disabled = !!isApproved;
         if (lockNoticeEl) lockNoticeEl.style.display = isApproved ? "block" : "none";
@@ -721,6 +844,10 @@
       }
       document.getElementById("nationality").addEventListener("input", toggleNationalityFields);
       document.getElementById("workPermit").addEventListener("change", toggleNationalityFields);
+      populateDobFields();
+      document.getElementById("dobDay").addEventListener("change", syncDobInput);
+      document.getElementById("dobMonth").addEventListener("change", syncDobInput);
+      document.getElementById("dobYear").addEventListener("input", syncDobInput);
 
       function validateSaId(idNumber, dobValue) {
         const s = (idNumber || "").trim();
@@ -944,7 +1071,7 @@
         document.getElementById("fullName").value = profile.full_name || "";
         document.getElementById("phone").value = profile.phone || "";
         document.getElementById("phoneAlt").value = profile.phone_alt || "";
-        document.getElementById("dob").value = profile.dob || "";
+        setDobValue(profile.dob || "");
         document.getElementById("bio").value = profile.bio || "";
         document.getElementById("nationality").value = profile.nationality || "";
         document.getElementById("race").value = profile.ethnicity || "";

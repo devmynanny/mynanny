@@ -14,6 +14,8 @@
     .btn{ padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer }
     .muted { color:#666; }
     .err { color:#b00020; }
+    .summary-block { margin-top: 10px; line-height: 1.5; }
+    .summary-block:first-child { margin-top: 0; }
   </style>
 </head>
 <body>
@@ -103,20 +105,39 @@
       return await fetchJson(`/admin/users/${userId}/revenue`);
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     function renderProfileSummary(user, profile) {
       const lines = [];
-      lines.push(`<div><strong>Name:</strong> ${profile?.name || "-"}</div>`);
-      lines.push(`<div><strong>Email:</strong> ${user.email || "-"}</div>`);
+      lines.push(`<div><strong>Name:</strong> ${escapeHtml(profile?.name || "-")}</div>`);
+      lines.push(`<div><strong>Email:</strong> ${escapeHtml(user.email || "-")}</div>`);
       const phoneParts = [];
       if (profile?.phone) phoneParts.push(profile.phone);
       if (profile?.phone_alt) phoneParts.push(profile.phone_alt);
       const phoneLine = phoneParts.length ? phoneParts.join(" / ") : "-";
-      lines.push(`<div><strong>Phone:</strong> ${phoneLine}</div>`);
+      lines.push(`<div><strong>Phone:</strong> ${escapeHtml(phoneLine)}</div>`);
       if (user.role === "parent") {
-        lines.push(`<div><strong>Kids count:</strong> ${profile?.kids_count ?? "-"}</div>`);
+        lines.push(`<div><strong>Kids count:</strong> ${escapeHtml(profile?.kids_count ?? "-")}</div>`);
       }
       const loc = [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
-      lines.push(`<div><strong>Location:</strong> ${loc}</div>`);
+      lines.push(`<div><strong>Location:</strong> ${escapeHtml(loc)}</div>`);
+      if (user.role === "nanny") {
+        lines.push(`<div><strong>Age:</strong> ${escapeHtml(profile?.age ?? "-")}</div>`);
+        lines.push(`<div><strong>Nationality:</strong> ${escapeHtml(profile?.nationality || "-")}</div>`);
+        if (profile?.profile_summary) {
+          lines.push(`<div class="summary-block"><strong>Generated summary:</strong><br>${escapeHtml(profile.profile_summary)}</div>`);
+        }
+        if (profile?.bio) {
+          lines.push(`<div class="summary-block"><strong>Bio:</strong><br>${escapeHtml(profile.bio)}</div>`);
+        }
+      }
       document.getElementById("profileSummaryBody").innerHTML = lines.join("");
     }
 
@@ -135,18 +156,30 @@
       const loc = [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
       const status = profile?.application_status || "pending";
       const reason = profile?.admin_reason || "-";
+      const jobs = Array.isArray(profile?.previous_jobs) ? profile.previous_jobs.filter(Boolean) : [];
+      const jobsHtml = jobs.length
+        ? jobs.slice(0, 3).map((job) => {
+            const role = job.role || "Previous role";
+            const employer = job.employer || "Employer not listed";
+            const period = job.period || "Period not listed";
+            return `<div>${escapeHtml(role)} • ${escapeHtml(employer)} • ${escapeHtml(period)}</div>`;
+          }).join("")
+        : "-";
       if (reasonInput) reasonInput.value = profile?.admin_reason || "";
       body.innerHTML = [
-        `<div><strong>Status:</strong> ${status}</div>`,
-        `<div><strong>Reason:</strong> ${reason}</div>`,
-        `<div><strong>DOB:</strong> ${profile?.date_of_birth || "-"}</div>`,
-        `<div><strong>Nationality:</strong> ${profile?.nationality || "-"}</div>`,
-        `<div><strong>Ethnicity:</strong> ${profile?.ethnicity || "-"}</div>`,
-        `<div><strong>Tags:</strong> ${tags}</div>`,
-        `<div><strong>Languages:</strong> ${langs}</div>`,
-        `<div><strong>Qualifications:</strong> ${quals}</div>`,
-        `<div><strong>Location:</strong> ${loc}</div>`,
-        `<div><strong>Bio:</strong> ${profile?.bio || "-"}</div>`
+        `<div><strong>Status:</strong> ${escapeHtml(status)}</div>`,
+        `<div><strong>Reason:</strong> ${escapeHtml(reason)}</div>`,
+        `<div><strong>DOB:</strong> ${escapeHtml(profile?.date_of_birth || "-")}</div>`,
+        `<div><strong>Age:</strong> ${escapeHtml(profile?.age ?? "-")}</div>`,
+        `<div><strong>Nationality:</strong> ${escapeHtml(profile?.nationality || "-")}</div>`,
+        `<div><strong>Ethnicity:</strong> ${escapeHtml(profile?.ethnicity || "-")}</div>`,
+        `<div><strong>Tags:</strong> ${escapeHtml(tags)}</div>`,
+        `<div><strong>Languages:</strong> ${escapeHtml(langs)}</div>`,
+        `<div><strong>Qualifications:</strong> ${escapeHtml(quals)}</div>`,
+        `<div><strong>Location:</strong> ${escapeHtml(loc)}</div>`,
+        `<div><strong>Generated summary:</strong> ${escapeHtml(profile?.profile_summary || "-")}</div>`,
+        `<div><strong>Previous jobs:</strong> ${jobsHtml}</div>`,
+        `<div><strong>Bio:</strong> ${escapeHtml(profile?.bio || "-")}</div>`
       ].join("");
     }
 

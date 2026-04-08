@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, or_, Numeric
 from app.db import SessionLocal
 from app import models
-from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny
+from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny, _ensure_default_nanny_tags
 from app.services.audit import log_audit
 from app.services.paystack import create_refund
 
@@ -28,6 +28,10 @@ class GoogleMapsSettingsPayload(BaseModel):
     google_maps_api_key: Optional[str] = None
 
 
+class NannyTagPayload(BaseModel):
+    name: str
+
+
 def get_db():
 	db = SessionLocal()
 	try:
@@ -44,13 +48,11 @@ def get_google_maps_settings(db: Session = Depends(get_db)):
     row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
     db_key = (getattr(row, "google_maps_api_key", None) or "").strip() if row else ""
     env_key = (os.getenv("GOOGLE_MAPS_API_KEY") or "").strip()
-    effective_key = db_key or env_key
-    source = "database" if db_key else ("env" if env_key else None)
     return {
         "google_maps_api_key": db_key,
-        "configured": bool(effective_key),
-        "source": source,
-        "using_env_fallback": bool(env_key and not db_key),
+        "configured": bool(db_key),
+        "source": "database" if db_key else None,
+        "server_env_configured": bool(env_key),
     }
 
 
@@ -150,6 +152,76 @@ def update_pricing_settings(payload: dict, db: Session = Depends(get_db)):
                 except Exception:
                     raise HTTPException(status_code=400, detail="cancellation_fee_window_hours must be a valid number")
             setattr(row, key, value)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/nanny-tags", dependencies=[Depends(require_admin)])
+def admin_list_nanny_tags(db: Session = Depends(get_db)):
+    rows = _ensure_default_nanny_tags(db)
+    return [{"id": row.id, "name": row.name} for row in rows]
+
+
+@router.post("/nanny-tags", dependencies=[Depends(require_admin)])
+def admin_create_nanny_tag(payload: NannyTagPayload, db: Session = Depends(get_db)):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Tag name is required")
+    existing = db.query(models.NannyTag).filter(func.lower(models.NannyTag.name) == name.lower()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Tag already exists")
+    row = models.NannyTag(name=name)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name}
+
+
+@router.patch("/nanny-tags/{tag_id}", dependencies=[Depends(require_admin)])
+def admin_update_nanny_tag(tag_id: int, payload: NannyTagPayload, db: Session = Depends(get_db)):
+    row = db.query(models.NannyTag).filter(models.NannyTag.id == tag_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Tag name is required")
+    existing = (
+        db.query(models.NannyTag)
+        .filter(func.lower(models.NannyTag.name) == name.lower(), models.NannyTag.id != tag_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="Tag already exists")
+    row.name = name
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "name": row.name}
+
+
+@router.delete("/nanny-tags/{tag_id}", dependencies=[Depends(require_admin)])
+def admin_delete_nanny_tag(tag_id: int, db: Session = Depends(get_db)):
+    row = db.query(models.NannyTag).filter(models.NannyTag.id == tag_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    nanny_use = (
+        db.query(models.nanny_profile_tags)
+        .filter(models.nanny_profile_tags.c.tag_id == tag_id)
+        .first()
+    )
+    if nanny_use:
+        raise HTTPException(status_code=400, detail="Tag is assigned to at least one nanny")
+
+    parent_profiles = db.query(models.ParentProfile).filter(models.ParentProfile.desired_tag_ids_json.isnot(None)).all()
+    for profile in parent_profiles:
+        try:
+            tag_ids = json.loads(profile.desired_tag_ids_json or "[]") or []
+        except Exception:
+            continue
+        if tag_id in [int(item) for item in tag_ids if str(item).strip()]:
+            raise HTTPException(status_code=400, detail="Tag is used in at least one parent profile")
+
+    db.delete(row)
     db.commit()
     return {"ok": True}
 

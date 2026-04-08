@@ -137,9 +137,9 @@
     </div>
 
     <div style="margin-top:12px;">
-      <label class="lbl">What are you looking for?</label>
+      <label class="lbl">What matters most in a nanny?</label>
       <div id="tagChecklist" class="checkgrid"></div>
-      <div class="hint">Select what matters most. You can change this later.</div>
+      <div class="hint">Tick one or more options below. You can change these later.</div>
     </div>
 
     <label>Home language</label>
@@ -403,6 +403,11 @@
       const tags = await fetchJson("/nanny-tags");
       const box = document.getElementById("tagChecklist");
       box.innerHTML = "";
+
+      if (!tags || !tags.length) {
+        box.innerHTML = `<div class="hint">No options available right now. Please refresh and try again.</div>`;
+        return [];
+      }
 
       (tags || []).forEach(t => {
         const row = document.createElement("label");

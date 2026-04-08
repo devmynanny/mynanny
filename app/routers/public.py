@@ -28,7 +28,127 @@ from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
 
-def get_google_maps_api_key() -> tuple[Optional[str], Optional[str]]:
+DEFAULT_NANNY_TAGS = [
+    "Infant care",
+    "Toddler care",
+    "Special needs support",
+    "First aid",
+    "CPR",
+    "Homework help",
+    "Cooking for children",
+    "Sleep routine support",
+]
+
+def _normalize_previous_jobs(raw: object) -> List[dict]:
+    if raw is None:
+        return []
+    parsed = raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(parsed, list):
+        return []
+    cleaned: List[dict] = []
+    for row in parsed[:5]:
+        if not isinstance(row, dict):
+            continue
+        item = {
+            "role": (row.get("role") or "").strip(),
+            "employer": (row.get("employer") or "").strip(),
+            "period": (row.get("period") or "").strip(),
+            "reference_name": (row.get("reference_name") or "").strip(),
+            "reference_phone": (row.get("reference_phone") or "").strip(),
+            "reference_relationship": (row.get("reference_relationship") or "").strip(),
+        }
+        if any(item.values()):
+            cleaned.append(item)
+    return cleaned
+
+def _build_nanny_profile_summary(
+    *,
+    age: Optional[int],
+    nationality: Optional[str],
+    qualifications: Optional[list],
+    tags: Optional[list],
+    previous_jobs: Optional[List[dict]],
+    bio: Optional[str],
+) -> Optional[str]:
+    parts: List[str] = []
+
+    intro_bits: List[str] = []
+    if nationality:
+        intro_bits.append(f"from {nationality}")
+    if age:
+        intro_bits.append(f"{age} years old")
+    if intro_bits:
+        parts.append("She is " + ", ".join(intro_bits) + ".")
+
+    qual_names: List[str] = []
+    for item in (qualifications or []):
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+        else:
+            name = str(getattr(item, "name", "") or "").strip()
+        if name:
+            qual_names.append(name)
+    if qual_names:
+        displayed = ", ".join(qual_names[:3])
+        if len(qual_names) > 3:
+            displayed += f", and {len(qual_names) - 3} more"
+        parts.append(f"Qualifications include {displayed}.")
+
+    tag_names: List[str] = []
+    for item in (tags or []):
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+        else:
+            name = str(getattr(item, "name", "") or "").strip()
+        if name:
+            tag_names.append(name)
+    if tag_names:
+        displayed = ", ".join(tag_names[:4])
+        if len(tag_names) > 4:
+            displayed += f", and {len(tag_names) - 4} more"
+        parts.append(f"Her profile highlights {displayed}.")
+
+    jobs = [job for job in (previous_jobs or []) if isinstance(job, dict)]
+    if jobs:
+        first_job = jobs[0]
+        role = (first_job.get("role") or "").strip()
+        employer = (first_job.get("employer") or "").strip()
+        period = (first_job.get("period") or "").strip()
+        summary = "She has previous childcare experience"
+        if role:
+            summary = f"She has worked as {role}"
+        if employer:
+            summary += f" for {employer}"
+        if period:
+            summary += f" during {period}"
+        summary += "."
+        parts.append(summary)
+        if len(jobs) > 1:
+            parts.append(f"She has listed {len(jobs)} previous childcare roles on her profile.")
+
+    if not parts:
+        cleaned_bio = (bio or "").strip()
+        if not cleaned_bio:
+            return None
+        return cleaned_bio if len(cleaned_bio) <= 220 else cleaned_bio[:217].rstrip() + "..."
+    return " ".join(parts)
+
+
+def _ensure_default_nanny_tags(db: Session) -> List[models.NannyTag]:
+    rows = db.query(models.NannyTag).order_by(models.NannyTag.name.asc()).all()
+    if rows:
+        return rows
+    created = [models.NannyTag(name=name) for name in DEFAULT_NANNY_TAGS]
+    db.add_all(created)
+    db.commit()
+    return db.query(models.NannyTag).order_by(models.NannyTag.name.asc()).all()
+
+def get_google_maps_browser_api_key() -> tuple[Optional[str], Optional[str]]:
     db = SessionLocal()
     try:
         row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
@@ -54,8 +174,24 @@ def get_google_maps_api_key() -> tuple[Optional[str], Optional[str]]:
     return (api_key or None), ("env" if api_key else None)
 
 
+def get_google_maps_server_api_key() -> tuple[Optional[str], Optional[str]]:
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        env_path = Path(__file__).resolve().parents[2] / ".env"
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip())
+        api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = (api_key or "").strip()
+    return (api_key or None), ("env" if api_key else None)
+
+
 def google_reverse_geocode(lat: float, lng: float) -> dict:
-    api_key, _ = get_google_maps_api_key()
+    api_key, _ = get_google_maps_server_api_key()
     if not api_key:
         return {"status": "NO_KEY", "error_message": "GOOGLE_MAPS_API_KEY not set"}
 
@@ -74,7 +210,7 @@ def google_reverse_geocode(lat: float, lng: float) -> dict:
 
 @router.get("/config/google-maps")
 def public_google_maps_config():
-    api_key, source = get_google_maps_api_key()
+    api_key, source = get_google_maps_browser_api_key()
     return {
         "configured": bool(api_key),
         "google_maps_api_key": api_key,
@@ -408,6 +544,30 @@ def _to_iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _existing_availability_dates(
+    db: Session,
+    nanny_id: int,
+    start_date: date,
+    end_date: date,
+    start_time,
+    end_time,
+    availability_type: str,
+) -> set[date]:
+    rows = (
+        db.query(models.NannyAvailability.date)
+        .filter(
+            models.NannyAvailability.nanny_id == nanny_id,
+            models.NannyAvailability.date >= start_date,
+            models.NannyAvailability.date <= end_date,
+            models.NannyAvailability.start_time == start_time,
+            models.NannyAvailability.end_time == end_time,
+            models.NannyAvailability.type == availability_type,
+        )
+        .all()
+    )
+    return {row[0] for row in rows if row and row[0]}
+
+
 def _naive_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt
@@ -519,6 +679,72 @@ def _is_weekend_or_holiday(d: date) -> bool:
 def _hours_between(start_dt: datetime, end_dt: datetime) -> float:
     delta = end_dt - start_dt
     return max(0.0, delta.total_seconds() / 3600.0)
+
+
+def _normalize_booking_slots(
+    *,
+    start_dt_value: Optional[str] = None,
+    end_dt_value: Optional[str] = None,
+    slot_items: Optional[List[schemas.BookingSlot]] = None,
+) -> List[tuple]:
+    windows: List[tuple] = []
+
+    if slot_items:
+        for idx, slot in enumerate(slot_items):
+            start_dt = getattr(slot, "starts_at", None)
+            end_dt = getattr(slot, "ends_at", None)
+            if not start_dt or not end_dt:
+                raise HTTPException(status_code=400, detail=f"Invalid slot at index {idx}")
+            if end_dt <= start_dt:
+                raise HTTPException(status_code=400, detail=f"Slot {idx + 1} end time must be after start time")
+            windows.append((start_dt, end_dt))
+    else:
+        if not start_dt_value or not end_dt_value:
+            raise HTTPException(status_code=400, detail="Select at least one date and time")
+        try:
+            start_dt = _parse_iso_dt(start_dt_value)
+            end_dt = _parse_iso_dt(end_dt_value)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid start_dt or end_dt")
+        if end_dt <= start_dt:
+            raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
+        windows.append((start_dt, end_dt))
+
+    windows.sort(key=lambda item: item[0])
+    for idx in range(1, len(windows)):
+        if windows[idx][0] < windows[idx - 1][1]:
+            raise HTTPException(status_code=400, detail="Selected date slots cannot overlap")
+    return windows
+
+
+def _compute_booking_slots_pricing(windows: List[tuple], sleepover: bool, settings: dict) -> dict:
+    total_wage_cents = 0
+    total_fee_cents = 0
+    total_cents = 0
+    booking_fee_pct = 0.0
+    for start_dt, end_dt in windows:
+        pricing = _compute_booking_pricing(start_dt, end_dt, sleepover, settings)
+        total_wage_cents += int(pricing.get("wage_cents") or 0)
+        total_fee_cents += int(pricing.get("booking_fee_cents") or 0)
+        total_cents += int(pricing.get("total_cents") or 0)
+        booking_fee_pct = float(pricing.get("booking_fee_pct") or booking_fee_pct or 0.0)
+    return {
+        "wage_cents": total_wage_cents,
+        "booking_fee_pct": booking_fee_pct,
+        "booking_fee_cents": total_fee_cents,
+        "total_cents": total_cents,
+    }
+
+
+def _attach_booking_request_slots(db: Session, req_id: int, windows: List[tuple]) -> None:
+    for start_dt, end_dt in windows:
+        db.add(
+            models.BookingRequestSlot(
+                booking_request_id=req_id,
+                starts_at=start_dt,
+                ends_at=end_dt,
+            )
+        )
 
 
 def _compute_day_rate(hours: float, is_weekend: bool, settings: dict) -> int:
@@ -955,7 +1181,7 @@ def list_qualifications(db: Session = Depends(get_db)):
 
 @router.get("/nanny-tags")
 def list_nanny_tags(db: Session = Depends(get_db)):
-    rows = db.query(models.NannyTag).order_by(models.NannyTag.name.asc()).all()
+    rows = _ensure_default_nanny_tags(db)
     return [{"id": r.id, "name": r.name} for r in rows]
 
 
@@ -2015,18 +2241,35 @@ def create_nanny_me_availability_bulk(
     start_time = payload.start_time or "00:00"
     end_time = payload.end_time or "23:59"
 
+    try:
+        sample_start_dt = _parse_iso_dt(f"{start_date.isoformat()}T{start_time}")
+        sample_end_dt = _parse_iso_dt(f"{start_date.isoformat()}T{end_time}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid start_time or end_time")
+    if sample_end_dt <= sample_start_dt:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+
+    slot_start_time = sample_start_dt.time()
+    slot_end_time = sample_end_dt.time()
+    existing_dates = _existing_availability_dates(
+        db, nanny.id, start_date, end_date, slot_start_time, slot_end_time, payload.type
+    )
+
     created = 0
+    skipped = 0
     day = start_date
     while day <= end_date:
+        if day in existing_dates:
+            skipped += 1
+            day = day + timedelta(days=1)
+            continue
         start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time}")
         end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time}")
-        if end_dt <= start_dt:
-            raise HTTPException(status_code=400, detail="End time must be after start time")
         row = models.NannyAvailability(
             nanny_id=nanny.id,
             date=start_dt.date(),
-            start_time=start_dt.time(),
-            end_time=end_dt.time(),
+            start_time=slot_start_time,
+            end_time=slot_end_time,
             is_available=True if payload.type == "available" else False,
             created_by="nanny",
             type=payload.type,
@@ -2037,7 +2280,7 @@ def create_nanny_me_availability_bulk(
         created += 1
         day = day + timedelta(days=1)
     db.commit()
-    return {"created": created}
+    return {"created": created, "skipped": skipped}
 
 
 @router.post("/nannies/me/availability/weekly")
@@ -2071,31 +2314,47 @@ def create_nanny_me_availability_weekly(
     if not weekdays:
         raise HTTPException(status_code=400, detail="Invalid weekdays")
 
-    created = 0
     end_date = start_date + timedelta(days=(payload.weeks * 7) - 1)
+    try:
+        sample_start_dt = _parse_iso_dt(f"{start_date.isoformat()}T{start_time}")
+        sample_end_dt = _parse_iso_dt(f"{start_date.isoformat()}T{end_time}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid start_time or end_time")
+    if sample_end_dt <= sample_start_dt:
+        raise HTTPException(status_code=400, detail="End time must be after start time")
+
+    slot_start_time = sample_start_dt.time()
+    slot_end_time = sample_end_dt.time()
+    existing_dates = _existing_availability_dates(
+        db, nanny.id, start_date, end_date, slot_start_time, slot_end_time, payload.type
+    )
+
+    created = 0
+    skipped = 0
     day = start_date
     while day <= end_date:
         if day.weekday() in weekdays:
-            start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time}")
-            end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time}")
-            if end_dt <= start_dt:
-                raise HTTPException(status_code=400, detail="End time must be after start time")
-            row = models.NannyAvailability(
-                nanny_id=nanny.id,
-                date=start_dt.date(),
-                start_time=start_dt.time(),
-                end_time=end_dt.time(),
-                is_available=True if payload.type == "available" else False,
-                created_by="nanny",
-                type=payload.type,
-                start_dt=_to_iso_z(start_dt),
-                end_dt=_to_iso_z(end_dt),
-            )
-            db.add(row)
-            created += 1
+            if day in existing_dates:
+                skipped += 1
+            else:
+                start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time}")
+                end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time}")
+                row = models.NannyAvailability(
+                    nanny_id=nanny.id,
+                    date=start_dt.date(),
+                    start_time=slot_start_time,
+                    end_time=slot_end_time,
+                    is_available=True if payload.type == "available" else False,
+                    created_by="nanny",
+                    type=payload.type,
+                    start_dt=_to_iso_z(start_dt),
+                    end_dt=_to_iso_z(end_dt),
+                )
+                db.add(row)
+                created += 1
         day = day + timedelta(days=1)
     db.commit()
-    return {"created": created}
+    return {"created": created, "skipped": skipped}
 
 
 @router.delete("/nannies/me/availability/{availability_id}")
@@ -2736,33 +2995,6 @@ def _search_nannies_by_area(
         )
         completed_jobs_map = {int(nanny_id): int(count or 0) for nanny_id, count in completed_rows}
 
-    def normalize_previous_jobs(raw: object) -> List[dict]:
-        if raw is None:
-            return []
-        parsed = raw
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-            except Exception:
-                return []
-        if not isinstance(parsed, list):
-            return []
-        cleaned: List[dict] = []
-        for row in parsed[:5]:
-            if not isinstance(row, dict):
-                continue
-            item = {
-                "role": (row.get("role") or "").strip(),
-                "employer": (row.get("employer") or "").strip(),
-                "period": (row.get("period") or "").strip(),
-                "reference_name": (row.get("reference_name") or "").strip(),
-                "reference_phone": (row.get("reference_phone") or "").strip(),
-                "reference_relationship": (row.get("reference_relationship") or "").strip(),
-            }
-            if any(item.values()):
-                cleaned.append(item)
-        return cleaned
-
     results = []
     for p in profiles:
         nanny = db.query(models.Nanny).filter(models.Nanny.id == p.nanny_id).first()
@@ -2799,6 +3031,10 @@ def _search_nannies_by_area(
             location_hint = f"{p.suburb}, {p.city}"
         elif getattr(p, "city", None):
             location_hint = p.city
+        qualifications = simple_list(getattr(p, "qualifications", None))
+        tags = simple_list(getattr(p, "tags", None))
+        previous_jobs = _normalize_previous_jobs(getattr(p, "previous_jobs_json", None))
+        age = compute_age(getattr(p, "date_of_birth", None))
 
         results.append(
             {
@@ -2809,13 +3045,21 @@ def _search_nannies_by_area(
                 "nickname": getattr(nanny_user, "nickname", None),
                 "last_initial": getattr(nanny_user, "last_initial", None),
                 "profile_photo_url": getattr(nanny_user, "profile_photo_url", None),
+                "profile_summary": _build_nanny_profile_summary(
+                    age=age,
+                    nationality=getattr(p, "nationality", None),
+                    qualifications=qualifications,
+                    tags=tags,
+                    previous_jobs=previous_jobs,
+                    bio=getattr(p, "bio", None),
+                ),
                 "bio": getattr(p, "bio", None),
                 "date_of_birth": getattr(p, "date_of_birth", None),
-                "age": compute_age(getattr(p, "date_of_birth", None)),
+                "age": age,
                 "nationality": getattr(p, "nationality", None),
                 "ethnicity": getattr(p, "ethnicity", None),
-                "qualifications": simple_list(getattr(p, "qualifications", None)),
-                "tags": simple_list(getattr(p, "tags", None)),
+                "qualifications": qualifications,
+                "tags": tags,
                 "languages": simple_list(getattr(p, "languages", None)),
                 "average_rating_12m": avg,
                 "review_count_12m": cnt or 0,
@@ -2824,7 +3068,7 @@ def _search_nannies_by_area(
                 "completed_jobs_count": completed_jobs_map.get(int(p.nanny_id), 0),
                 "has_identity_document": bool(getattr(p, "sa_id_document_url", None) or getattr(p, "work_permit_document_url", None)),
                 "has_passport_document": bool(getattr(p, "passport_document_url", None)),
-                "previous_jobs": normalize_previous_jobs(getattr(p, "previous_jobs_json", None)),
+                "previous_jobs": previous_jobs,
             }
         )
 
@@ -3009,13 +3253,11 @@ def search_nannies_by_time(
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Parent access required")
 
-    try:
-        start_dt = _parse_iso_dt(payload.start_dt)
-        end_dt = _parse_iso_dt(payload.end_dt)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid start_dt or end_dt")
-    if end_dt <= start_dt:
-        raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
+    windows = _normalize_booking_slots(
+        start_dt_value=payload.start_dt,
+        end_dt_value=payload.end_dt,
+        slot_items=payload.slots,
+    )
 
     search_lat = payload.lat
     search_lng = payload.lng
@@ -3049,7 +3291,7 @@ def search_nannies_by_time(
 
     available = []
     for n in results:
-        if _is_nanny_available(db, n.get("nanny_id"), start_dt, end_dt):
+        if all(_is_nanny_available(db, n.get("nanny_id"), start_dt, end_dt) for start_dt, end_dt in windows):
             available.append(n)
 
     return {
@@ -4328,13 +4570,13 @@ def create_booking_request(
         if user.role != "parent":
             raise HTTPException(status_code=403, detail="Forbidden")
 
-        try:
-            start_dt = _parse_iso_dt(payload.start_dt)
-            end_dt = _parse_iso_dt(payload.end_dt)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid start_dt or end_dt")
-        if end_dt <= start_dt:
-            raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
+        windows = _normalize_booking_slots(
+            start_dt_value=payload.start_dt,
+            end_dt_value=payload.end_dt,
+            slot_items=payload.slots,
+        )
+        start_dt = windows[0][0]
+        end_dt = windows[-1][1]
 
         nanny = db.query(models.Nanny).filter(models.Nanny.id == payload.nanny_id).first()
         if not nanny:
@@ -4345,12 +4587,12 @@ def create_booking_request(
         if nanny_user and not bool(getattr(nanny_user, "is_active", True)):
             raise HTTPException(status_code=409, detail="Nanny is inactive")
 
-        if not _is_nanny_available(db, nanny.id, start_dt, end_dt):
+        if not all(_is_nanny_available(db, nanny.id, slot_start, slot_end) for slot_start, slot_end in windows):
             raise HTTPException(status_code=409, detail="Requested time is not available")
 
         if payload.notes:
             payload.notes = redact_contact_info(payload.notes)
-        pricing = _compute_booking_pricing(start_dt, end_dt, bool(payload.sleepover), _get_pricing_settings(db))
+        pricing = _compute_booking_slots_pricing(windows, bool(payload.sleepover), _get_pricing_settings(db))
         req = models.BookingRequest(
             id=_next_booking_request_id(db),
             parent_user_id=user.id,
@@ -4371,6 +4613,9 @@ def create_booking_request(
         )
         req.group_id = req.id
         db.add(req)
+        db.flush()
+        if payload.slots:
+            _attach_booking_request_slots(db, req.id, windows)
         db.commit()
         db.refresh(req)
     except HTTPException as e:
@@ -4418,19 +4663,17 @@ def estimate_booking_request(
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    try:
-        start_dt = _parse_iso_dt(payload.start_dt)
-        end_dt = _parse_iso_dt(payload.end_dt)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid start_dt or end_dt")
-    if end_dt <= start_dt:
-        raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
+    windows = _normalize_booking_slots(
+        start_dt_value=payload.start_dt,
+        end_dt_value=payload.end_dt,
+        slot_items=payload.slots,
+    )
 
     selected_count = int(payload.selected_count or 1)
     if selected_count < 1:
         selected_count = 1
 
-    pricing = _compute_booking_pricing(start_dt, end_dt, bool(payload.sleepover), _get_pricing_settings(db))
+    pricing = _compute_booking_slots_pricing(windows, bool(payload.sleepover), _get_pricing_settings(db))
     per_nanny_total = int(pricing.get("total_cents") or 0)
     per_nanny_wage = int(pricing.get("wage_cents") or 0)
     per_nanny_fee = int(pricing.get("booking_fee_cents") or 0)
@@ -4458,13 +4701,13 @@ def create_booking_request_bulk(
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    try:
-        start_dt = _parse_iso_dt(payload.start_dt)
-        end_dt = _parse_iso_dt(payload.end_dt)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid start_dt or end_dt")
-    if end_dt <= start_dt:
-        raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
+    windows = _normalize_booking_slots(
+        start_dt_value=payload.start_dt,
+        end_dt_value=payload.end_dt,
+        slot_items=payload.slots,
+    )
+    start_dt = windows[0][0]
+    end_dt = windows[-1][1]
 
     nanny_ids = list(dict.fromkeys([int(n) for n in (payload.nanny_ids or []) if n is not None]))
     if not nanny_ids:
@@ -4497,11 +4740,11 @@ def create_booking_request_bulk(
         if nanny_user and not bool(getattr(nanny_user, "is_active", True)):
             errors.append({"nanny_id": nanny_id, "error": "Nanny is inactive"})
             continue
-        if not _is_nanny_available(db, nanny.id, start_dt, end_dt):
+        if not all(_is_nanny_available(db, nanny.id, slot_start, slot_end) for slot_start, slot_end in windows):
             errors.append({"nanny_id": nanny_id, "error": "Requested time is not available"})
             continue
 
-        pricing = _compute_booking_pricing(start_dt, end_dt, bool(payload.sleepover), _get_pricing_settings(db))
+        pricing = _compute_booking_slots_pricing(windows, bool(payload.sleepover), _get_pricing_settings(db))
         req = models.BookingRequest(
             id=next_id,
             parent_user_id=user.id,
@@ -4523,6 +4766,8 @@ def create_booking_request_bulk(
         next_id += 1
         db.add(req)
         db.flush()
+        if payload.slots:
+            _attach_booking_request_slots(db, req.id, windows)
         created.append(req.id)
         log_audit(
             db,
@@ -4948,6 +5193,10 @@ def admin_get_nanny_profile(
         profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
     def simple_list(items):
         return [{"id": x.id, "name": x.name} for x in (items or [])]
+    qualifications = simple_list(getattr(profile, "qualifications", None)) if profile else []
+    tags = simple_list(getattr(profile, "tags", None)) if profile else []
+    previous_jobs = _normalize_previous_jobs(getattr(profile, "previous_jobs_json", None)) if profile else []
+    age = compute_age(getattr(profile, "date_of_birth", None)) if profile else None
     return {
         "name": user.name,
         "phone": getattr(user, "phone", None),
@@ -4961,8 +5210,17 @@ def admin_get_nanny_profile(
         "admin_reason": getattr(profile, "admin_reason", None) if profile else None,
         "reviewed_at": getattr(profile, "reviewed_at", None) if profile else None,
         "reviewed_by_user_id": getattr(profile, "reviewed_by_user_id", None) if profile else None,
+        "profile_summary": _build_nanny_profile_summary(
+            age=age,
+            nationality=getattr(profile, "nationality", None) if profile else None,
+            qualifications=qualifications,
+            tags=tags,
+            previous_jobs=previous_jobs,
+            bio=getattr(profile, "bio", None) if profile else None,
+        ),
         "bio": getattr(profile, "bio", None) if profile else None,
         "date_of_birth": getattr(profile, "date_of_birth", None) if profile else None,
+        "age": age,
         "nationality": getattr(profile, "nationality", None) if profile else None,
         "ethnicity": getattr(profile, "ethnicity", None) if profile else None,
         "passport_number": getattr(profile, "passport_number", None) if profile else None,
@@ -4974,9 +5232,10 @@ def admin_get_nanny_profile(
         "waiver": getattr(profile, "waiver", None) if profile else None,
         "sa_id_number": getattr(profile, "sa_id_number", None) if profile else None,
         "sa_id_document_url": getattr(profile, "sa_id_document_url", None) if profile else None,
-        "tags": simple_list(getattr(profile, "tags", None)) if profile else [],
+        "tags": tags,
         "languages": simple_list(getattr(profile, "languages", None)) if profile else [],
-        "qualifications": simple_list(getattr(profile, "qualifications", None)) if profile else [],
+        "qualifications": qualifications,
+        "previous_jobs": previous_jobs,
         "formatted_address": getattr(profile, "formatted_address", None) if profile else None,
     }
 

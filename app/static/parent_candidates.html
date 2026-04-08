@@ -66,6 +66,27 @@
     .tag-filters label{display:flex;align-items:center;gap:6px;font-size:13px;color:#333}
     .card{position:relative}
     .card-fav{position:absolute;top:12px;right:12px;font-size:22px;color:#ef4444}
+    .summaryText{margin-top:10px;line-height:1.45;color:#374151}
+    .summaryText.secondary{color:#666}
+    .calendarIntro{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
+    .calendarHint{max-width:620px}
+    .calendarActions{display:flex;gap:8px;flex-wrap:wrap}
+    .fc .fc-bg-event.selectedDay{background:#dbeafe;opacity:0.95}
+    .selectedDatesPanel{margin-top:14px;border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#f9fafb}
+    .selectedDateChips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+    .dateChip{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#eef2ff;border:1px solid #c7d2fe;font-size:13px;color:#1f2937}
+    .slotRows{display:grid;gap:10px;margin-top:12px}
+    .slotRow{display:grid;grid-template-columns:minmax(160px,1.5fr) minmax(120px,1fr) minmax(120px,1fr) auto;gap:10px;align-items:end}
+    .slotField{display:flex;flex-direction:column;gap:6px}
+    .slotField label{font-size:12px;color:#666}
+    .slotField input{padding:10px;border-radius:10px;border:1px solid #ccc}
+    .slotDateLabel{font-weight:600;color:#1f2937;padding-bottom:10px}
+    .slotEmpty{color:#666}
+    .scheduleList{display:grid;gap:8px}
+    .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+    @media (max-width: 760px){
+      .slotRow{grid-template-columns:1fr}
+    }
   </style>
 </head>
 <body>
@@ -88,12 +109,28 @@
       <label for="searchEndTime">End time</label>
       <input id="searchEndTime" type="time" />
     </div>
-    <button class="btn" id="searchBtn" type="button">Search</button>
+    <button class="btn" id="legacySearchBtn" type="button">Search</button>
   </div>
 
   <div class="card" style="margin-top:12px;">
     <h3 style="margin:0 0 10px;">Pick a time range</h3>
+    <div class="calendarIntro">
+      <div class="calendarHint muted">Select one or more dates on the month calendar, even across different months. Then click <strong>Apply selected dates</strong> and set the arrival and finishing time for each date below.</div>
+      <div class="calendarActions">
+        <button class="btn" id="applySelectedDatesBtn" type="button">Apply selected dates</button>
+        <button class="btn secondary" id="clearSelectedDatesBtn" type="button">Clear dates</button>
+      </div>
+    </div>
     <div id="searchCalendar"></div>
+    <div class="selectedDatesPanel">
+      <div style="font-weight:600;">Selected dates and times</div>
+      <div id="selectedDatesSummary" class="muted" style="margin-top:6px;">No dates selected yet.</div>
+      <div id="selectedDateChips" class="selectedDateChips"></div>
+      <div id="selectedSlotRows" class="slotRows"></div>
+      <div style="margin-top:12px;">
+        <button class="btn primary" id="searchBtn" type="button">Search available nannies</button>
+      </div>
+    </div>
   </div>
 
   <div class="filters">
@@ -134,11 +171,8 @@
       <div style="font-weight:700; margin-bottom:8px">Book nanny</div>
       <div class="muted" id="bookingNannyName"></div>
 
-      <label class="muted">Start</label>
-      <input id="bookingStart" type="text" readonly />
-
-      <label class="muted" style="margin-top:8px; display:block;">End</label>
-      <input id="bookingEnd" type="text" readonly />
+      <label class="muted">Requested schedule</label>
+      <div id="bookingScheduleSummary" class="scheduleList" style="margin-top:8px;"></div>
 
       <label class="muted" style="margin-top:8px; display:block;">Location</label>
       <select id="bookingLocation"></select>
@@ -251,6 +285,195 @@
 
     let selectedNannies = new Set();
     let searchCalendar = null;
+    let selectedCalendarDates = new Set();
+
+    function formatDateLabel(dateStr) {
+      const date = new Date(`${dateStr}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return dateStr;
+      return date.toLocaleDateString("en-ZA", {
+        weekday: "short",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    }
+
+    function formatDateValue(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function sortSlots(slots) {
+      return [...(Array.isArray(slots) ? slots : [])].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+    }
+
+    function getDefaultSlotTimes() {
+      if (Array.isArray(bookingState.slots) && bookingState.slots.length) {
+        const last = bookingState.slots[bookingState.slots.length - 1];
+        return { start_time: last.start_time || "08:00", end_time: last.end_time || "17:00" };
+      }
+      return { start_time: "08:00", end_time: "17:00" };
+    }
+
+    function computeSlotIsoRange(slots) {
+      const isoSlots = sortSlots(slots)
+        .map((slot) => {
+          if (!slot?.date || !slot?.start_time || !slot?.end_time) return null;
+          const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
+          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.end_time) : buildIso(slot.date, slot.end_time);
+          if (!startsAt || !endsAt) return null;
+          if (new Date(endsAt) <= new Date(startsAt)) return null;
+          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, starts_at: startsAt, ends_at: endsAt };
+        })
+        .filter(Boolean);
+      const first = isoSlots[0] || null;
+      const last = isoSlots[isoSlots.length - 1] || null;
+      return {
+        slots: isoSlots,
+        start_dt: first ? first.starts_at : null,
+        end_dt: last ? last.ends_at : null,
+      };
+    }
+
+    function validateSlotRange(slots) {
+      const normalized = sortSlots(slots);
+      if (!normalized.length) return "Select at least one date and time.";
+      for (const slot of normalized) {
+        if (!slot?.date || !slot?.start_time || !slot?.end_time) {
+          return "Every selected date needs both an arrival and finishing time.";
+        }
+        const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
+        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.end_time) : buildIso(slot.date, slot.end_time);
+        if (!startsAt || !endsAt || new Date(endsAt) <= new Date(startsAt)) {
+          return `Finishing time must be after arrival time for ${formatDateLabel(slot.date)}.`;
+        }
+      }
+      return null;
+    }
+
+    function setBookingSlots(slots) {
+      bookingState.slots = sortSlots(slots);
+      const range = computeSlotIsoRange(bookingState.slots);
+      bookingState.start_dt = range.start_dt;
+      bookingState.end_dt = range.end_dt;
+    }
+
+    function renderCalendarSelectedDates() {
+      if (!searchCalendar) return;
+      searchCalendar.getEvents().forEach((evt) => {
+        if (String(evt.id || "").startsWith("selected-date-")) evt.remove();
+      });
+      Array.from(selectedCalendarDates).sort().forEach((dateStr) => {
+        const end = new Date(`${dateStr}T00:00:00`);
+        end.setDate(end.getDate() + 1);
+        searchCalendar.addEvent({
+          id: `selected-date-${dateStr}`,
+          start: dateStr,
+          end: formatDateValue(end),
+          display: "background",
+          classNames: ["selectedDay"],
+          allDay: true,
+        });
+      });
+    }
+
+    function updateSelectedDatesSummary() {
+      const chipsEl = document.getElementById("selectedDateChips");
+      const summaryEl = document.getElementById("selectedDatesSummary");
+      const dates = Array.from(selectedCalendarDates).sort();
+      chipsEl.innerHTML = dates.map((dateStr) => `<span class="dateChip">${escapeHtml(formatDateLabel(dateStr))}</span>`).join("");
+      if (!dates.length) {
+        summaryEl.textContent = "No dates selected yet.";
+        return;
+      }
+      const appliedCount = Array.isArray(bookingState.slots) ? bookingState.slots.length : 0;
+      summaryEl.textContent = appliedCount === dates.length
+        ? `${dates.length} date${dates.length === 1 ? "" : "s"} ready. You can adjust each day's times below.`
+        : `${dates.length} date${dates.length === 1 ? "" : "s"} selected. Click Apply selected dates to add or refresh the time rows.`;
+    }
+
+    function renderSelectedSlotRows() {
+      const rowsEl = document.getElementById("selectedSlotRows");
+      const slots = sortSlots(bookingState.slots);
+      if (!slots.length) {
+        rowsEl.innerHTML = `<div class="slotEmpty">Apply selected dates to set arrival and finishing times.</div>`;
+        return;
+      }
+      rowsEl.innerHTML = slots.map((slot) => `
+        <div class="slotRow" data-date="${escapeHtml(slot.date)}">
+          <div class="slotDateLabel">${escapeHtml(formatDateLabel(slot.date))}</div>
+          <div class="slotField">
+            <label>Arrival time</label>
+            <input type="time" class="slotStartTime" value="${escapeHtml(slot.start_time || "08:00")}" />
+          </div>
+          <div class="slotField">
+            <label>Finishing time</label>
+            <input type="time" class="slotEndTime" value="${escapeHtml(slot.end_time || "17:00")}" />
+          </div>
+          <button class="btn secondary removeSlotBtn" type="button">Remove</button>
+        </div>
+      `).join("");
+
+      rowsEl.querySelectorAll(".slotStartTime").forEach((input) => {
+        input.addEventListener("change", (event) => {
+          const row = event.target.closest(".slotRow");
+          const slot = bookingState.slots.find((item) => item.date === row?.dataset.date);
+          if (!slot) return;
+          slot.start_time = event.target.value;
+          setBookingSlots(bookingState.slots);
+          refreshBookingEstimate().catch(() => {});
+        });
+      });
+
+      rowsEl.querySelectorAll(".slotEndTime").forEach((input) => {
+        input.addEventListener("change", (event) => {
+          const row = event.target.closest(".slotRow");
+          const slot = bookingState.slots.find((item) => item.date === row?.dataset.date);
+          if (!slot) return;
+          slot.end_time = event.target.value;
+          setBookingSlots(bookingState.slots);
+          refreshBookingEstimate().catch(() => {});
+        });
+      });
+
+      rowsEl.querySelectorAll(".removeSlotBtn").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          const row = event.target.closest(".slotRow");
+          const date = row?.dataset.date;
+          if (!date) return;
+          selectedCalendarDates.delete(date);
+          setBookingSlots(bookingState.slots.filter((slot) => slot.date !== date));
+          renderCalendarSelectedDates();
+          updateSelectedDatesSummary();
+          renderSelectedSlotRows();
+        });
+      });
+    }
+
+    function applySelectedDatesToSlots() {
+      const dates = Array.from(selectedCalendarDates).sort();
+      if (!dates.length) {
+        document.getElementById("status").textContent = "Select at least one date on the calendar.";
+        return;
+      }
+      const existing = new Map((bookingState.slots || []).map((slot) => [slot.date, slot]));
+      const defaults = getDefaultSlotTimes();
+      const nextSlots = dates.map((date) => {
+        const current = existing.get(date);
+        return {
+          date,
+          start_time: current?.start_time || defaults.start_time,
+          end_time: current?.end_time || defaults.end_time,
+        };
+      });
+      setBookingSlots(nextSlots);
+      updateSelectedDatesSummary();
+      renderSelectedSlotRows();
+      document.getElementById("status").textContent = `${nextSlots.length} date${nextSlots.length === 1 ? "" : "s"} ready for search.`;
+      refreshBookingEstimate().catch(() => {});
+    }
 
     function card(n, profileComplete, canBook){
       const name = formatName(n.name || ("Nanny " + n.nanny_id));
@@ -283,7 +506,7 @@
           <div class="muted">⭐ ${ratingLine}</div>
           ${distLine}
           ${profileComplete ? (n.location_hint ? `<div class="muted">${escapeHtml(n.location_hint)}</div>` : "") : locLine}
-          <div style="margin-top:10px">${n.bio || ""}</div>
+          <div class="summaryText">${escapeHtml(n.profile_summary || n.bio || "No summary yet.")}</div>
           <div class="actions">
             <button class="btn primary bookBtn" data-nanny-id="${n.nanny_id}" data-nanny-name="${escapeHtml(name)}" ${canBook ? "" : "disabled"}>Book</button>
             <button class="btn previewBtn" data-nanny-id="${n.nanny_id}">Preview</button>
@@ -298,8 +521,22 @@
       nannyName: "",
       start_dt: null,
       end_dt: null,
+      slots: [],
       selectedNannyIds: [],
     };
+
+    function renderScheduleSummary(slots) {
+      const normalized = computeSlotIsoRange(slots).slots;
+      if (!normalized.length) {
+        return `<div class="scheduleItem muted">No dates selected yet.</div>`;
+      }
+      return normalized.map((slot) => `
+        <div class="scheduleItem">
+          <strong>${escapeHtml(formatDateLabel(slot.date))}</strong><br>
+          ${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)}
+        </div>
+      `).join("");
+    }
 
     function formatCurrencyCents(cents, currency = "ZAR") {
       const amount = Number(cents || 0) / 100;
@@ -309,10 +546,12 @@
     async function refreshBookingEstimate() {
       const estimateEl = document.getElementById("bookingEstimate");
       if (!estimateEl) return;
-      if (!bookingState.start_dt || !bookingState.end_dt) {
-        estimateEl.textContent = "Select date and time to see estimate.";
+      const slotError = validateSlotRange(bookingState.slots);
+      if (slotError) {
+        estimateEl.textContent = slotError;
         return;
       }
+      const slotRange = computeSlotIsoRange(bookingState.slots);
       const selectedCount = Math.max(1, Array.isArray(bookingState.selectedNannyIds) ? bookingState.selectedNannyIds.length : 1);
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
       estimateEl.textContent = "Calculating estimate...";
@@ -320,8 +559,9 @@
         const data = await fetchJson("/booking-requests/estimate", {
           method: "POST",
           body: JSON.stringify({
-            start_dt: bookingState.start_dt,
-            end_dt: bookingState.end_dt,
+            start_dt: slotRange.start_dt,
+            end_dt: slotRange.end_dt,
+            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             sleepover,
             selected_count: selectedCount,
           }),
@@ -346,12 +586,7 @@
       bookingState.selectedNannyIds = Array.isArray(selectedIds) ? selectedIds : (nannyId ? [nannyId] : []);
       const count = bookingState.selectedNannyIds.length;
       document.getElementById("bookingNannyName").textContent = count > 1 ? `${count} nannies selected` : nannyName;
-      document.getElementById("bookingStart").value = bookingState.start_dt
-        ? (window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.start_dt) : new Date(bookingState.start_dt).toLocaleString())
-        : "";
-      document.getElementById("bookingEnd").value = bookingState.end_dt
-        ? (window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.end_dt) : new Date(bookingState.end_dt).toLocaleString())
-        : "";
+      document.getElementById("bookingScheduleSummary").innerHTML = renderScheduleSummary(bookingState.slots);
       const locSelect = document.getElementById("bookingLocation");
       const locConfirm = document.getElementById("bookingLocationConfirm");
       const sleepoverEl = document.getElementById("bookingSleepover");
@@ -369,7 +604,8 @@
       }
       if (sleepoverEl) {
         sleepoverEl.checked = false;
-        const startTime = document.getElementById("searchStartTime")?.value || "";
+        const firstSlot = sortSlots(bookingState.slots)[0];
+        const startTime = firstSlot?.start_time || "";
         const showSleepover = startTime >= "14:00";
         sleepoverEl.parentElement.style.display = showSleepover ? "flex" : "none";
       }
@@ -415,26 +651,36 @@
       if (n.distance_km != null) parts.push(`${Number(n.distance_km).toFixed(2)} km away`);
       if (n.location_hint) parts.push(n.location_hint);
       document.getElementById("previewMeta").textContent = parts.join(" • ");
-      document.getElementById("previewBio").textContent = n.bio || "No bio yet.";
+      const bioEl = document.getElementById("previewBio");
+      const summary = n.profile_summary || n.bio || "";
+      const rawBio = (n.bio || "").trim();
+      if (summary && rawBio && summary !== rawBio) {
+        bioEl.innerHTML = `
+          <div class="summaryText">${escapeHtml(summary)}</div>
+          <div class="summaryText secondary"><strong>Bio:</strong> ${escapeHtml(rawBio)}</div>
+        `;
+      } else {
+        bioEl.innerHTML = `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
+      }
 
       const fitEl = document.getElementById("previewFit");
-      if (bookingState.start_dt && bookingState.end_dt) {
-        const start = window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.start_dt) : bookingState.start_dt;
-        const end = window.formatDateTimeZA ? window.formatDateTimeZA(bookingState.end_dt) : bookingState.end_dt;
-        fitEl.textContent = `Matches your selected slot: ${start} to ${end}.`;
+      if (bookingState.slots && bookingState.slots.length) {
+        const first = sortSlots(bookingState.slots)[0];
+        fitEl.textContent = `Matches your selected schedule across ${bookingState.slots.length} date${bookingState.slots.length === 1 ? "" : "s"}, starting ${formatDateLabel(first.date)}.`;
       } else {
-        fitEl.textContent = "Select a date/time range to check best fit.";
+        fitEl.textContent = "Select dates and times to check best fit.";
       }
 
       const priceEl = document.getElementById("previewPrice");
-      if (bookingState.start_dt && bookingState.end_dt) {
-        const startMs = new Date(bookingState.start_dt).getTime();
-        const endMs = new Date(bookingState.end_dt).getTime();
-        const hrs = Math.max(0, (endMs - startMs) / (1000 * 60 * 60));
+      if (bookingState.slots && bookingState.slots.length) {
+        const range = computeSlotIsoRange(bookingState.slots);
+        const hrs = range.slots.reduce((sum, slot) => {
+          return sum + Math.max(0, (new Date(slot.ends_at).getTime() - new Date(slot.starts_at).getTime()) / (1000 * 60 * 60));
+        }, 0);
         const rounded = Number.isFinite(hrs) ? hrs.toFixed(1) : "-";
-        priceEl.textContent = `${rounded} hours selected. Final amount is confirmed when you submit the booking request.`;
+        priceEl.textContent = `${rounded} total hours across ${bookingState.slots.length} date${bookingState.slots.length === 1 ? "" : "s"}. Final amount is confirmed when you submit the booking request.`;
       } else {
-        priceEl.textContent = "Final amount is shown when you set date/time and submit your booking request.";
+        priceEl.textContent = "Final amount is shown when you set dates/times and submit your booking request.";
       }
 
       const trustEl = document.getElementById("previewTrust");
@@ -515,10 +761,12 @@
 
     async function submitBookingRequest() {
       const status = document.getElementById("bookingStatus");
-      if (!bookingState.start_dt || !bookingState.end_dt) {
-        status.textContent = "Select date and time first";
+      const slotError = validateSlotRange(bookingState.slots);
+      if (slotError) {
+        status.textContent = slotError;
         return;
       }
+      const slotRange = computeSlotIsoRange(bookingState.slots);
       const locConfirm = document.getElementById("bookingLocationConfirm");
       if (locConfirm && !locConfirm.checked) {
         status.textContent = "Please confirm the location.";
@@ -540,8 +788,9 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             nanny_ids: bookingState.selectedNannyIds,
-            start_dt: bookingState.start_dt,
-            end_dt: bookingState.end_dt,
+            start_dt: slotRange.start_dt,
+            end_dt: slotRange.end_dt,
+            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
             sleepover
@@ -555,8 +804,9 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             nanny_ids: bookingState.selectedNannyIds,
-            start_dt: bookingState.start_dt,
-            end_dt: bookingState.end_dt,
+            start_dt: slotRange.start_dt,
+            end_dt: slotRange.end_dt,
+            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
             sleepover
@@ -570,8 +820,9 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             nanny_id: bookingState.nannyId,
-            start_dt: bookingState.start_dt,
-            end_dt: bookingState.end_dt,
+            start_dt: slotRange.start_dt,
+            end_dt: slotRange.end_dt,
+            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
             sleepover
@@ -594,208 +845,26 @@
     function initSearchCalendar() {
       const calendarEl = document.getElementById("searchCalendar");
       if (!calendarEl || typeof FullCalendar === "undefined") return null;
-
-      let selectedBlockEvent = null;
-      const deleteModal = document.getElementById("deleteBlockModal");
-      const deleteText = document.getElementById("deleteBlockText");
-      const cancelBtn = document.getElementById("cancelDeleteBlockBtn");
-      const duplicateBtn = document.getElementById("duplicateBlockBtn");
-      const confirmBtn = document.getElementById("confirmDeleteBlockBtn");
-
-      const cleanupModal = () => {
-        if (deleteModal) deleteModal.style.display = "none";
-        selectedBlockEvent = null;
-      };
-
-      const onDuplicate = () => {
-        if (!selectedBlockEvent) return;
-        const start = selectedBlockEvent.start;
-        const end = selectedBlockEvent.end || selectedBlockEvent.start;
-        const durationMs = (end.getTime() - start.getTime()) || (60 * 60 * 1000);
-        const nextDayStart = new Date(start);
-        nextDayStart.setDate(nextDayStart.getDate() + 1);
-        const nextDayEnd = new Date(nextDayStart.getTime() + durationMs);
-        // Use the calendar instance rather than relying on the EventApi having a calendar property.
-        calendar.addEvent({
-          id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          start: nextDayStart.toISOString(),
-          end: nextDayEnd.toISOString(),
-          title: selectedBlockEvent.title,
-          color: selectedBlockEvent.backgroundColor || 'blue',
-          extendedProps: {
-            originalStart: start.toISOString(),
-            originalEnd: end.toISOString(),
-          }
-        });
-        cleanupModal();
-      };
-
-      const onConfirm = () => {
-        if (!selectedBlockEvent) return;
-        selectedBlockEvent.remove();
-        cleanupModal();
-      };
-
-      if (cancelBtn) cancelBtn.addEventListener("click", cleanupModal);
-      if (duplicateBtn) duplicateBtn.addEventListener("click", onDuplicate);
-      if (confirmBtn) confirmBtn.addEventListener("click", onConfirm);
-
       const calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: "timeGridWeek",
+        initialView: "dayGridMonth",
         headerToolbar: {
           left: "prev,next today",
           center: "title",
-          right: "timeGridWeek,timeGridDay",
+          right: "",
         },
-        nowIndicator: true,
-        // Increase height so more time slots are visible without scrolling
-        height: 600,
-        selectable: true,
-        editable: true,
-        eventStartEditable: true,
-        eventDurationEditable: true,
-        // Keep a small drag threshold so simple clicks still trigger eventClick.
-        eventDragMinDistance: 5,
-        select: (info) => {
-          const start = info.start;
-          const end = info.end;
-          const startDate = start.toISOString().slice(0, 10);
-          const endDate = end.toISOString().slice(0, 10);
-          const startTime = start.toISOString().slice(11, 16);
-          const endTime = end.toISOString().slice(11, 16);
-
-          if (startDate === endDate) {
-            // Single day selection
-            setInputValue("searchDate", startDate);
-            setInputValue("searchStartTime", startTime);
-            setInputValue("searchEndTime", endTime);
-            calendar.addEvent({
-              id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              start: start.toISOString(),
-              end: end.toISOString(),
-              title: 'Search Time',
-              color: 'blue',
-              extendedProps: {
-                originalStart: start.toISOString(),
-                originalEnd: end.toISOString(),
-              }
-            });
-            document.getElementById("searchBtn").click();
-          } else {
-            // Multi-day selection: apply the time range to each day in the range
-            const startD = new Date(startDate);
-            const endD = new Date(endDate);
-            const days = [];
-            let current = new Date(startD);
-            while (current <= endD) {
-              const dayName = current.toLocaleDateString('en-US', { weekday: 'short' });
-              days.push(dayName);
-              const dayStart = new Date(current);
-              dayStart.setHours(start.getHours(), start.getMinutes());
-              const dayEnd = new Date(current);
-              dayEnd.setHours(end.getHours(), end.getMinutes());
-              calendar.addEvent({
-                id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                start: dayStart.toISOString(),
-                end: dayEnd.toISOString(),
-                title: 'Search Time',
-                color: 'blue',
-                extendedProps: {
-                  originalStart: dayStart.toISOString(),
-                  originalEnd: dayEnd.toISOString(),
-                }
-              });
-              current.setDate(current.getDate() + 1);
-            }
-            const data = {
-              startDate: startDate,
-              endDate: endDate,
-              startTime: startTime,
-              endTime: endTime,
-              days: days,
-              weeks: 1
-            };
-            localStorage.setItem("parentMultiDayRequest", JSON.stringify(data));
-            setInputValue("searchDate", startDate);
-            setInputValue("searchStartTime", startTime);
-            setInputValue("searchEndTime", endTime);
-            const label = document.getElementById("searchDateLabel");
-            if (label) {
-              label.textContent = `Dates (${startDate} to ${endDate})`;
-            }
-            const notice = document.getElementById("multiDayNotice");
-            if (notice) {
-              notice.textContent = `Multiple days: ${days.join(", ")} for 1 week, ${startTime}–${endTime}.`;
-              notice.style.display = "block";
-            }
-            document.getElementById("searchBtn").click();
-          }
-          calendar.unselect();
-        },
-        eventClick: (info) => {
-          selectedBlockEvent = info.event;
-          const deleteText = document.getElementById("deleteBlockText");
-          if (!deleteText) return;
-          const start = info.event.start;
-          const end = info.event.end || info.event.start;
-          deleteText.textContent = `Block ${start.toLocaleString()} → ${end.toLocaleString()}`;
-          const deleteModal = document.getElementById("deleteBlockModal");
-          if (deleteModal) deleteModal.style.display = "flex";
-        },
-        eventDragStart: (info) => {
-          // Remember the original time range so we can restore it after dragging.
-          info.event.setExtendedProp("_origStart", info.event.start ? info.event.start.toISOString() : null);
-          info.event.setExtendedProp("_origEnd", info.event.end ? info.event.end.toISOString() : null);
-          if (info.el) {
-            info.el.style.opacity = "0.4";
-          }
-        },
-        eventDragStop: (info) => {
-          if (info.el) {
-            info.el.style.opacity = "";
-          }
-        },
-        eventDrop: (info) => {
-          const origStartStr = info.event.extendedProps.originalStart;
-          const origEndStr = info.event.extendedProps.originalEnd;
-          if (!origStartStr) {
-            info.revert();
-            return;
-          }
-
-          const originalStart = new Date(origStartStr);
-          const originalEnd = origEndStr ? new Date(origEndStr) : new Date(origStartStr);
-          const newStart = info.event.start;
-          if (!newStart) {
-            info.revert();
-            return;
-          }
-
-          const sameDay = originalStart.toISOString().slice(0, 10) === newStart.toISOString().slice(0, 10);
-          if (!sameDay) {
-            // Create a copy on the dropped day with the same duration.
-            const durationMs = (originalEnd.getTime() - originalStart.getTime()) || (60 * 60 * 1000);
-            const newEnd = new Date(newStart.getTime() + durationMs);
-            info.calendar.addEvent({
-              id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-              start: newStart.toISOString(),
-              end: newEnd.toISOString(),
-              title: info.event.title,
-              color: info.event.backgroundColor || 'blue',
-              extendedProps: {
-                originalStart: originalStart.toISOString(),
-                originalEnd: originalEnd.toISOString(),
-              }
-            });
-          }
-
-          // Always revert so the original stays unchanged.
-          info.revert();
+        height: "auto",
+        dateClick: (info) => {
+          const dateStr = info.dateStr;
+          if (selectedCalendarDates.has(dateStr)) selectedCalendarDates.delete(dateStr);
+          else selectedCalendarDates.add(dateStr);
+          renderCalendarSelectedDates();
+          updateSelectedDatesSummary();
         },
         events: []
       });
 
       calendar.render();
+      renderCalendarSelectedDates();
       return calendar;
     }
 
@@ -810,36 +879,27 @@
       const [startHour, startMin] = String(data.startTime).split(":").map(v => Number(v));
       const [endHour, endMin] = String(data.endTime).split(":").map(v => Number(v));
       if (!Number.isFinite(startHour) || !Number.isFinite(startMin) || !Number.isFinite(endHour) || !Number.isFinite(endMin)) return;
-
-      calendar.getEvents().forEach(evt => {
-        if (String(evt.id || "").startsWith("search-")) evt.remove();
-      });
+      selectedCalendarDates = new Set();
+      const slots = [];
 
       const totalDays = weeks * 7;
       for (let i = 0; i < totalDays; i++) {
         const day = new Date(startDate);
         day.setDate(startDate.getDate() + i);
         if (!wantedDays.has(day.getDay())) continue;
-
-        const blockStart = new Date(day);
-        blockStart.setHours(startHour, startMin, 0, 0);
-        const blockEnd = new Date(day);
-        blockEnd.setHours(endHour, endMin, 0, 0);
-        if (blockEnd <= blockStart) continue;
-
-        calendar.addEvent({
-          id: `search-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          start: blockStart.toISOString(),
-          end: blockEnd.toISOString(),
-          title: "Search Time",
-          color: "blue",
-          extendedProps: {
-            originalStart: blockStart.toISOString(),
-            originalEnd: blockEnd.toISOString(),
-          }
+        const dateStr = formatDateValue(day);
+        selectedCalendarDates.add(dateStr);
+        slots.push({
+          date: dateStr,
+          start_time: data.startTime,
+          end_time: data.endTime,
         });
       }
 
+      setBookingSlots(slots);
+      renderCalendarSelectedDates();
+      updateSelectedDatesSummary();
+      renderSelectedSlotRows();
       calendar.gotoDate(startDate);
     }
 
@@ -953,20 +1013,12 @@
 
     async function runSearch(){
       await guard();
-      const dateStr = document.getElementById("searchDate").value;
-      const startTime = document.getElementById("searchStartTime").value;
-      const endTime = document.getElementById("searchEndTime").value;
-      const startDt = buildIso(dateStr, startTime);
-      const endDt = buildIso(dateStr, endTime);
-
-      if (!startDt || !endDt) {
-        document.getElementById("status").textContent = "Select date, start time, and end time";
+      const slotError = validateSlotRange(bookingState.slots);
+      if (slotError) {
+        document.getElementById("status").textContent = slotError;
         return;
       }
-      if (new Date(endDt) <= new Date(startDt)) {
-        document.getElementById("status").textContent = "End time must be after start time";
-        return;
-      }
+      const slotRange = computeSlotIsoRange(bookingState.slots);
 
       const status = await fetchJson("/parents/me/profile-status");
       document.getElementById("status").textContent = "Loading...";
@@ -993,8 +1045,9 @@
       const body = {
         lat,
         lng,
-        start_dt: startDt,
-        end_dt: endDt,
+        start_dt: slotRange.start_dt,
+        end_dt: slotRange.end_dt,
+        slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
         max_distance_km: 50
       };
       const data = await fetchJson("/nannies/search-by-time", {
@@ -1002,11 +1055,8 @@
         body: JSON.stringify(body)
       });
 
-      console.log("search response", data);
-      console.log("nannies length", (data.results || []).length, data.results || []);
-
-      bookingState.start_dt = startDt;
-      bookingState.end_dt = endDt;
+      bookingState.start_dt = slotRange.start_dt;
+      bookingState.end_dt = slotRange.end_dt;
 
       const results = data.results || [];
       lastResults = Array.isArray(results) ? results : [];
@@ -1085,6 +1135,17 @@
       document.getElementById("submitBookingBtn").disabled = false;
       runSearch().catch(e => { document.getElementById("status").textContent = "Error: " + e.message; });
     });
+    document.getElementById("applySelectedDatesBtn").addEventListener("click", () => {
+      applySelectedDatesToSlots();
+    });
+    document.getElementById("clearSelectedDatesBtn").addEventListener("click", () => {
+      selectedCalendarDates = new Set();
+      setBookingSlots([]);
+      renderCalendarSelectedDates();
+      updateSelectedDatesSummary();
+      renderSelectedSlotRows();
+      document.getElementById("status").textContent = "Selected dates cleared.";
+    });
 
     document.getElementById("requestSelectedBtn").addEventListener("click", () => {
       const ids = Array.from(selectedNannies);
@@ -1118,9 +1179,6 @@
           if (raw) {
             const data = JSON.parse(raw);
             multiData = data;
-            if (data?.startDate) setInputValue("searchDate", data.startDate);
-            if (data?.startTime) setInputValue("searchStartTime", data.startTime);
-            if (data?.endTime) setInputValue("searchEndTime", data.endTime);
             const notice = document.getElementById("multiDayNotice");
             if (notice) {
               const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
@@ -1129,27 +1187,25 @@
               notice.textContent = `Multiple days: ${days} for ${weeks} week${weeks > 1 ? "s" : ""}, ${timeRange}.`;
               notice.style.display = "block";
             }
-            const label = document.getElementById("searchDateLabel");
-            const last = computeLastMultiDate(data?.startDate, data?.weeks, data?.days);
-            if (label && last) {
-              const endStr = last.toISOString().slice(0,10);
-              label.textContent = `Dates (${data?.startDate} to ${endStr})`;
-            } else if (label) {
-              label.textContent = "Dates (multiple days)";
-            }
           }
         } catch {}
       }
 
       searchCalendar = initSearchCalendar();
+      updateSelectedDatesSummary();
+      renderSelectedSlotRows();
       if (searchCalendar && multiData) {
         renderStoredMultiDaySelection(searchCalendar, multiData);
       }
 
       if (params.get("mode") === "all") {
-        runSearch().catch(err => {
-          document.getElementById("status").textContent = "Error: " + (err?.message || String(err));
-        });
+        if (bookingState.slots.length) {
+          runSearch().catch(err => {
+            document.getElementById("status").textContent = "Error: " + (err?.message || String(err));
+          });
+        } else {
+          document.getElementById("status").textContent = "Select dates on the calendar, apply them, then search for available nannies.";
+        }
       }
     }).catch(() => {});
   </script>

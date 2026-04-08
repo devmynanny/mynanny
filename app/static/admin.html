@@ -92,6 +92,10 @@
       box-sizing: border-box;
       padding: 12px;
     }
+    .tagAdminList { display:grid; gap:8px; margin-top:10px; }
+    .tagAdminRow { display:grid; grid-template-columns:minmax(220px,1fr) auto auto; gap:8px; align-items:center; }
+    .tagAdminRow input { width:100%; box-sizing:border-box; }
+    .tagAdminMsg { margin-top:8px; min-height:18px; }
 
     .modal .row {
       display: flex;
@@ -499,6 +503,7 @@
       setAuthUI(true, email);
       resetInactivityTimer();
       if (await requireAdminRole()) {
+        await loadAdminNannyTags();
         loadBookingRequests();
         loadPendingNannies();
       }
@@ -526,6 +531,7 @@
         resetInactivityTimer();
         requireAdminRole().then(ok => {
           if (ok) {
+            loadAdminNannyTags();
             loadBookingRequests();
             loadPendingNannies();
           }
@@ -655,6 +661,115 @@
         throw new Error(`HTTP ${res.status} ${res.statusText} ${text}`);
       }
       return res.json();
+    }
+
+    function ensureTagManagerUI() {
+      if (document.getElementById("nannyTagsManager")) return;
+      const appSection = document.getElementById("appSection");
+      const topBar = appSection?.querySelector(".topBar");
+      if (!appSection || !topBar) return;
+      const wrap = document.createElement("div");
+      wrap.className = "card";
+      wrap.id = "nannyTagsManager";
+      wrap.innerHTML = `
+        <div class="topLine">
+          <div>
+            <strong>Nanny Tags</strong>
+            <div class="muted">These tags appear in the parent preference checklist and nanny matching.</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <input id="newNannyTagName" placeholder="Add new tag" style="flex:1; min-width:220px;" />
+          <button type="button" id="addNannyTagBtn">Add tag</button>
+        </div>
+        <div id="nannyTagsAdminMsg" class="tagAdminMsg muted"></div>
+        <div id="nannyTagsAdminList" class="tagAdminList"></div>
+      `;
+      topBar.insertAdjacentElement("afterend", wrap);
+
+      document.getElementById("addNannyTagBtn").addEventListener("click", async () => {
+        const input = document.getElementById("newNannyTagName");
+        const msg = document.getElementById("nannyTagsAdminMsg");
+        const name = (input.value || "").trim();
+        if (!name) {
+          msg.textContent = "Enter a tag name first.";
+          msg.className = "tagAdminMsg err";
+          return;
+        }
+        try {
+          await fetchJson("/admin/nanny-tags", {
+            method: "POST",
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({ name })
+          });
+          input.value = "";
+          msg.textContent = "Tag added.";
+          msg.className = "tagAdminMsg ok";
+          await loadAdminNannyTags();
+        } catch (e) {
+          msg.textContent = e?.message || "Failed to add tag.";
+          msg.className = "tagAdminMsg err";
+        }
+      });
+    }
+
+    async function loadAdminNannyTags() {
+      ensureTagManagerUI();
+      const list = document.getElementById("nannyTagsAdminList");
+      const msg = document.getElementById("nannyTagsAdminMsg");
+      if (!list) return;
+      list.innerHTML = `<div class="muted">Loading tags...</div>`;
+      try {
+        const tags = await fetchJson("/admin/nanny-tags", { headers: authHeaders() });
+        if (!tags.length) {
+          list.innerHTML = `<div class="muted">No tags yet.</div>`;
+          return;
+        }
+        list.innerHTML = "";
+        tags.forEach((tag) => {
+          const row = document.createElement("div");
+          row.className = "tagAdminRow";
+          row.innerHTML = `
+            <input value="${escapeAttr(tag.name)}" data-tag-id="${tag.id}" />
+            <button type="button" data-action="save">Save</button>
+            <button type="button" data-action="delete" class="secondary">Delete</button>
+          `;
+          row.querySelector('[data-action="save"]').addEventListener("click", async () => {
+            const input = row.querySelector("input");
+            try {
+              await fetchJson(`/admin/nanny-tags/${tag.id}`, {
+                method: "PATCH",
+                headers: { ...authHeaders(), "Content-Type": "application/json" },
+                body: JSON.stringify({ name: input.value })
+              });
+              msg.textContent = "Tag updated.";
+              msg.className = "tagAdminMsg ok";
+              await loadAdminNannyTags();
+            } catch (e) {
+              msg.textContent = e?.message || "Failed to update tag.";
+              msg.className = "tagAdminMsg err";
+            }
+          });
+          row.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+            if (!confirm(`Delete tag "${tag.name}"?`)) return;
+            try {
+              await fetchJson(`/admin/nanny-tags/${tag.id}`, {
+                method: "DELETE",
+                headers: authHeaders()
+              });
+              msg.textContent = "Tag deleted.";
+              msg.className = "tagAdminMsg ok";
+              await loadAdminNannyTags();
+            } catch (e) {
+              msg.textContent = e?.message || "Failed to delete tag.";
+              msg.className = "tagAdminMsg err";
+            }
+          });
+          list.appendChild(row);
+        });
+      } catch (e) {
+        list.innerHTML = `<div class="err">Failed to load tags.</div>`;
+      }
     }
 
     function setResultsHeading(title) {
