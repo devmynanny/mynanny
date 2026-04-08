@@ -28,7 +28,17 @@ from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
 
-def google_reverse_geocode(lat: float, lng: float) -> dict:
+def get_google_maps_api_key() -> tuple[Optional[str], Optional[str]]:
+    db = SessionLocal()
+    try:
+        row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+        db_key = (getattr(row, "google_maps_api_key", None) or "").strip() if row else ""
+    finally:
+        db.close()
+
+    if db_key:
+        return db_key, "database"
+
     api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not api_key:
         env_path = Path(__file__).resolve().parents[2] / ".env"
@@ -40,6 +50,12 @@ def google_reverse_geocode(lat: float, lng: float) -> dict:
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
         api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    api_key = (api_key or "").strip()
+    return (api_key or None), ("env" if api_key else None)
+
+
+def google_reverse_geocode(lat: float, lng: float) -> dict:
+    api_key, _ = get_google_maps_api_key()
     if not api_key:
         return {"status": "NO_KEY", "error_message": "GOOGLE_MAPS_API_KEY not set"}
 
@@ -54,6 +70,16 @@ def google_reverse_geocode(lat: float, lng: float) -> dict:
         raise HTTPException(status_code=502, detail=f"Reverse geocode failed: {e}")
 
     return data
+
+
+@router.get("/config/google-maps")
+def public_google_maps_config():
+    api_key, source = get_google_maps_api_key()
+    return {
+        "configured": bool(api_key),
+        "google_maps_api_key": api_key,
+        "source": source,
+    }
 
 
 def _extract_reverse_fields(lat: float, lng: float) -> Optional[dict]:

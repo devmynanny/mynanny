@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin Integrations</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin:10px 0 20px}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
+    label{display:block;font-size:12px;color:#666;margin-bottom:6px}
+    input{padding:10px;border-radius:10px;border:1px solid #ccc;width:100%;box-sizing:border-box}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
+    .muted{color:#666}
+    .err{color:#b00020}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+    <button class="btn" id="backBtn" type="button">Back to dashboard</button>
+  </div>
+  <h1>Integrations</h1>
+
+  <div class="card">
+    <h3 style="margin-top:0;">Google Maps</h3>
+    <div class="muted" style="margin-bottom:12px;">Update the key used for Places autocomplete and reverse geocoding. Leaving this blank falls back to the server environment variable if one is set.</div>
+    <div id="mapsMeta" class="muted" style="margin-bottom:12px;">Loading...</div>
+    <label for="googleMapsApiKey">Google Maps API key</label>
+    <input id="googleMapsApiKey" type="text" placeholder="AIza..." autocomplete="off" />
+    <div class="actions">
+      <button class="btn" id="clearBtn" type="button">Clear saved key</button>
+      <button class="btn" id="saveBtn" type="button">Save</button>
+    </div>
+    <div id="status" class="muted"></div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    async function loadGoogleMapsSettings() {
+      const data = await fetchJson("/admin/integrations/google-maps");
+      document.getElementById("googleMapsApiKey").value = data.google_maps_api_key || "";
+      const parts = [];
+      parts.push(`Configured: ${data.configured ? "Yes" : "No"}`);
+      parts.push(`Source: ${data.source || "none"}`);
+      if (data.using_env_fallback) parts.push("Using environment fallback");
+      document.getElementById("mapsMeta").textContent = parts.join(" | ");
+    }
+
+    async function saveGoogleMapsSettings(value) {
+      await fetchJson("/admin/integrations/google-maps", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ google_maps_api_key: value })
+      });
+      document.getElementById("status").textContent = "Saved.";
+      await loadGoogleMapsSettings();
+    }
+
+    document.getElementById("saveBtn").addEventListener("click", () => {
+      const value = document.getElementById("googleMapsApiKey").value || "";
+      saveGoogleMapsSettings(value).catch(e => {
+        document.getElementById("status").textContent = e.message || "Error";
+        document.getElementById("status").className = "err";
+      });
+    });
+
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      saveGoogleMapsSettings("").catch(e => {
+        document.getElementById("status").textContent = e.message || "Error";
+        document.getElementById("status").className = "err";
+      });
+    });
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/admin_dashboard.html";
+    });
+
+    (async () => {
+      const me = await requireMe();
+      if (!me?.is_admin) { location.href = "/static/login.html"; return; }
+      loadGoogleMapsSettings().catch((e) => {
+        document.getElementById("mapsMeta").textContent = e.message || "Error";
+        document.getElementById("mapsMeta").className = "err";
+      });
+    })();
+  </script>
+</body>
+</html>

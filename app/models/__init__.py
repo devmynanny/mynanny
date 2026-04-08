@@ -231,6 +231,13 @@ class PricingSettings(Base):
     cancellation_fee_window_hours = Column(Integer, nullable=False, default=12)
 
 
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True)
+    google_maps_api_key = Column(Text, nullable=True)
+
+
 class ParentLocation(Base):
     __tablename__ = "parent_locations"
 

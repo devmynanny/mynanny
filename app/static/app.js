@@ -239,6 +239,58 @@ async function loadParentContext() {
 
 window.loadParentContext = loadParentContext;
 
+let googleMapsLoadPromise = null;
+
+async function loadGoogleMapsPlaces(callbackName, statusTarget) {
+  const statusEl = typeof statusTarget === "string" ? document.getElementById(statusTarget) : statusTarget;
+  const setStatus = (msg) => {
+    if (statusEl) statusEl.textContent = msg || "";
+  };
+
+  if (window.google && window.google.maps && window.google.maps.places) {
+    if (callbackName && typeof window[callbackName] === "function") {
+      window[callbackName]();
+    }
+    return true;
+  }
+
+  const cfg = await fetchJson("/config/google-maps").catch(() => null);
+  const apiKey = (cfg && cfg.google_maps_api_key) ? String(cfg.google_maps_api_key).trim() : "";
+  if (!apiKey) {
+    setStatus("Google Maps API key not configured");
+    return false;
+  }
+
+  if (!googleMapsLoadPromise) {
+    googleMapsLoadPromise = new Promise((resolve, reject) => {
+      const callback = "__googleMapsPlacesLoaded";
+      window[callback] = () => {
+        delete window[callback];
+        resolve(true);
+      };
+      const script = document.createElement("script");
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=places&callback=${callback}`;
+      script.async = true;
+      script.defer = true;
+      script.onerror = () => {
+        delete window[callback];
+        googleMapsLoadPromise = null;
+        reject(new Error("Failed to load Google Maps"));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
+  await googleMapsLoadPromise;
+  setStatus("");
+  if (callbackName && typeof window[callbackName] === "function") {
+    window[callbackName]();
+  }
+  return true;
+}
+
+window.loadGoogleMapsPlaces = loadGoogleMapsPlaces;
+
 (function ensureCheckStyle(){
   if (document.getElementById("checkStyle")) return;
   const style = document.createElement("style");

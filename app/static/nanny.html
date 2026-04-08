@@ -1003,6 +1003,11 @@
         }
       }).catch(() => {});
     </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initAddressAutocomplete" async defer></script>
+    <script>
+      loadGoogleMapsPlaces("initAddressAutocomplete", "locationStatus").catch((e) => {
+        const el = document.getElementById("locationStatus");
+        if (el) el.textContent = e?.message || "Failed to load Google Maps";
+      });
+    </script>
   </body>
 </html>

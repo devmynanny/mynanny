@@ -1,6 +1,4 @@
-
-
-
+import os
 from datetime import date, time, datetime, timedelta
 import json
 from typing import Optional
@@ -26,6 +24,10 @@ class RefundDecision(BaseModel):
     reason: Optional[str] = None
 
 
+class GoogleMapsSettingsPayload(BaseModel):
+    google_maps_api_key: Optional[str] = None
+
+
 def get_db():
 	db = SessionLocal()
 	try:
@@ -35,6 +37,40 @@ def get_db():
 
 def require_admin(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
 	require_admin_user(authorization, db)
+
+
+@router.get("/integrations/google-maps", dependencies=[Depends(require_admin)])
+def get_google_maps_settings(db: Session = Depends(get_db)):
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    db_key = (getattr(row, "google_maps_api_key", None) or "").strip() if row else ""
+    env_key = (os.getenv("GOOGLE_MAPS_API_KEY") or "").strip()
+    effective_key = db_key or env_key
+    source = "database" if db_key else ("env" if env_key else None)
+    return {
+        "google_maps_api_key": db_key,
+        "configured": bool(effective_key),
+        "source": source,
+        "using_env_fallback": bool(env_key and not db_key),
+    }
+
+
+@router.put("/integrations/google-maps", dependencies=[Depends(require_admin)])
+def update_google_maps_settings(payload: GoogleMapsSettingsPayload, db: Session = Depends(get_db)):
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not row:
+        row = models.AppSettings(id=1)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+    key = (payload.google_maps_api_key or "").strip()
+    row.google_maps_api_key = key or None
+    db.commit()
+    return {
+        "ok": True,
+        "configured": bool(row.google_maps_api_key),
+        "source": "database" if row.google_maps_api_key else None,
+    }
 
 
 @router.get("/pricing", dependencies=[Depends(require_admin)])

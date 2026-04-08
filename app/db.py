@@ -492,6 +492,23 @@ def ensure_parent_favorites_schema() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_parent_favorites_nanny_id ON parent_favorites(nanny_id)"))
 
 
+def ensure_app_settings_schema() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "app_settings"):
+            conn.execute(text("""
+                CREATE TABLE app_settings (
+                  id INTEGER NOT NULL PRIMARY KEY,
+                  google_maps_api_key TEXT
+                )
+            """))
+            return
+
+        cols = conn.execute(text("PRAGMA table_info(app_settings)"))
+        existing = {row[1] for row in cols.fetchall()}
+        if "google_maps_api_key" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN google_maps_api_key TEXT"))
+
+
 def ensure_pricing_settings_schema() -> None:
     with engine.begin() as conn:
         if not _table_exists(conn, "pricing_settings"):

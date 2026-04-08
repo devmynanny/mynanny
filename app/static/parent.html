@@ -154,6 +154,10 @@
     };
   </script>
 
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDN8McQ67u_CLvk-XG1bCZvRYVn9MTJZnI&libraries=places&callback=initMap" async defer></script>
+  <script>
+    loadGoogleMapsPlaces("initMap").catch((e) => {
+      alert(e?.message || "Failed to load Google Maps");
+    });
+  </script>
 </body>
 </html>
