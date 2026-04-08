@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from app.routes import router
-from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nanny_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_parent_favorites_schema, ensure_pricing_settings_schema, ensure_bootstrap_admin
+from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_parent_favorites_schema, ensure_pricing_settings_schema, ensure_bootstrap_admin
 from app.routers.public import _decode_access_token, ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app import models
 from app.request_context import auth_token_ctx
@@ -88,6 +88,7 @@ ensure_booking_requests_schema()
 ensure_nanny_availability_schema()
 ensure_bookings_schema()
 ensure_nanny_profiles_schema()
+ensure_parent_profiles_schema()
 ensure_admin_invites_schema()
 ensure_users_schema()
 ensure_languages_seed()
