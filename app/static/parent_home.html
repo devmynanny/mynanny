@@ -32,6 +32,10 @@
     .modal .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
     .weekdays{display:flex;flex-wrap:wrap;gap:8px}
     .weekdays label{display:flex;align-items:center;gap:6px;font-size:13px}
+    .choiceList{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+    .choiceHint{margin-left:24px;color:#666;font-size:13px}
+    .choicePanel{display:none;width:100%;margin-left:24px}
+    .choiceStatus{min-height:18px;color:#b91c1c;font-size:13px}
   </style>
 </head>
 <body>
@@ -51,6 +55,10 @@
       <div style="height:12px"></div>
 
       <button id="btnProfile" class="btn">My Profile</button>
+
+      <div style="height:12px"></div>
+
+      <button id="btnFavorites" class="btn">My Favourites</button>
     </div>
 
     <div id="msg" class="msg"></div>
@@ -109,7 +117,7 @@
       </div>
       <div class="actions">
         <button class="btn secondary" id="multiCancel" type="button">Cancel</button>
-        <button class="btn" id="multiContinue" type="button">Continue to candidates</button>
+        <button class="btn" id="multiContinue" type="button">Continue</button>
       </div>
     </div>
   </div>
@@ -124,9 +132,35 @@
     </div>
   </div>
 
+  <div id="addressChoiceModal" class="modalBack">
+    <div class="modal">
+      <h3>Booking address</h3>
+      <div class="muted">Should the booking take place at your default home address, or a different address?</div>
+      <div class="choiceList">
+        <label><input type="radio" name="bookingAddressChoice" value="default" checked> Default home address</label>
+        <div id="defaultAddressHint" class="choiceHint"></div>
+
+        <label><input type="radio" name="bookingAddressChoice" value="different"> Different address</label>
+        <div id="differentAddressPanel" class="choicePanel">
+          <label for="differentAddressSelect">Saved address</label>
+          <select id="differentAddressSelect"></select>
+          <div id="differentAddressHint" class="hint"></div>
+        </div>
+
+        <div id="addressChoiceStatus" class="choiceStatus"></div>
+      </div>
+      <div class="actions">
+        <button class="btn secondary" id="addressChoiceCancel" type="button">Cancel</button>
+        <button class="btn secondary" id="addressChoiceProfile" type="button">My Profile</button>
+        <button class="btn" id="addressChoiceContinue" type="button">Continue</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
   <script>
     (async () => {
+      const BOOKING_LOCATION_STORAGE_KEY = "parentBookingLocationSelection";
       const me = await requireMe();
       if (me.role !== "parent") { location.href = "/static/login.html"; return; }
 
@@ -139,6 +173,101 @@
       const requestTypeModal = document.getElementById("requestTypeModal");
       const multiDayModal = document.getElementById("multiDayModal");
       const permanentModal = document.getElementById("permanentModal");
+      const addressChoiceModal = document.getElementById("addressChoiceModal");
+      const addressChoiceStatus = document.getElementById("addressChoiceStatus");
+      const defaultAddressHint = document.getElementById("defaultAddressHint");
+      const differentAddressPanel = document.getElementById("differentAddressPanel");
+      const differentAddressSelect = document.getElementById("differentAddressSelect");
+      const differentAddressHint = document.getElementById("differentAddressHint");
+      const addressChoiceProfileBtn = document.getElementById("addressChoiceProfile");
+
+      let parentLocations = [];
+      let pendingCandidatesUrl = "/static/parent_candidates.html?mode=all";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function formatLocationLabel(location) {
+        if (!location) return "";
+        const label = String(location.label || "Address").trim();
+        const address = String(location.formatted_address || location.city || "").trim();
+        return address ? `${label} - ${address}` : label;
+      }
+
+      function getDefaultLocation() {
+        return parentLocations.find(location => location.is_default) || parentLocations[0] || null;
+      }
+
+      function getAlternateLocations() {
+        const defaultLocation = getDefaultLocation();
+        if (!defaultLocation) return [];
+        return parentLocations.filter(location => Number(location.id) !== Number(defaultLocation.id));
+      }
+
+      async function loadParentLocations() {
+        try {
+          const locations = await fetchJson("/parents/me/locations");
+          parentLocations = Array.isArray(locations) ? locations : [];
+        } catch {
+          parentLocations = [];
+        }
+      }
+
+      function updateAddressChoicePanel() {
+        const selectedChoice = document.querySelector("input[name=\"bookingAddressChoice\"]:checked")?.value || "default";
+        const showDifferent = selectedChoice === "different";
+        differentAddressPanel.style.display = showDifferent ? "block" : "none";
+        addressChoiceProfileBtn.style.display = showDifferent && !getAlternateLocations().length ? "inline-block" : "none";
+      }
+
+      function populateAddressChoiceModal() {
+        const defaultLocation = getDefaultLocation();
+        const alternateLocations = getAlternateLocations();
+        const defaultRadio = document.querySelector("input[name=\"bookingAddressChoice\"][value=\"default\"]");
+        const differentRadio = document.querySelector("input[name=\"bookingAddressChoice\"][value=\"different\"]");
+
+        defaultAddressHint.textContent = defaultLocation
+          ? formatLocationLabel(defaultLocation)
+          : "No saved home address yet. Add one in My Profile.";
+
+        differentAddressSelect.innerHTML = alternateLocations.map((location) => {
+          return `<option value="${location.id}">${escapeHtml(formatLocationLabel(location))}</option>`;
+        }).join("");
+        differentAddressHint.textContent = alternateLocations.length
+          ? "Choose one of your saved addresses."
+          : "No other saved addresses yet. Add one in My Profile.";
+
+        if (defaultRadio) defaultRadio.checked = true;
+        if (differentRadio) differentRadio.checked = false;
+        if (differentRadio) differentRadio.disabled = alternateLocations.length === 0;
+        if (differentAddressSelect) differentAddressSelect.disabled = alternateLocations.length === 0;
+        addressChoiceStatus.textContent = "";
+        updateAddressChoicePanel();
+      }
+
+      async function openAddressChoiceModal(nextUrl) {
+        pendingCandidatesUrl = nextUrl;
+        await loadParentLocations();
+        populateAddressChoiceModal();
+        addressChoiceModal.style.display = "flex";
+      }
+
+      function persistBookingLocation(location, choice) {
+        if (!location || location.id == null) {
+          localStorage.removeItem(BOOKING_LOCATION_STORAGE_KEY);
+          return;
+        }
+        localStorage.setItem(BOOKING_LOCATION_STORAGE_KEY, JSON.stringify({
+          choice,
+          location_id: Number(location.id),
+        }));
+      }
 
       document.getElementById("btnCandidates").addEventListener("click", () => {
         if (requestTypeModal) requestTypeModal.style.display = "flex";
@@ -146,6 +275,9 @@
 
       document.getElementById("btnProfile").addEventListener("click", () => {
         location.href = "/static/parent_profile.html";
+      });
+      document.getElementById("btnFavorites").addEventListener("click", () => {
+        location.href = "/static/parent_favorites.html";
       });
 
       document.getElementById("requestTypeCancel").addEventListener("click", () => {
@@ -155,7 +287,9 @@
         const val = document.querySelector("input[name=\"requestType\"]:checked")?.value;
         requestTypeModal.style.display = "none";
         if (val === "once") {
-          location.href = "/static/parent_candidates.html?mode=all";
+          openAddressChoiceModal("/static/parent_candidates.html?mode=all").catch(() => {
+            addressChoiceStatus.textContent = "Unable to load your saved addresses right now.";
+          });
         } else if (val === "multi") {
           multiDayModal.style.display = "flex";
         } else if (val === "permanent") {
@@ -175,11 +309,53 @@
         const payload = { startDate, weeks, days, startTime, endTime };
         localStorage.setItem("parentMultiDayRequest", JSON.stringify(payload));
         multiDayModal.style.display = "none";
-        location.href = "/static/parent_candidates.html?mode=all&multi=1";
+        openAddressChoiceModal("/static/parent_candidates.html?mode=all&multi=1").catch(() => {
+          addressChoiceStatus.textContent = "Unable to load your saved addresses right now.";
+        });
       });
 
       document.getElementById("permanentClose").addEventListener("click", () => {
         permanentModal.style.display = "none";
+      });
+      document.getElementById("addressChoiceCancel").addEventListener("click", () => {
+        addressChoiceModal.style.display = "none";
+      });
+      document.getElementById("addressChoiceProfile").addEventListener("click", () => {
+        location.href = "/static/parent_profile.html";
+      });
+      document.querySelectorAll("input[name=\"bookingAddressChoice\"]").forEach((input) => {
+        input.addEventListener("change", () => {
+          addressChoiceStatus.textContent = "";
+          updateAddressChoicePanel();
+        });
+      });
+      document.getElementById("addressChoiceContinue").addEventListener("click", () => {
+        const choice = document.querySelector("input[name=\"bookingAddressChoice\"]:checked")?.value || "default";
+        const defaultLocation = getDefaultLocation();
+        const alternateLocations = getAlternateLocations();
+
+        if (!defaultLocation) {
+          addressChoiceStatus.textContent = "Please add your home address in My Profile before continuing.";
+          addressChoiceProfileBtn.style.display = "inline-block";
+          return;
+        }
+
+        if (choice === "default") {
+          persistBookingLocation(defaultLocation, "default");
+          location.href = pendingCandidatesUrl;
+          return;
+        }
+
+        const selectedLocationId = Number(differentAddressSelect.value || 0);
+        const selectedLocation = alternateLocations.find((location) => Number(location.id) === selectedLocationId) || null;
+        if (!selectedLocation) {
+          addressChoiceStatus.textContent = "Please choose a different saved address.";
+          addressChoiceProfileBtn.style.display = "inline-block";
+          return;
+        }
+
+        persistBookingLocation(selectedLocation, "different");
+        location.href = pendingCandidatesUrl;
       });
       document.getElementById("btnJobs").addEventListener("click", () => {
         location.href = "/static/parent_jobs.html";

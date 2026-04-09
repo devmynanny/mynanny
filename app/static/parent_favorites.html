@@ -1,0 +1,460 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>My Favourites</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:1100px;width:min(1100px,100%)}
+    .top{display:flex;gap:12px;align-items:center}
+    .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .btn.secondary{background:#fff;border:1px solid #ccc}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin:10px 0 20px 0}
+    .muted{color:#666}
+    h1{margin:0;font-size:34px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:16px}
+    .tile{position:relative;border:1px solid #ddd;border-radius:14px;padding:16px;background:#fff}
+    .tile.selected{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,0.12)}
+    .tileHeader{display:flex;gap:12px;align-items:center}
+    .avatar{width:64px;height:64px;border-radius:12px;object-fit:cover;background:#f3f4f6;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;font-weight:600;color:#6b7280}
+    .tileTitle{font-weight:700;font-size:18px}
+    .heartMark{position:absolute;top:12px;right:12px;font-size:22px;color:#ef4444}
+    .tileCheck{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:8px;font-size:13px;color:#374151}
+    .tileCheck input{width:18px;height:18px;margin:0}
+    .summaryText{margin-top:10px;line-height:1.45;color:#374151}
+    .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px;margin:6px 6px 0 0}
+    .emptyState{border:1px dashed #d1d5db;border-radius:14px;padding:22px;margin-top:16px;background:#f9fafb}
+    .selectionBar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;padding:14px 16px;border:1px solid #ddd;border-radius:14px;background:#fff}
+    .selectionBar label{display:flex;align-items:center;gap:8px;cursor:pointer}
+    .selectionBar input{width:18px;height:18px;margin:0}
+    .previewModal{background:#fff;border-radius:12px;width:min(640px,100%);border:1px solid #ddd;padding:18px;position:relative}
+    .previewHeader{display:flex;gap:12px;align-items:center}
+    .previewTitle{font-weight:700;font-size:20px}
+    .previewSection{margin-top:12px}
+    .previewSectionTitle{font-weight:600;margin-bottom:6px}
+    .trustPills{display:flex;flex-wrap:wrap;gap:8px}
+    .trustPill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px}
+    .infoGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+    .infoItem{font-size:14px;color:#444}
+    .infoItem strong{color:#1f2937}
+    .workList{display:grid;gap:8px}
+    .workItem{border:1px solid #e5e7eb;border-radius:10px;padding:8px}
+    .workRole{font-weight:600}
+    .workMeta{font-size:13px;color:#555}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999}
+    .heartBtn{position:absolute;top:12px;right:12px;border:none;background:transparent;font-size:26px;cursor:pointer}
+    .heartBtn.off{color:#9ca3af}
+    .heartBtn.on{color:#ef4444}
+  </style>
+</head>
+<body>
+  <div id="topbar" class="topbar"></div>
+  <div class="top">
+    <button class="btn back-btn" id="backBtn" type="button">Back to home</button>
+    <h1>My Favourites</h1>
+  </div>
+
+  <div class="muted">Your saved favourite nannies appear here, ordered from closest to furthest from your location.</div>
+  <div id="selectionBar" class="selectionBar" style="display:none;">
+    <label>
+      <input id="selectAllFavorites" type="checkbox" />
+      <span>Select all favourites</span>
+    </label>
+    <div id="selectionSummary" class="muted">No nannies selected.</div>
+  </div>
+  <div id="status" class="muted" style="margin-top:12px;"></div>
+  <div id="favoritesList" class="grid"></div>
+  <div id="selectionActions" style="margin-top:16px; display:none;">
+    <button class="btn" id="selectDateBtn" type="button" disabled>Select date</button>
+  </div>
+
+  <div id="previewModal" class="modalBack">
+    <div class="previewModal">
+      <button id="favoriteBtn" class="heartBtn off" type="button" aria-label="Favourite">♥</button>
+      <div class="previewHeader">
+        <div id="previewAvatar" class="avatar"></div>
+        <div>
+          <div id="previewName" class="previewTitle"></div>
+          <div id="previewMeta" class="muted"></div>
+        </div>
+      </div>
+      <div id="previewBio" style="margin-top:12px"></div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Trust and verification</div>
+        <div id="previewTrust" class="trustPills"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Profile details</div>
+        <div id="previewDetails" class="infoGrid"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Work history</div>
+        <div id="previewWorkHistory" class="workList muted"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Proficiencies</div>
+        <div id="previewProficiencies"></div>
+      </div>
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
+        <button class="btn" id="startBookingBtn" type="button">Choose dates to book</button>
+        <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=2"></script>
+  <script>
+    const FAVORITE_BROADCAST_SELECTION_KEY = "parentFavoriteBroadcastSelection";
+    let favorites = new Set();
+    let favoriteResults = [];
+    let previewNanny = null;
+    let selectedBroadcastNannies = new Set();
+
+    async function guard() {
+      const me = await requireMe();
+      if (me.role !== "parent") {
+        location.href = "/static/login.html";
+        throw new Error("Wrong role");
+      }
+      return me;
+    }
+
+    function escapeHtml(v) {
+      return String(v)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatName(fullName) {
+      const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
+      if (parts.length <= 1) return parts[0] || "";
+      return `${parts[0]} ${parts[parts.length - 1][0] || ""}.`;
+    }
+
+    function formatFavoriteCount(count) {
+      return `${count} favourite ${count === 1 ? "nanny" : "nannies"}`;
+    }
+
+    function readFavoriteBroadcastSelection() {
+      try {
+        const raw = localStorage.getItem(FAVORITE_BROADCAST_SELECTION_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        const ids = Array.isArray(parsed?.nanny_ids) ? parsed.nanny_ids : [];
+        return ids
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0);
+      } catch {
+        return [];
+      }
+    }
+
+    function persistFavoriteBroadcastSelection() {
+      if (!selectedBroadcastNannies.size) {
+        localStorage.removeItem(FAVORITE_BROADCAST_SELECTION_KEY);
+        return;
+      }
+      localStorage.setItem(FAVORITE_BROADCAST_SELECTION_KEY, JSON.stringify({
+        nanny_ids: Array.from(selectedBroadcastNannies),
+      }));
+    }
+
+    function updateSelectionUi() {
+      const count = selectedBroadcastNannies.size;
+      const total = favoriteResults.length;
+      const selectionBar = document.getElementById("selectionBar");
+      const selectionActions = document.getElementById("selectionActions");
+      const summary = document.getElementById("selectionSummary");
+      const selectAll = document.getElementById("selectAllFavorites");
+      const selectDateBtn = document.getElementById("selectDateBtn");
+
+      const hasResults = total > 0;
+      selectionBar.style.display = hasResults ? "flex" : "none";
+      selectionActions.style.display = hasResults ? "block" : "none";
+      if (summary) {
+        summary.textContent = count
+          ? `${count} of ${total} favourite ${total === 1 ? "nanny" : "nannies"} selected for the broadcast`
+          : "No nannies selected.";
+      }
+      if (selectAll) {
+        selectAll.checked = hasResults && count === total;
+        selectAll.indeterminate = count > 0 && count < total;
+      }
+      if (selectDateBtn) {
+        selectDateBtn.disabled = count === 0;
+      }
+    }
+
+    async function loadFavoriteIds() {
+      const data = await fetchJson("/parents/me/favorites");
+      favorites = new Set((data?.nanny_ids || []).map(Number));
+      return favorites;
+    }
+
+    function buildTile(n) {
+      const name = formatName(n.name || ("Nanny " + n.nanny_id));
+      const initials = (name || "N").trim().split(/\s+/).map((p) => p[0]).join("").slice(0,2).toUpperCase();
+      const avatar = n.profile_photo_url
+        ? `<img class="avatar" src="${n.profile_photo_url}" alt="${escapeHtml(name)}" />`
+        : `<div class="avatar">${escapeHtml(initials)}</div>`;
+      const distance = n.distance_km != null ? `${Number(n.distance_km).toFixed(2)} km away` : "Distance unavailable";
+      const locationHint = n.location_hint ? ` • ${escapeHtml(n.location_hint)}` : "";
+      const isSelected = selectedBroadcastNannies.has(Number(n.nanny_id));
+      return `
+        <div class="tile ${isSelected ? "selected" : ""}">
+          <label class="tileCheck">
+            <input class="broadcastSelect" data-nanny-id="${n.nanny_id}" type="checkbox" ${isSelected ? "checked" : ""} />
+            <span>Select</span>
+          </label>
+          <div class="heartMark">♥</div>
+          <div class="tileHeader">
+            ${avatar}
+            <div>
+              <div class="tileTitle">${escapeHtml(name)}</div>
+              <div class="muted">⭐ ${escapeHtml(String(n.average_rating_12m ?? "New"))}${n.average_rating_12m != null ? ` (${escapeHtml(String(n.review_count_12m ?? 0))})` : ""}</div>
+              <div class="muted">${escapeHtml(distance)}${locationHint}</div>
+            </div>
+          </div>
+          <div class="summaryText">${escapeHtml(n.profile_summary || n.bio || "No summary yet.")}</div>
+          <div style="margin-top:8px;">${(n.tags || []).slice(0, 4).map((tag) => `<span class="pill">${escapeHtml(tag.name || "")}</span>`).join("")}</div>
+          <div class="actions">
+            <button class="btn previewBtn" data-nanny-id="${n.nanny_id}" type="button">Preview</button>
+            <button class="btn secondary removeFavoriteBtn" data-nanny-id="${n.nanny_id}" type="button">Remove</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function updateFavoriteBtn(nannyId) {
+      const btn = document.getElementById("favoriteBtn");
+      if (!btn) return;
+      const isFav = favorites.has(nannyId);
+      btn.classList.toggle("on", isFav);
+      btn.classList.toggle("off", !isFav);
+    }
+
+    function openPreview(n) {
+      previewNanny = n;
+      const name = formatName(n.name || ("Nanny " + n.nanny_id));
+      const initials = (name || "N").trim().split(/\s+/).map((p) => p[0]).join("").slice(0,2).toUpperCase();
+      const avatarEl = document.getElementById("previewAvatar");
+      if (n.profile_photo_url) {
+        avatarEl.innerHTML = `<img src="${n.profile_photo_url}" alt="${escapeHtml(name)}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`;
+      } else {
+        avatarEl.textContent = initials;
+      }
+      document.getElementById("previewName").textContent = name;
+      const meta = [];
+      if (n.average_rating_12m != null) meta.push(`⭐ ${n.average_rating_12m} (${n.review_count_12m ?? 0})`);
+      else meta.push("⭐ New");
+      if (n.distance_km != null) meta.push(`${Number(n.distance_km).toFixed(2)} km away`);
+      if (n.location_hint) meta.push(n.location_hint);
+      document.getElementById("previewMeta").textContent = meta.join(" • ");
+
+      const summary = n.profile_summary || n.bio || "";
+      const rawBio = (n.bio || "").trim();
+      document.getElementById("previewBio").innerHTML = summary && rawBio && summary !== rawBio
+        ? `<div class="summaryText">${escapeHtml(summary)}</div><div class="summaryText" style="color:#666;"><strong>Bio:</strong> ${escapeHtml(rawBio)}</div>`
+        : `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
+
+      const trustBits = [
+        n.approved ? "Approved by My Nanny" : "Pending approval",
+        n.has_identity_document ? "Identity document on file" : "Identity document pending",
+        n.has_passport_document ? "Passport document on file" : "Passport document pending",
+        (n.review_count_12m || 0) > 0 ? `${n.review_count_12m} recent review(s)` : "No recent reviews yet",
+      ];
+      document.getElementById("previewTrust").innerHTML = trustBits.map((v) => `<span class="trustPill">${escapeHtml(v)}</span>`).join("");
+
+      const details = [
+        ["Completed jobs", n.completed_jobs_count ?? 0],
+        ["Age", n.age ?? "Not provided"],
+        ["Nationality", n.nationality || "Not provided"],
+        ["Languages", (n.languages || []).map((l) => l.name).join(", ") || "Not provided"],
+        ["Qualifications", (n.qualifications || []).map((q) => q.name).join(", ") || "Not provided"],
+      ];
+      document.getElementById("previewDetails").innerHTML = details
+        .map(([label, value]) => `<div class="infoItem"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(String(value))}</div>`)
+        .join("");
+
+      const jobs = Array.isArray(n.previous_jobs) ? n.previous_jobs.filter(Boolean) : [];
+      document.getElementById("previewWorkHistory").innerHTML = jobs.length
+        ? jobs.slice(0, 3).map((job) => `
+            <div class="workItem">
+              <div class="workRole">${escapeHtml(job.role || "Previous role")}</div>
+              <div class="workMeta">${escapeHtml(job.employer || "Employer not listed")} • ${escapeHtml(job.period || "Period not listed")}</div>
+            </div>
+          `).join("")
+        : "No previous positions listed yet.";
+
+      const proficiencies = [
+        ...(n.tags || []).map((tag) => tag.name).filter(Boolean),
+        ...(n.qualifications || []).map((item) => item.name).filter(Boolean),
+        ...(n.languages || []).map((item) => item.name).filter(Boolean),
+      ];
+      document.getElementById("previewProficiencies").innerHTML = proficiencies.length
+        ? proficiencies.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("")
+        : "No proficiencies listed.";
+
+      updateFavoriteBtn(n.nanny_id);
+      document.getElementById("previewModal").style.display = "flex";
+    }
+
+    function closePreview() {
+      document.getElementById("previewModal").style.display = "none";
+      previewNanny = null;
+    }
+
+    function renderFavorites() {
+      const list = document.getElementById("favoritesList");
+      list.innerHTML = "";
+      if (!favoriteResults.length) {
+        list.innerHTML = `
+          <div class="emptyState">
+            <div style="font-weight:700;">No favourite nannies yet.</div>
+            <div class="muted" style="margin-top:6px;">Tap the heart on a nanny profile to save them here.</div>
+            <div style="margin-top:12px;">
+              <button class="btn" id="findNanniesBtn" type="button">Find nannies</button>
+            </div>
+          </div>
+        `;
+        const btn = document.getElementById("findNanniesBtn");
+        if (btn) {
+          btn.addEventListener("click", () => {
+            location.href = "/static/parent_candidates.html?mode=all";
+          });
+        }
+        updateSelectionUi();
+        return;
+      }
+
+      favoriteResults.forEach((nanny) => {
+        list.insertAdjacentHTML("beforeend", buildTile(nanny));
+      });
+
+      list.querySelectorAll(".broadcastSelect").forEach((box) => {
+        box.addEventListener("change", () => {
+          const nannyId = Number(box.dataset.nannyId);
+          if (box.checked) selectedBroadcastNannies.add(nannyId);
+          else selectedBroadcastNannies.delete(nannyId);
+          persistFavoriteBroadcastSelection();
+          renderFavorites();
+        });
+      });
+
+      list.querySelectorAll(".previewBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const nannyId = Number(btn.dataset.nannyId);
+          const match = favoriteResults.find((item) => item.nanny_id === nannyId);
+          if (match) openPreview(match);
+        });
+      });
+
+      list.querySelectorAll(".removeFavoriteBtn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const nannyId = Number(btn.dataset.nannyId);
+          btn.disabled = true;
+          try {
+            await fetchJson(`/parents/me/favorites/${nannyId}`, { method: "DELETE" });
+            favorites.delete(nannyId);
+            favoriteResults = favoriteResults.filter((item) => item.nanny_id !== nannyId);
+            selectedBroadcastNannies.delete(nannyId);
+            persistFavoriteBroadcastSelection();
+            renderFavorites();
+            document.getElementById("status").textContent = favoriteResults.length
+              ? formatFavoriteCount(favoriteResults.length)
+              : "No favourite nannies yet.";
+          } catch (e) {
+            btn.disabled = false;
+            alert(e?.message || "Failed to remove favourite");
+          }
+        });
+      });
+    }
+
+    async function loadFavoritesPage() {
+      document.getElementById("status").textContent = "Loading favourites...";
+      await loadFavoriteIds();
+      if (!favorites.size) {
+        favoriteResults = [];
+        renderFavorites();
+        document.getElementById("status").textContent = "No favourite nannies yet.";
+        return;
+      }
+
+      const data = await fetchJson("/parents/me/favorites/details");
+      const allResults = Array.isArray(data?.results) ? data.results : [];
+      favoriteResults = allResults.filter((item) => favorites.has(Number(item.nanny_id)));
+      selectedBroadcastNannies = new Set(
+        Array.from(selectedBroadcastNannies).filter((id) => favoriteResults.some((item) => Number(item.nanny_id) === id))
+      );
+      persistFavoriteBroadcastSelection();
+
+      renderFavorites();
+      document.getElementById("status").textContent = favoriteResults.length
+        ? formatFavoriteCount(favoriteResults.length)
+        : "No favourite nannies available right now.";
+      updateSelectionUi();
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      location.href = "/static/parent_home.html";
+    });
+    document.getElementById("selectAllFavorites").addEventListener("change", (event) => {
+      if (event.target.checked) {
+        selectedBroadcastNannies = new Set(favoriteResults.map((item) => Number(item.nanny_id)));
+      } else {
+        selectedBroadcastNannies = new Set();
+      }
+      persistFavoriteBroadcastSelection();
+      renderFavorites();
+    });
+    document.getElementById("selectDateBtn").addEventListener("click", () => {
+      if (!selectedBroadcastNannies.size) return;
+      persistFavoriteBroadcastSelection();
+      location.href = "/static/parent_candidates.html?mode=all&favorite_broadcast=1";
+    });
+    document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
+    document.getElementById("previewModal").addEventListener("click", (e) => {
+      if (e.target.id === "previewModal") closePreview();
+    });
+    document.getElementById("favoriteBtn").addEventListener("click", async () => {
+      if (!previewNanny) return;
+      const nannyId = previewNanny.nanny_id;
+      if (!favorites.has(nannyId)) return;
+      try {
+        await fetchJson(`/parents/me/favorites/${nannyId}`, { method: "DELETE" });
+        favorites.delete(nannyId);
+        favoriteResults = favoriteResults.filter((item) => item.nanny_id !== nannyId);
+        selectedBroadcastNannies.delete(nannyId);
+        persistFavoriteBroadcastSelection();
+        closePreview();
+        renderFavorites();
+        document.getElementById("status").textContent = favoriteResults.length
+          ? formatFavoriteCount(favoriteResults.length)
+          : "No favourite nannies yet.";
+      } catch (e) {
+        alert(e?.message || "Failed to remove favourite");
+      }
+    });
+    document.getElementById("startBookingBtn").addEventListener("click", () => {
+      if (previewNanny?.nanny_id) {
+        selectedBroadcastNannies = new Set([Number(previewNanny.nanny_id)]);
+        persistFavoriteBroadcastSelection();
+      }
+      location.href = "/static/parent_candidates.html?mode=all&favorite_broadcast=1";
+    });
+
+    guard().then(() => {
+      selectedBroadcastNannies = new Set(readFavoriteBroadcastSelection());
+      loadFavoritesPage().catch((e) => {
+        document.getElementById("status").textContent = e?.message || "Failed to load favourites.";
+      });
+    }).catch(() => {});
+  </script>
+</body>
+</html>

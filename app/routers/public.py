@@ -3271,16 +3271,12 @@ def search_nannies_by_time(
             search_lat = default_loc.lat
             search_lng = default_loc.lng
 
-    max_distance = payload.max_distance_km if payload.max_distance_km is not None else 50
-    if search_lat is None or search_lng is None:
-        max_distance = None
-
     results = _search_nannies_by_area(
         db=db,
         parent_area_id=None,
         parent_lat=search_lat,
         parent_lng=search_lng,
-        max_distance_km=max_distance,
+        max_distance_km=payload.max_distance_km,
         min_rating=None,
         tag_ids=None,
         qualification_ids=None,
@@ -3669,6 +3665,60 @@ def list_parent_favorites(authorization: Optional[str] = Header(default=None), d
         .all()
     )
     return {"nanny_ids": [r.nanny_id for r in rows]}
+
+
+@router.get("/parents/me/favorites/details", response_model=SearchNanniesResponse)
+def list_parent_favorite_nannies(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    favorite_ids = [
+        int(row.nanny_id)
+        for row in (
+            db.query(models.ParentFavorite)
+            .filter(models.ParentFavorite.parent_user_id == user.id)
+            .all()
+        )
+    ]
+
+    if not favorite_ids:
+        return {
+            "results": [],
+            "code": None,
+            "message": None,
+            "parent_profile_complete": _is_profile_complete(db, user.id),
+        }
+
+    default_loc = (
+        db.query(models.ParentLocation)
+        .filter(models.ParentLocation.parent_user_id == user.id, models.ParentLocation.is_default == True)
+        .first()
+    )
+    search_lat = getattr(default_loc, "lat", None) if default_loc else None
+    search_lng = getattr(default_loc, "lng", None) if default_loc else None
+
+    results = _search_nannies_by_area(
+        db=db,
+        parent_area_id=None,
+        parent_lat=search_lat,
+        parent_lng=search_lng,
+        max_distance_km=None,
+        min_rating=None,
+        tag_ids=None,
+        qualification_ids=None,
+        language_ids=None,
+        min_age=None,
+        max_age=None,
+    )
+    filtered = [item for item in results if int(item.get("nanny_id") or 0) in favorite_ids]
+
+    return {
+        "results": filtered,
+        "code": None,
+        "message": None,
+        "parent_profile_complete": _is_profile_complete(db, user.id),
+    }
 
 
 @router.post("/parents/me/favorites/{nanny_id}")

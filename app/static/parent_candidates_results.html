@@ -2,10 +2,9 @@
 <html>
 <head>
   <link rel="stylesheet" href="/static/theme.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.css" />
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>My Nanny, choose dates</title>
+  <title>My Nanny, available nannies</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:1100px;width:min(1100px,100%)}
     .top{display:flex;gap:12px;align-items:center}
@@ -92,81 +91,50 @@
 <body>
   <div id="topbar" class="topbar"></div>
   <div class="top">
-    <button class="btn back-btn" onclick="location.href='/static/parent_home.html'">Back to home</button>
-    <h1>Choose Booking Dates</h1>
-  </div>
-
-  <div class="search-bar">
-    <div>
-      <label id="searchDateLabel" for="searchDate">Date</label>
-      <input id="searchDate" type="date" />
-    </div>
-    <div>
-      <label for="searchStartTime">Start time</label>
-      <input id="searchStartTime" type="time" />
-    </div>
-    <div>
-      <label for="searchEndTime">End time</label>
-      <input id="searchEndTime" type="time" />
-    </div>
-    <button class="btn" id="legacySearchBtn" type="button">Search</button>
+    <button class="btn back-btn" id="backToDatesBtn" type="button">Back to dates</button>
+    <h1>Available Nannies</h1>
   </div>
 
   <div class="card" style="margin-top:12px;">
-    <h3 style="margin:0 0 10px;">Pick a time range</h3>
-    <div id="activeBookingLocation" class="muted" style="margin-bottom:10px;"></div>
-    <div id="favoriteBroadcastNotice" class="muted" style="margin-bottom:10px; display:none;"></div>
-    <div class="calendarIntro">
-      <div class="calendarHint muted">Select one or more dates on the month calendar, even across different months. Then click <strong>Apply selected dates</strong> and set the arrival and finishing time for each date below.</div>
-    </div>
-    <div id="searchCalendar"></div>
-    <div class="calendarActions" style="margin-top:12px;">
-      <button class="btn" id="applySelectedDatesBtn" type="button">Apply selected dates</button>
-      <button class="btn secondary" id="clearSelectedDatesBtn" type="button">Clear dates</button>
-    </div>
-    <div class="selectedDatesPanel">
-      <div style="font-weight:600;">Selected dates and times</div>
-      <div id="selectedDatesSummary" class="muted" style="margin-top:6px;">No dates selected yet.</div>
-      <div id="selectedDateChips" class="selectedDateChips"></div>
-      <div id="selectedSlotRows" class="slotRows"></div>
-      <div style="margin-top:12px;">
-        <button class="btn primary" id="searchBtn" type="button">Continue to available nannies</button>
+    <div style="font-weight:700;">Advanced search</div>
+    <div class="muted" style="margin-top:4px;">Refine the nanny list using the filters below.</div>
+    <div id="favoriteBroadcastBanner" class="muted" style="margin-top:8px; display:none;"></div>
+    <div class="filters">
+      <div class="filter-group">
+        <label>Favourites</label>
+        <label><input id="filterFavorites" type="checkbox" /> Only favourites</label>
       </div>
+      <div class="filter-group">
+        <label>Rated</label>
+        <label><input id="filterRated" type="checkbox" /> Rated only</label>
+      </div>
+      <div class="filter-group" style="min-width:280px;">
+        <label>Tags</label>
+        <div id="filterTags" class="tag-filters"></div>
+      </div>
+    </div>
+    <div style="margin-top:12px;">
+      <button class="btn" id="requestSelectedBtn" type="button" disabled>Request selected nannies</button>
     </div>
   </div>
 
-  <div id="advancedSearchPreview" class="filters" style="display:none;">
-    <div class="filter-group">
-      <label>Favourites</label>
-      <label><input id="filterFavorites" type="checkbox" /> Only favourites</label>
+  <div class="card" style="margin-top:16px;">
+    <div class="calendarIntro">
+      <div class="calendarHint">
+        <h3 style="margin:0 0 10px;">Selected schedule</h3>
+        <div id="activeBookingLocation" class="muted" style="margin-bottom:8px;"></div>
+        <div class="muted">These dates and times are being used to match available nannies.</div>
+      </div>
+      <div class="calendarActions">
+        <button class="btn secondary" id="editDatesBtn" type="button">Edit dates and times</button>
+      </div>
     </div>
-    <div class="filter-group">
-      <label>Rated</label>
-      <label><input id="filterRated" type="checkbox" /> Rated only</label>
-    </div>
-    <div class="filter-group">
-      <label for="filterDistance">Distance</label>
-      <select id="filterDistance">
-        <option value="">Any distance</option>
-        <option value="5">Up to 5 km</option>
-        <option value="10">Up to 10 km</option>
-        <option value="20">Up to 20 km</option>
-        <option value="50">Up to 50 km</option>
-        <option value="100">Up to 100 km</option>
-      </select>
-    </div>
-    <div class="filter-group" style="min-width:280px;">
-      <label>Tags</label>
-      <div id="filterTags" class="tag-filters"></div>
-    </div>
-  </div>
-  <div style="margin-top:12px; display:none;">
-    <button class="btn" id="requestSelectedBtn" type="button" disabled>Request selected nannies</button>
+    <div id="multiDayNotice" class="muted" style="margin-top:6px; display:none;"></div>
+    <div id="resultsScheduleSummary" class="scheduleList" style="margin-top:12px;"></div>
   </div>
 
   <div id="status" class="muted" style="margin-top:10px"></div>
-  <div id="multiDayNotice" class="muted" style="margin-top:6px; display:none;"></div>
-  <div id="list" class="grid" style="display:none;"></div>
+  <div id="list" class="grid"></div>
 
   <div id="bookingModal" class="modalBack">
     <div class="modal">
@@ -257,7 +225,6 @@
   </div>
 
   <script src="/static/app.js?v=2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js"></script>
   <script>
     const BOOKING_LOCATION_STORAGE_KEY = "parentBookingLocationSelection";
     const CANDIDATE_SEARCH_STATE_KEY = "parentCandidateSearchState";
@@ -290,6 +257,8 @@
     }
 
     let selectedNannies = new Set();
+    let favoriteBroadcastIds = new Set();
+    let favoriteBroadcastActive = false;
     let searchCalendar = null;
     let selectedCalendarDates = new Set();
 
@@ -390,28 +359,6 @@
       }
     }
 
-    function persistCandidateSearchState(source = "once") {
-      localStorage.setItem(CANDIDATE_SEARCH_STATE_KEY, JSON.stringify({
-        source: source === "multi" ? "multi" : "once",
-        slots: sortSlots(bookingState.slots).map((slot) => ({
-          date: slot.date,
-          start_time: slot.start_time,
-          end_time: slot.end_time,
-        })),
-      }));
-    }
-
-    function hydrateStoredCandidateSearchState() {
-      const state = readCandidateSearchState();
-      if (!state || !Array.isArray(state.slots) || !state.slots.length) return false;
-      selectedCalendarDates = new Set(state.slots.map((slot) => slot.date));
-      setBookingSlots(state.slots);
-      renderCalendarSelectedDates();
-      updateSelectedDatesSummary();
-      renderSelectedSlotRows();
-      return true;
-    }
-
     function readFavoriteBroadcastSelection() {
       try {
         const raw = localStorage.getItem(FAVORITE_BROADCAST_SELECTION_KEY);
@@ -426,18 +373,46 @@
       }
     }
 
-    function renderFavoriteBroadcastContext() {
-      const notice = document.getElementById("favoriteBroadcastNotice");
-      const searchBtn = document.getElementById("searchBtn");
-      const params = new URLSearchParams(window.location.search);
-      const selectedIds = readFavoriteBroadcastSelection();
-      const active = params.get("favorite_broadcast") === "1" && selectedIds.length > 0;
-      if (!notice || !searchBtn) return;
-      notice.style.display = active ? "block" : "none";
-      notice.textContent = active
-        ? `${selectedIds.length} favourite ${selectedIds.length === 1 ? "nanny is" : "nannies are"} selected for this job broadcast.`
-        : "";
-      searchBtn.textContent = active ? "Continue to selected favourites" : "Continue to available nannies";
+    function getBackToDatesHref(searchState) {
+      const params = new URLSearchParams({ mode: "all", restore: "1" });
+      if (searchState?.source === "multi") params.set("multi", "1");
+      if (favoriteBroadcastActive && favoriteBroadcastIds.size) params.set("favorite_broadcast", "1");
+      return `/static/parent_candidates.html?${params.toString()}`;
+    }
+
+    function renderFavoriteBroadcastBanner() {
+      const banner = document.getElementById("favoriteBroadcastBanner");
+      if (!banner) return;
+      banner.style.display = "none";
+      banner.textContent = "";
+      if (!favoriteBroadcastActive || !favoriteBroadcastIds.size) return;
+      const count = favoriteBroadcastIds.size;
+      banner.textContent = `Showing the ${count} selected favourite ${count === 1 ? "nanny" : "nannies"} for this broadcast.`;
+      banner.style.display = "block";
+    }
+
+    function renderResultsSchedule() {
+      const summaryEl = document.getElementById("resultsScheduleSummary");
+      if (!summaryEl) return;
+      summaryEl.innerHTML = renderScheduleSummary(bookingState.slots);
+    }
+
+    function renderMultiDayNoticeFromState(searchState) {
+      const notice = document.getElementById("multiDayNotice");
+      if (!notice) return;
+      notice.style.display = "none";
+      notice.textContent = "";
+      if (searchState?.source !== "multi") return;
+      try {
+        const raw = localStorage.getItem("parentMultiDayRequest");
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
+        const weeks = Number(data?.weeks || 1);
+        const timeRange = (data?.startTime || data?.endTime) ? `${data?.startTime || "--:--"}–${data?.endTime || "--:--"}` : "any time";
+        notice.textContent = `Multiple days: ${days} for ${weeks} week${weeks > 1 ? "s" : ""}, ${timeRange}.`;
+        notice.style.display = "block";
+      } catch {}
     }
 
     function renderCalendarSelectedDates() {
@@ -982,6 +957,9 @@
         status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
       }
       document.getElementById("submitBookingBtn").disabled = true;
+      if (favoriteBroadcastActive) {
+        localStorage.removeItem(FAVORITE_BROADCAST_SELECTION_KEY);
+      }
       setTimeout(closeBookingModal, 2200);
     }
 
@@ -1088,17 +1066,16 @@
       let filtered = [...results];
       const onlyFav = document.getElementById("filterFavorites").checked;
       const onlyRated = document.getElementById("filterRated").checked;
-      const maxDist = Number(document.getElementById("filterDistance").value || 0);
       const selectedTags = new Set(getSelectedTagNames());
 
+      if (favoriteBroadcastActive && favoriteBroadcastIds.size) {
+        filtered = filtered.filter((n) => favoriteBroadcastIds.has(Number(n.nanny_id)));
+      }
       if (onlyFav) {
         filtered = filtered.filter(n => favorites.has(n.nanny_id));
       }
       if (onlyRated) {
         filtered = filtered.filter(n => n.average_rating_12m !== null && n.average_rating_12m !== undefined);
-      }
-      if (maxDist) {
-        filtered = filtered.filter(n => n.distance_km !== null && n.distance_km !== undefined && Number(n.distance_km) <= maxDist);
       }
       if (selectedTags.size > 0) {
         filtered = filtered.filter(n => {
@@ -1149,7 +1126,8 @@
 
     function refreshFilters(profileComplete, canBook) {
       const filtered = applyFilters(lastResults);
-      document.getElementById("status").textContent = filtered.length + " nannies found";
+      const label = favoriteBroadcastActive ? "selected favourite nannies available" : "nannies found";
+      document.getElementById("status").textContent = `${filtered.length} ${label}`;
       renderResults(filtered, profileComplete, canBook);
     }
 
@@ -1206,8 +1184,7 @@
         lng,
         start_dt: slotRange.start_dt,
         end_dt: slotRange.end_dt,
-        slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
-        max_distance_km: 50
+        slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at }))
       };
       const data = await fetchJson("/nannies/search-by-time", {
         method: "POST",
@@ -1219,6 +1196,13 @@
 
       const results = data.results || [];
       lastResults = Array.isArray(results) ? results : [];
+      if (favoriteBroadcastActive && favoriteBroadcastIds.size) {
+        selectedNannies = new Set(
+          lastResults
+            .filter((item) => favoriteBroadcastIds.has(Number(item.nanny_id)))
+            .map((item) => Number(item.nanny_id))
+        );
+      }
       const canBook = data?.parent_profile_complete !== false;
       lastProfileComplete = !!profileComplete;
       lastCanBook = !!canBook;
@@ -1303,36 +1287,6 @@
       }
     });
 
-    document.getElementById("searchBtn").addEventListener("click", () => {
-      const slotError = validateSlotRange(bookingState.slots);
-      if (slotError) {
-        document.getElementById("status").textContent = slotError;
-        return;
-      }
-      const params = new URLSearchParams(window.location.search);
-      persistCandidateSearchState(params.get("multi") === "1" ? "multi" : "once");
-      const nextParams = new URLSearchParams();
-      if (params.get("favorite_broadcast") === "1" && readFavoriteBroadcastSelection().length) {
-        nextParams.set("favorite_broadcast", "1");
-      }
-      const nextUrl = nextParams.toString()
-        ? `/static/parent_candidates_results.html?${nextParams.toString()}`
-        : "/static/parent_candidates_results.html";
-      location.href = nextUrl;
-    });
-    document.getElementById("applySelectedDatesBtn").addEventListener("click", () => {
-      applySelectedDatesToSlots();
-    });
-    document.getElementById("clearSelectedDatesBtn").addEventListener("click", () => {
-      selectedCalendarDates = new Set();
-      setBookingSlots([]);
-      localStorage.removeItem(CANDIDATE_SEARCH_STATE_KEY);
-      renderCalendarSelectedDates();
-      updateSelectedDatesSummary();
-      renderSelectedSlotRows();
-      document.getElementById("status").textContent = "Selected dates cleared.";
-    });
-
     document.getElementById("requestSelectedBtn").addEventListener("click", () => {
       const ids = Array.from(selectedNannies);
       if (!ids.length) return;
@@ -1340,11 +1294,41 @@
     });
 
     guard().then(async () => {
+      const searchState = readCandidateSearchState();
+      if (!searchState || !Array.isArray(searchState.slots) || !searchState.slots.length) {
+        location.href = "/static/parent_candidates.html?mode=all";
+        return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      favoriteBroadcastIds = new Set(readFavoriteBroadcastSelection());
+      favoriteBroadcastActive = params.get("favorite_broadcast") === "1" && favoriteBroadcastIds.size > 0;
+
+      setBookingSlots(searchState.slots);
+      renderResultsSchedule();
+      renderMultiDayNoticeFromState(searchState);
+      renderFavoriteBroadcastBanner();
+
+      const backHref = getBackToDatesHref(searchState);
+      const backToDatesBtn = document.getElementById("backToDatesBtn");
+      if (backToDatesBtn) {
+        backToDatesBtn.addEventListener("click", () => {
+          location.href = backHref;
+        });
+      }
+      const editDatesBtn = document.getElementById("editDatesBtn");
+      if (editDatesBtn) {
+        editDatesBtn.addEventListener("click", () => {
+          location.href = backHref;
+        });
+      }
+
       await loadFavorites();
       await loadParentLocations();
       try {
         const tagData = await fetchJson("/nanny-tags");
-        tagOptions = Array.isArray(tagData) ? tagData : [];
+        tagOptions = (Array.isArray(tagData) ? tagData : []).filter((tag) => {
+          return String(tag?.name || "").trim().toLowerCase() !== "homework help";
+        });
       } catch {
         tagOptions = [];
       }
@@ -1352,49 +1336,14 @@
       if (tagRoot && tagOptions.length) {
         tagRoot.innerHTML = tagOptions.map(t => `<label><input type="checkbox" value="${escapeHtml(t.name)}"> ${escapeHtml(t.name)}</label>`).join("");
       }
-      document.querySelectorAll("#filterFavorites,#filterRated,#filterDistance,#filterTags input[type=\"checkbox\"]").forEach(el => {
+      document.querySelectorAll("#filterFavorites,#filterRated,#filterTags input[type=\"checkbox\"]").forEach(el => {
         el.addEventListener("change", () => {
           refreshFilters(lastProfileComplete, lastCanBook);
         });
       });
-      const params = new URLSearchParams(window.location.search);
-      let multiData = null;
-      const restoredFromSearch = params.get("restore") === "1" && hydrateStoredCandidateSearchState();
-      if (params.get("multi") === "1") {
-        try {
-          const raw = localStorage.getItem("parentMultiDayRequest");
-          if (raw) {
-            const data = JSON.parse(raw);
-            multiData = data;
-            const notice = document.getElementById("multiDayNotice");
-            if (notice) {
-              const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
-              const weeks = Number(data?.weeks || 1);
-              const timeRange = (data?.startTime || data?.endTime) ? `${data?.startTime || "--:--"}–${data?.endTime || "--:--"}` : "any time";
-              notice.textContent = `Multiple days: ${days} for ${weeks} week${weeks > 1 ? "s" : ""}, ${timeRange}.`;
-              notice.style.display = "block";
-            }
-          }
-        } catch {}
-      }
-
-      searchCalendar = initSearchCalendar();
-      updateSelectedDatesSummary();
-      renderSelectedSlotRows();
-      renderFavoriteBroadcastContext();
-      if (!restoredFromSearch && searchCalendar && multiData) {
-        renderStoredMultiDaySelection(searchCalendar, multiData);
-      }
-
-      if (params.get("mode") === "all") {
-        if (bookingState.slots.length) {
-          document.getElementById("status").textContent = restoredFromSearch
-            ? "Selected dates restored. Continue to see available nannies."
-            : "Review the selected dates and continue to see available nannies.";
-        } else {
-          document.getElementById("status").textContent = "Select dates on the calendar, apply them, then continue to available nannies.";
-        }
-      }
+      runSearch().catch(err => {
+        document.getElementById("status").textContent = "Error: " + (err?.message || String(err));
+      });
     }).catch(() => {});
   </script>
 </body>
