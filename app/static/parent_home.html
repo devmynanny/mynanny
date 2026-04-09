@@ -69,8 +69,7 @@
     <div class="modal">
       <h3>Request type</h3>
       <div class="row" style="flex-direction:column;align-items:flex-start;gap:8px;">
-        <label><input type="radio" name="requestType" value="once" checked> Once‑off booking</label>
-        <label><input type="radio" name="requestType" value="multi"> Multiple days</label>
+        <label><input type="radio" name="requestType" value="booking" checked> Make a booking</label>
         <label><input type="radio" name="requestType" value="permanent"> Permanent placement</label>
       </div>
       <div class="actions">
@@ -89,12 +88,12 @@
           <input id="multiStartDate" type="date">
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;">
-          <label>Weeks</label>
-          <input id="multiWeeks" type="number" min="1" value="1" style="width:120px;">
+          <label>Repeat until</label>
+          <input id="multiEndDate" type="date">
         </div>
       </div>
       <div style="margin-top:10px">
-        <label>Weekdays</label>
+        <label>Repeat booking on:</label>
         <div class="weekdays">
           <label><input type="checkbox" value="Mon" checked> Mon</label>
           <label><input type="checkbox" value="Tue" checked> Tue</label>
@@ -107,14 +106,15 @@
       </div>
       <div class="row" style="margin-top:10px">
         <div style="display:flex;flex-direction:column;gap:6px;">
-          <label>Start time (optional)</label>
-          <input id="multiStartTime" type="time">
+          <label>Arrival time</label>
+          <input id="multiStartTime" type="time" required>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;">
-          <label>End time (optional)</label>
-          <input id="multiEndTime" type="time">
+          <label>Finishing time</label>
+          <input id="multiEndTime" type="time" required>
         </div>
       </div>
+      <div id="multiDayStatus" class="choiceStatus" style="margin-top:10px;"></div>
       <div class="actions">
         <button class="btn secondary" id="multiCancel" type="button">Cancel</button>
         <button class="btn" id="multiContinue" type="button">Continue</button>
@@ -180,6 +180,11 @@
       const differentAddressSelect = document.getElementById("differentAddressSelect");
       const differentAddressHint = document.getElementById("differentAddressHint");
       const addressChoiceProfileBtn = document.getElementById("addressChoiceProfile");
+      const multiStartDateInput = document.getElementById("multiStartDate");
+      const multiEndDateInput = document.getElementById("multiEndDate");
+      const multiStartTimeInput = document.getElementById("multiStartTime");
+      const multiEndTimeInput = document.getElementById("multiEndTime");
+      const multiDayStatus = document.getElementById("multiDayStatus");
 
       let parentLocations = [];
       let pendingCandidatesUrl = "/static/parent_candidates.html?mode=all";
@@ -241,11 +246,10 @@
         }).join("");
         differentAddressHint.textContent = alternateLocations.length
           ? "Choose one of your saved addresses."
-          : "No other saved addresses yet. Add one in My Profile.";
+          : "No other saved addresses yet. Add one in My Profile to use a different booking address.";
 
         if (defaultRadio) defaultRadio.checked = true;
         if (differentRadio) differentRadio.checked = false;
-        if (differentRadio) differentRadio.disabled = alternateLocations.length === 0;
         if (differentAddressSelect) differentAddressSelect.disabled = alternateLocations.length === 0;
         addressChoiceStatus.textContent = "";
         updateAddressChoicePanel();
@@ -269,6 +273,29 @@
         }));
       }
 
+      function addDaysToDate(dateStr, daysToAdd) {
+        const date = new Date(`${dateStr}T00:00:00`);
+        if (Number.isNaN(date.getTime())) return "";
+        date.setDate(date.getDate() + Number(daysToAdd || 0));
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        return `${year}-${month}-${day}`;
+      }
+
+      function syncMultiDayEndDate() {
+        const startDate = multiStartDateInput.value || "";
+        multiEndDateInput.min = startDate || "";
+        if (!startDate) return;
+        if (!multiEndDateInput.value || multiEndDateInput.value < startDate) {
+          multiEndDateInput.value = addDaysToDate(startDate, 6);
+        }
+      }
+
+      function resetMultiDayStatus() {
+        if (multiDayStatus) multiDayStatus.textContent = "";
+      }
+
       document.getElementById("btnCandidates").addEventListener("click", () => {
         if (requestTypeModal) requestTypeModal.style.display = "flex";
       });
@@ -284,29 +311,59 @@
         requestTypeModal.style.display = "none";
       });
       document.getElementById("requestTypeNext").addEventListener("click", () => {
-        const val = document.querySelector("input[name=\"requestType\"]:checked")?.value;
+        const val = document.querySelector("input[name=\"requestType\"]:checked")?.value || "booking";
         requestTypeModal.style.display = "none";
-        if (val === "once") {
-          openAddressChoiceModal("/static/parent_candidates.html?mode=all").catch(() => {
-            addressChoiceStatus.textContent = "Unable to load your saved addresses right now.";
-          });
-        } else if (val === "multi") {
-          multiDayModal.style.display = "flex";
-        } else if (val === "permanent") {
+        if (val === "permanent") {
           permanentModal.style.display = "flex";
+          return;
         }
+        openAddressChoiceModal("/static/parent_candidates.html?mode=all").catch(() => {
+          addressChoiceStatus.textContent = "Unable to load your saved addresses right now.";
+        });
       });
 
       document.getElementById("multiCancel").addEventListener("click", () => {
+        resetMultiDayStatus();
         multiDayModal.style.display = "none";
       });
       document.getElementById("multiContinue").addEventListener("click", () => {
-        const startDate = document.getElementById("multiStartDate").value || null;
-        const weeks = Number(document.getElementById("multiWeeks").value || 1);
+        resetMultiDayStatus();
+        const startDate = multiStartDateInput.value || null;
+        const endDate = multiEndDateInput.value || null;
         const days = Array.from(multiDayModal.querySelectorAll(".weekdays input:checked")).map(i => i.value);
-        const startTime = document.getElementById("multiStartTime").value || null;
-        const endTime = document.getElementById("multiEndTime").value || null;
-        const payload = { startDate, weeks, days, startTime, endTime };
+        const startTime = multiStartTimeInput.value || null;
+        const endTime = multiEndTimeInput.value || null;
+
+        if (!startDate) {
+          multiDayStatus.textContent = "Select a start date.";
+          return;
+        }
+        if (!endDate) {
+          multiDayStatus.textContent = "Select the date when the recurrence should stop.";
+          return;
+        }
+        if (endDate < startDate) {
+          multiDayStatus.textContent = "The recurrence stop date must be on or after the start date.";
+          return;
+        }
+        if (!days.length) {
+          multiDayStatus.textContent = "Select at least one day for the recurring booking.";
+          return;
+        }
+        if (!startTime) {
+          multiDayStatus.textContent = "Select an arrival time.";
+          return;
+        }
+        if (!endTime) {
+          multiDayStatus.textContent = "Select a finishing time.";
+          return;
+        }
+        if (endTime <= startTime) {
+          multiDayStatus.textContent = "Finishing time must be after arrival time.";
+          return;
+        }
+
+        const payload = { startDate, endDate, days, startTime, endTime };
         localStorage.setItem("parentMultiDayRequest", JSON.stringify(payload));
         multiDayModal.style.display = "none";
         openAddressChoiceModal("/static/parent_candidates.html?mode=all&multi=1").catch(() => {
@@ -329,6 +386,17 @@
           updateAddressChoicePanel();
         });
       });
+      [multiStartDateInput, multiEndDateInput, multiStartTimeInput, multiEndTimeInput].forEach((input) => {
+        if (!input) return;
+        input.addEventListener("input", () => {
+          resetMultiDayStatus();
+        });
+      });
+      if (multiStartDateInput) {
+        multiStartDateInput.addEventListener("change", () => {
+          syncMultiDayEndDate();
+        });
+      }
       document.getElementById("addressChoiceContinue").addEventListener("click", () => {
         const choice = document.querySelector("input[name=\"bookingAddressChoice\"]:checked")?.value || "default";
         const defaultLocation = getDefaultLocation();

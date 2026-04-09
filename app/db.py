@@ -348,8 +348,24 @@ def ensure_parent_profiles_schema() -> None:
 
         if engine.dialect.name == "sqlite":
             cols = conn.execute(text("PRAGMA table_info(parent_profiles)")).fetchall()
+            existing = {row[1] for row in cols}
             area_col = next((row for row in cols if row[1] == "area_id"), None)
             if not area_col or not area_col[3]:
+                def add_col(name: str, col_type: str):
+                    if name not in existing:
+                        conn.execute(text(f"ALTER TABLE parent_profiles ADD COLUMN {name} {col_type}"))
+
+                add_col("booking_responsibilities", "TEXT")
+                add_col("booking_adult_present", "TEXT")
+                add_col("booking_reason", "TEXT")
+                add_col("booking_children_count", "INTEGER")
+                add_col("booking_meal_option", "TEXT")
+                add_col("booking_food_restrictions", "TEXT")
+                add_col("booking_dogs", "TEXT")
+                add_col("booking_disclaimer_basic_upkeep", "BOOLEAN")
+                add_col("booking_disclaimer_medicine", "BOOLEAN")
+                add_col("booking_disclaimer_extra_hours", "BOOLEAN")
+                add_col("booking_disclaimer_transport", "BOOLEAN")
                 if not _index_exists(conn, "idx_parent_profiles_lat_lng"):
                     conn.execute(text("CREATE INDEX idx_parent_profiles_lat_lng ON parent_profiles(lat, lng)"))
                 return
@@ -382,6 +398,17 @@ def ensure_parent_profiles_schema() -> None:
                   family_photo_url TEXT,
                   residence_type TEXT,
                   access_flags_json TEXT,
+                  booking_responsibilities TEXT,
+                  booking_adult_present TEXT,
+                  booking_reason TEXT,
+                  booking_children_count INTEGER,
+                  booking_meal_option TEXT,
+                  booking_food_restrictions TEXT,
+                  booking_dogs TEXT,
+                  booking_disclaimer_basic_upkeep BOOLEAN,
+                  booking_disclaimer_medicine BOOLEAN,
+                  booking_disclaimer_extra_hours BOOLEAN,
+                  booking_disclaimer_transport BOOLEAN,
                   FOREIGN KEY(user_id) REFERENCES users (id),
                   FOREIGN KEY(area_id) REFERENCES areas (id)
                 );
@@ -391,13 +418,18 @@ def ensure_parent_profiles_schema() -> None:
                   id, user_id, area_id, lat, lng, location_confirmed_at, location_confirm_version,
                   place_id, formatted_address, street, suburb, city, province, postal_code,
                   country, location_label, phone, kids_count, kids_ages_json, desired_tag_ids_json,
-                  home_language_id, special_notes, family_photo_url, residence_type, access_flags_json
+                  home_language_id, special_notes, family_photo_url, residence_type, access_flags_json,
+                  booking_responsibilities, booking_adult_present, booking_reason, booking_children_count,
+                  booking_meal_option, booking_food_restrictions, booking_dogs,
+                  booking_disclaimer_basic_upkeep, booking_disclaimer_medicine,
+                  booking_disclaimer_extra_hours, booking_disclaimer_transport
                 )
                 SELECT
                   id, user_id, area_id, lat, lng, location_confirmed_at, location_confirm_version,
                   place_id, formatted_address, street, suburb, city, province, postal_code,
                   country, location_label, phone, kids_count, kids_ages_json, desired_tag_ids_json,
-                  home_language_id, special_notes, family_photo_url, residence_type, access_flags_json
+                  home_language_id, special_notes, family_photo_url, residence_type, access_flags_json,
+                  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
                 FROM parent_profiles_old
             """))
             conn.execute(text("DROP TABLE parent_profiles_old"))

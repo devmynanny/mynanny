@@ -717,7 +717,18 @@ def _normalize_booking_slots(
     return windows
 
 
-def _compute_booking_slots_pricing(windows: List[tuple], sleepover: bool, settings: dict) -> dict:
+EXTRA_CHILD_SURCHARGE_CENTS = 5000
+
+
+def _sanitize_booking_kids_count(value: Optional[int]) -> int:
+    try:
+        kids_count = int(value or 1)
+    except Exception:
+        kids_count = 1
+    return max(1, kids_count)
+
+
+def _compute_booking_slots_pricing(windows: List[tuple], sleepover: bool, settings: dict, kids_count: int = 1) -> dict:
     total_wage_cents = 0
     total_fee_cents = 0
     total_cents = 0
@@ -728,12 +739,75 @@ def _compute_booking_slots_pricing(windows: List[tuple], sleepover: bool, settin
         total_fee_cents += int(pricing.get("booking_fee_cents") or 0)
         total_cents += int(pricing.get("total_cents") or 0)
         booking_fee_pct = float(pricing.get("booking_fee_pct") or booking_fee_pct or 0.0)
+    extra_children = max(0, _sanitize_booking_kids_count(kids_count) - 1)
+    if extra_children > 0 and windows:
+        surcharge_wage_cents = extra_children * EXTRA_CHILD_SURCHARGE_CENTS * len(windows)
+        surcharge_fee_cents = int(round(surcharge_wage_cents * booking_fee_pct))
+        total_wage_cents += surcharge_wage_cents
+        total_fee_cents += surcharge_fee_cents
+        total_cents += surcharge_wage_cents + surcharge_fee_cents
     return {
         "wage_cents": total_wage_cents,
         "booking_fee_pct": booking_fee_pct,
         "booking_fee_cents": total_fee_cents,
         "total_cents": total_cents,
     }
+
+
+def _sanitize_booking_questionnaire_payload(payload) -> dict:
+    return {
+        "responsibilities": redact_contact_info(getattr(payload, "responsibilities", None) or "").strip() or None,
+        "adult_present": redact_contact_info(getattr(payload, "adult_present", None) or "").strip() or None,
+        "booking_reason": redact_contact_info(getattr(payload, "booking_reason", None) or "").strip() or None,
+        "kids_count": _sanitize_booking_kids_count(getattr(payload, "kids_count", 1)),
+        "meal_option": redact_contact_info(getattr(payload, "meal_option", None) or "").strip() or None,
+        "food_restrictions": redact_contact_info(getattr(payload, "food_restrictions", None) or "").strip() or None,
+        "dogs_info": redact_contact_info(getattr(payload, "dogs_info", None) or "").strip() or None,
+        "disclaimer_basic_upkeep": bool(getattr(payload, "disclaimer_basic_upkeep", False)),
+        "disclaimer_medicine": bool(getattr(payload, "disclaimer_medicine", False)),
+        "disclaimer_extra_hours": bool(getattr(payload, "disclaimer_extra_hours", False)),
+        "disclaimer_transport": bool(getattr(payload, "disclaimer_transport", False)),
+    }
+
+
+def _validate_booking_questionnaire(data: dict) -> None:
+    if not data.get("responsibilities"):
+        raise HTTPException(status_code=400, detail="Please describe what the nanny will be responsible for")
+    if not data.get("adult_present"):
+        raise HTTPException(status_code=400, detail="Please confirm whether an adult will be present")
+    if not data.get("booking_reason"):
+        raise HTTPException(status_code=400, detail="Please share the reason for the booking")
+    if not data.get("meal_option"):
+        raise HTTPException(status_code=400, detail="Please select the meal arrangement")
+    if not data.get("disclaimer_basic_upkeep"):
+        raise HTTPException(status_code=400, detail="Please confirm the house upkeep disclaimer")
+    if not data.get("disclaimer_medicine"):
+        raise HTTPException(status_code=400, detail="Please confirm the medicine disclaimer")
+    if not data.get("disclaimer_extra_hours"):
+        raise HTTPException(status_code=400, detail="Please confirm the additional-hours disclaimer")
+    if not data.get("disclaimer_transport"):
+        raise HTTPException(status_code=400, detail="Please confirm the after-17:00 transport disclaimer")
+
+
+def _build_booking_questionnaire_notes(base_notes: Optional[str], questionnaire: dict) -> Optional[str]:
+    sections = []
+    if base_notes:
+        sections.append(f"Additional notes: {base_notes}")
+    sections.extend([
+        f"Nanny responsibilities: {questionnaire.get('responsibilities') or '-'}",
+        f"Adult present at address: {questionnaire.get('adult_present') or '-'}",
+        f"Reason for booking: {questionnaire.get('booking_reason') or '-'}",
+        f"Children present: {questionnaire.get('kids_count') or 1}",
+        f"Meal arrangement: {questionnaire.get('meal_option') or '-'}",
+        f"Foods not allowed in home: {questionnaire.get('food_restrictions') or 'None provided'}",
+        f"Dogs at home: {questionnaire.get('dogs_info') or 'None provided'}",
+        f"House upkeep disclaimer understood: {'Yes' if questionnaire.get('disclaimer_basic_upkeep') else 'No'}",
+        f"Medicine disclaimer understood: {'Yes' if questionnaire.get('disclaimer_medicine') else 'No'}",
+        f"Additional hours disclaimer understood: {'Yes' if questionnaire.get('disclaimer_extra_hours') else 'No'}",
+        f"After-17:00 transport disclaimer understood: {'Yes' if questionnaire.get('disclaimer_transport') else 'No'}",
+    ])
+    notes = "\n".join(sections).strip()
+    return notes or None
 
 
 def _attach_booking_request_slots(db: Session, req_id: int, windows: List[tuple]) -> None:
@@ -3486,6 +3560,17 @@ def get_parent_profile(authorization: Optional[str] = Header(default=None), db: 
         "special_notes": prof.special_notes,
         "family_photo_url": prof.family_photo_url,
         "access_flags": access_flags,
+        "booking_responsibilities": getattr(prof, "booking_responsibilities", None),
+        "booking_adult_present": getattr(prof, "booking_adult_present", None),
+        "booking_reason": getattr(prof, "booking_reason", None),
+        "booking_children_count": getattr(prof, "booking_children_count", None),
+        "booking_meal_option": getattr(prof, "booking_meal_option", None),
+        "booking_food_restrictions": getattr(prof, "booking_food_restrictions", None),
+        "booking_dogs": getattr(prof, "booking_dogs", None),
+        "booking_disclaimer_basic_upkeep": bool(getattr(prof, "booking_disclaimer_basic_upkeep", False)),
+        "booking_disclaimer_medicine": bool(getattr(prof, "booking_disclaimer_medicine", False)),
+        "booking_disclaimer_extra_hours": bool(getattr(prof, "booking_disclaimer_extra_hours", False)),
+        "booking_disclaimer_transport": bool(getattr(prof, "booking_disclaimer_transport", False)),
     }
 
 
@@ -4016,6 +4101,39 @@ def update_parent_profile_details(
         for item in payload.access_flags:
             cleaned_flags.append(redact_contact_info(item))
         prof.access_flags_json = json.dumps(cleaned_flags)
+
+    if payload.booking_responsibilities is not None:
+        prof.booking_responsibilities = redact_contact_info(payload.booking_responsibilities)
+
+    if payload.booking_adult_present is not None:
+        prof.booking_adult_present = redact_contact_info(payload.booking_adult_present)
+
+    if payload.booking_reason is not None:
+        prof.booking_reason = redact_contact_info(payload.booking_reason)
+
+    if payload.booking_children_count is not None:
+        prof.booking_children_count = _sanitize_booking_kids_count(payload.booking_children_count)
+
+    if payload.booking_meal_option is not None:
+        prof.booking_meal_option = redact_contact_info(payload.booking_meal_option)
+
+    if payload.booking_food_restrictions is not None:
+        prof.booking_food_restrictions = redact_contact_info(payload.booking_food_restrictions)
+
+    if payload.booking_dogs is not None:
+        prof.booking_dogs = redact_contact_info(payload.booking_dogs)
+
+    if payload.booking_disclaimer_basic_upkeep is not None:
+        prof.booking_disclaimer_basic_upkeep = bool(payload.booking_disclaimer_basic_upkeep)
+
+    if payload.booking_disclaimer_medicine is not None:
+        prof.booking_disclaimer_medicine = bool(payload.booking_disclaimer_medicine)
+
+    if payload.booking_disclaimer_extra_hours is not None:
+        prof.booking_disclaimer_extra_hours = bool(payload.booking_disclaimer_extra_hours)
+
+    if payload.booking_disclaimer_transport is not None:
+        prof.booking_disclaimer_transport = bool(payload.booking_disclaimer_transport)
 
     db.add(prof)
     db.commit()
@@ -4642,7 +4760,14 @@ def create_booking_request(
 
         if payload.notes:
             payload.notes = redact_contact_info(payload.notes)
-        pricing = _compute_booking_slots_pricing(windows, bool(payload.sleepover), _get_pricing_settings(db))
+        questionnaire = _sanitize_booking_questionnaire_payload(payload)
+        _validate_booking_questionnaire(questionnaire)
+        pricing = _compute_booking_slots_pricing(
+            windows,
+            bool(payload.sleepover),
+            _get_pricing_settings(db),
+            questionnaire.get("kids_count", 1),
+        )
         req = models.BookingRequest(
             id=_next_booking_request_id(db),
             parent_user_id=user.id,
@@ -4659,7 +4784,7 @@ def create_booking_request(
             booking_fee_pct=pricing.get("booking_fee_pct"),
             booking_fee_cents=pricing.get("booking_fee_cents"),
             total_cents=pricing.get("total_cents"),
-            client_notes=(payload.notes or "").strip() or None,
+            client_notes=_build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
         )
         req.group_id = req.id
         db.add(req)
@@ -4723,7 +4848,12 @@ def estimate_booking_request(
     if selected_count < 1:
         selected_count = 1
 
-    pricing = _compute_booking_slots_pricing(windows, bool(payload.sleepover), _get_pricing_settings(db))
+    pricing = _compute_booking_slots_pricing(
+        windows,
+        bool(payload.sleepover),
+        _get_pricing_settings(db),
+        _sanitize_booking_kids_count(payload.kids_count),
+    )
     per_nanny_total = int(pricing.get("total_cents") or 0)
     per_nanny_wage = int(pricing.get("wage_cents") or 0)
     per_nanny_fee = int(pricing.get("booking_fee_cents") or 0)
@@ -4777,6 +4907,8 @@ def create_booking_request_bulk(
 
     if payload.notes:
         payload.notes = redact_contact_info(payload.notes)
+    questionnaire = _sanitize_booking_questionnaire_payload(payload)
+    _validate_booking_questionnaire(questionnaire)
 
     for nanny_id in nanny_ids:
         nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
@@ -4794,7 +4926,12 @@ def create_booking_request_bulk(
             errors.append({"nanny_id": nanny_id, "error": "Requested time is not available"})
             continue
 
-        pricing = _compute_booking_slots_pricing(windows, bool(payload.sleepover), _get_pricing_settings(db))
+        pricing = _compute_booking_slots_pricing(
+            windows,
+            bool(payload.sleepover),
+            _get_pricing_settings(db),
+            questionnaire.get("kids_count", 1),
+        )
         req = models.BookingRequest(
             id=next_id,
             parent_user_id=user.id,
@@ -4811,7 +4948,7 @@ def create_booking_request_bulk(
             booking_fee_pct=pricing.get("booking_fee_pct"),
             booking_fee_cents=pricing.get("booking_fee_cents"),
             total_cents=pricing.get("total_cents"),
-            client_notes=(payload.notes or "").strip() or None,
+            client_notes=_build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
         )
         next_id += 1
         db.add(req)

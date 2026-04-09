@@ -29,10 +29,16 @@
     .card-title{font-weight:700;font-size:18px}
     .actions{display:flex;gap:10px;align-items:center;margin-top:10px}
     .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999;}
-    .modal{background:#fff;border-radius:10px;width:min(520px,100%);border:1px solid #ddd;padding:16px}
-    .modal input, .modal select{width:100%;padding:10px;margin-top:6px;box-sizing:border-box}
+    .modal{background:#fff;border-radius:10px;width:min(760px,100%);border:1px solid #ddd;padding:16px}
+    .modal input, .modal select, .modal textarea{width:100%;padding:10px;margin-top:6px;box-sizing:border-box;border-radius:10px;border:1px solid #ccc}
     .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
     .estimateBox{margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
+    .bookingQuestionGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
+    .bookingQuestionGrid .full{grid-column:1 / -1}
+    .bookingQuestionGrid label{display:block;font-size:12px;color:#555}
+    .bookingDisclaimer{padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
+    .bookingDisclaimer label{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:#374151}
+    .bookingDisclaimer input{width:auto;margin:2px 0 0;padding:0}
     /* The calendar itself is the primary way to select a time range, so the manual
        date/time search bar can remain hidden while still allowing scripts to use it */
     .search-bar{display:none;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
@@ -63,6 +69,8 @@
     .filter-group{display:flex;flex-direction:column;gap:6px}
     .tag-filters{display:flex;flex-wrap:wrap;gap:8px}
     .tag-filters label{display:flex;align-items:center;gap:6px;font-size:13px;color:#333}
+    .advancedSearchPanel{display:none;margin-top:12px}
+    .advancedSearchPanel.open{display:block}
     .card{position:relative}
     .card-fav{position:absolute;top:12px;right:12px;font-size:22px;color:#ef4444}
     .summaryText{margin-top:10px;line-height:1.45;color:#374151}
@@ -96,25 +104,27 @@
   </div>
 
   <div class="card" style="margin-top:12px;">
-    <div style="font-weight:700;">Advanced search</div>
-    <div class="muted" style="margin-top:4px;">Refine the nanny list using the filters below.</div>
+    <button class="btn secondary" id="toggleAdvancedSearchBtn" type="button" aria-expanded="false" aria-controls="advancedSearchPanel">Advanced search</button>
     <div id="favoriteBroadcastBanner" class="muted" style="margin-top:8px; display:none;"></div>
-    <div class="filters">
-      <div class="filter-group">
-        <label>Favourites</label>
-        <label><input id="filterFavorites" type="checkbox" /> Only favourites</label>
+    <div id="advancedSearchPanel" class="advancedSearchPanel">
+      <div class="muted" style="margin-top:4px;">Refine the nanny list using the filters below.</div>
+      <div class="filters">
+        <div class="filter-group">
+          <label>Favourites</label>
+          <label><input id="filterFavorites" type="checkbox" /> Only favourites</label>
+        </div>
+        <div class="filter-group">
+          <label>Rated</label>
+          <label><input id="filterRated" type="checkbox" /> Rated only</label>
+        </div>
+        <div class="filter-group" style="min-width:280px;">
+          <label>Tags</label>
+          <div id="filterTags" class="tag-filters"></div>
+        </div>
       </div>
-      <div class="filter-group">
-        <label>Rated</label>
-        <label><input id="filterRated" type="checkbox" /> Rated only</label>
+      <div style="margin-top:12px;">
+        <button class="btn" id="requestSelectedBtn" type="button" disabled>Proceed with booking</button>
       </div>
-      <div class="filter-group" style="min-width:280px;">
-        <label>Tags</label>
-        <div id="filterTags" class="tag-filters"></div>
-      </div>
-    </div>
-    <div style="margin-top:12px;">
-      <button class="btn" id="requestSelectedBtn" type="button" disabled>Request selected nannies</button>
     </div>
   </div>
 
@@ -156,15 +166,72 @@
         Sleepover required (adds R150)
       </label>
 
-      <label class="muted" style="margin-top:8px; display:block;">Notes (optional)</label>
-      <input id="bookingNotes" type="text" placeholder="Any notes for the nanny" />
+      <div class="bookingQuestionGrid">
+        <div class="full">
+          <label for="bookingResponsibilities">What will the nanny be responsible for</label>
+          <textarea id="bookingResponsibilities" rows="3"></textarea>
+        </div>
+        <div>
+          <label for="bookingAdultPresent">Will you or another adult be present at the chosen address during the booking</label>
+          <select id="bookingAdultPresent">
+            <option value="">Select one</option>
+            <option value="I will be present">I will be present</option>
+            <option value="Another adult will be present">Another adult will be present</option>
+            <option value="No adult will be present">No adult will be present</option>
+          </select>
+        </div>
+        <div>
+          <label for="bookingReason">What is the reason for your booking</label>
+          <input id="bookingReason" type="text" />
+        </div>
+        <div>
+          <label for="bookingKidsCount">How many kids will be present during the booking</label>
+          <select id="bookingKidsCount">
+            <option value="1">1 child</option>
+            <option value="2">2 children</option>
+            <option value="3">3 children</option>
+            <option value="4">4 children</option>
+            <option value="5">5 children</option>
+            <option value="6">6 children</option>
+          </select>
+        </div>
+        <div>
+          <label for="bookingMealOption">Should the nanny provide their own meal during the booking</label>
+          <select id="bookingMealOption">
+            <option value="">Select one</option>
+            <option value="We will provide food">We will provide food</option>
+            <option value="We will provide basics like bread, spread, coffee and tea">We will provide basics like bread, spread, coffee and tea</option>
+            <option value="No, she must provide her own meals">No, she must provide her own meals</option>
+          </select>
+        </div>
+        <div>
+          <label for="bookingRestrictedFoods">Are there certain foods not allowed in your home</label>
+          <input id="bookingRestrictedFoods" type="text" />
+        </div>
+        <div class="full">
+          <label for="bookingDogs">Do you have dogs? Specify the breed</label>
+          <input id="bookingDogs" type="text" />
+        </div>
+        <div class="bookingDisclaimer full">
+          <label><input id="bookingDisclaimerBasicUpkeep" type="checkbox" /> <span>I understand that while caring for my child, baby, or children, a nanny cannot be expected to wash and iron the whole family's laundry or clean a full house, and I agree that basic upkeep of the house is acceptable, such as dishes, tidying up, laundry of the child in question, and sterilizing items required for the child in question.</span></label>
+        </div>
+        <div class="bookingDisclaimer full">
+          <label><input id="bookingDisclaimerMedicine" type="checkbox" /> <span>I understand that nannies cannot be held accountable for administration of medicine. If required, I will provide proper written instructions to the nanny with instructions and my signature, and My Nanny and the nanny cannot be held liable for the outcome of such consented administration.</span></label>
+        </div>
+        <div class="bookingDisclaimer full">
+          <label><input id="bookingDisclaimerExtraHours" type="checkbox" /> <span>I understand that if a nanny works more hours than stated on the booking, the additional hours will be charged.</span></label>
+        </div>
+        <div class="bookingDisclaimer full">
+          <label><input id="bookingDisclaimerTransport" type="checkbox" /> <span>I understand that if a nanny works after 17:00, I agree to drop her off at the nearest taxi rank, and if she works until 18:00 or later, I agree to use Bolt or Uber to secure her safe arrival back home.</span></label>
+        </div>
+      </div>
 
       <div id="bookingEstimate" class="estimateBox muted">Calculating estimate...</div>
       <div id="bookingStatus" class="muted" style="margin-top:8px; min-height:18px"></div>
 
       <div class="row">
         <button class="btn secondary" id="cancelBookingBtn" type="button">Cancel</button>
-        <button class="btn primary" id="submitBookingBtn" type="button">Submit request</button>
+        <button class="btn primary" id="submitBookingBtn" type="button">Proceed and broadcast to selected nannies</button>
       </div>
     </div>
   </div>
@@ -204,8 +271,9 @@
         <div class="previewSectionTitle">Proficiencies</div>
         <div id="previewProficiencies"></div>
       </div>
-      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
         <button class="btn" id="selectPreviewBtn" type="button">Select nanny</button>
+        <button class="btn" id="broadcastNearbyBtn" type="button">Broadcast to nearby 30 km</button>
         <button class="btn primary" id="bookPreviewBtn" type="button">Book now</button>
         <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
       </div>
@@ -273,11 +341,48 @@
       });
     }
 
+    function formatShortDateLabel(dateStr) {
+      const date = new Date(`${dateStr}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return dateStr;
+      return date.toLocaleDateString("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    }
+
     function formatDateValue(date) {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, "0");
       const day = String(date.getDate()).padStart(2, "0");
       return `${year}-${month}-${day}`;
+    }
+
+    function parseDateOnly(dateStr) {
+      if (!dateStr) return null;
+      const date = new Date(`${dateStr}T00:00:00`);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function resolveMultiDayEndDate(data) {
+      const startDate = parseDateOnly(data?.startDate);
+      if (!startDate) return null;
+      const explicitEndDate = parseDateOnly(data?.endDate);
+      if (explicitEndDate && explicitEndDate >= startDate) return explicitEndDate;
+      const weeks = Math.max(1, Number(data?.weeks || 1));
+      const fallbackEndDate = new Date(startDate);
+      fallbackEndDate.setDate(startDate.getDate() + (weeks * 7) - 1);
+      return fallbackEndDate;
+    }
+
+    function buildMultiDayNoticeText(data) {
+      if (!data) return "";
+      const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
+      const endDate = resolveMultiDayEndDate(data);
+      const endDateLabel = endDate ? formatShortDateLabel(formatDateValue(endDate)) : "the selected stop date";
+      const arrivalTime = data?.startTime || "--:--";
+      const finishingTime = data?.endTime || "--:--";
+      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}.`;
     }
 
     function sortSlots(slots) {
@@ -407,10 +512,7 @@
         const raw = localStorage.getItem("parentMultiDayRequest");
         if (!raw) return;
         const data = JSON.parse(raw);
-        const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
-        const weeks = Number(data?.weeks || 1);
-        const timeRange = (data?.startTime || data?.endTime) ? `${data?.startTime || "--:--"}–${data?.endTime || "--:--"}` : "any time";
-        notice.textContent = `Multiple days: ${days} for ${weeks} week${weeks > 1 ? "s" : ""}, ${timeRange}.`;
+        notice.textContent = buildMultiDayNoticeText(data);
         notice.style.display = "block";
       } catch {}
     }
@@ -609,6 +711,7 @@
       const slotRange = computeSlotIsoRange(bookingState.slots);
       const selectedCount = Math.max(1, Array.isArray(bookingState.selectedNannyIds) ? bookingState.selectedNannyIds.length : 1);
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
+      const kidsCount = Number(document.getElementById("bookingKidsCount")?.value || 1);
       estimateEl.textContent = "Calculating estimate...";
       try {
         const data = await fetchJson("/booking-requests/estimate", {
@@ -619,6 +722,7 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             sleepover,
             selected_count: selectedCount,
+            kids_count: kidsCount,
           }),
         });
         const cur = data?.currency || "ZAR";
@@ -641,7 +745,12 @@
       bookingState.selectedNannyIds = Array.isArray(selectedIds) ? selectedIds : (nannyId ? [nannyId] : []);
       const count = bookingState.selectedNannyIds.length;
       document.getElementById("bookingNannyName").textContent = count > 1 ? `${count} nannies selected` : nannyName;
+      document.getElementById("submitBookingBtn").textContent = count > 1
+        ? "Proceed and broadcast to selected nannies"
+        : "Proceed with booking";
+      document.getElementById("submitBookingBtn").disabled = false;
       document.getElementById("bookingScheduleSummary").innerHTML = renderScheduleSummary(bookingState.slots);
+      populateBookingQuestionnaire(savedBookingQuestionnaire);
       const locSelect = document.getElementById("bookingLocation");
       const locConfirm = document.getElementById("bookingLocationConfirm");
       const sleepoverEl = document.getElementById("bookingSleepover");
@@ -681,6 +790,96 @@
     let tagOptions = [];
     let parentLocations = [];
     let selectedBookingLocationChoice = "default";
+    let currentParentUser = null;
+    let savedBookingQuestionnaire = null;
+
+    function getBookingQuestionnairePayload() {
+      return {
+        responsibilities: (document.getElementById("bookingResponsibilities")?.value || "").trim(),
+        adult_present: document.getElementById("bookingAdultPresent")?.value || "",
+        booking_reason: (document.getElementById("bookingReason")?.value || "").trim(),
+        kids_count: Number(document.getElementById("bookingKidsCount")?.value || 1),
+        meal_option: document.getElementById("bookingMealOption")?.value || "",
+        food_restrictions: (document.getElementById("bookingRestrictedFoods")?.value || "").trim(),
+        dogs_info: (document.getElementById("bookingDogs")?.value || "").trim(),
+        disclaimer_basic_upkeep: !!document.getElementById("bookingDisclaimerBasicUpkeep")?.checked,
+        disclaimer_medicine: !!document.getElementById("bookingDisclaimerMedicine")?.checked,
+        disclaimer_extra_hours: !!document.getElementById("bookingDisclaimerExtraHours")?.checked,
+        disclaimer_transport: !!document.getElementById("bookingDisclaimerTransport")?.checked,
+      };
+    }
+
+    function populateBookingQuestionnaire(profile = null) {
+      const data = profile || savedBookingQuestionnaire || {};
+      document.getElementById("bookingResponsibilities").value = data.booking_responsibilities || data.responsibilities || "";
+      document.getElementById("bookingAdultPresent").value = data.booking_adult_present || data.adult_present || "";
+      document.getElementById("bookingReason").value = data.booking_reason || "";
+      document.getElementById("bookingKidsCount").value = String(Number(data.booking_children_count || data.kids_count || 1));
+      document.getElementById("bookingMealOption").value = data.booking_meal_option || data.meal_option || "";
+      document.getElementById("bookingRestrictedFoods").value = data.booking_food_restrictions || data.food_restrictions || "";
+      document.getElementById("bookingDogs").value = data.booking_dogs || data.dogs_info || "";
+      document.getElementById("bookingDisclaimerBasicUpkeep").checked = !!data.booking_disclaimer_basic_upkeep;
+      document.getElementById("bookingDisclaimerMedicine").checked = !!data.booking_disclaimer_medicine;
+      document.getElementById("bookingDisclaimerExtraHours").checked = !!data.booking_disclaimer_extra_hours;
+      document.getElementById("bookingDisclaimerTransport").checked = !!data.booking_disclaimer_transport;
+    }
+
+    function validateBookingQuestionnaire() {
+      const data = getBookingQuestionnairePayload();
+      if (!data.responsibilities) return "Please describe what the nanny will be responsible for.";
+      if (!data.adult_present) return "Please confirm whether an adult will be present.";
+      if (!data.booking_reason) return "Please provide the reason for the booking.";
+      if (!data.meal_option) return "Please select the meal arrangement.";
+      if (!data.disclaimer_basic_upkeep) return "Please confirm the house upkeep disclaimer.";
+      if (!data.disclaimer_medicine) return "Please confirm the medicine disclaimer.";
+      if (!data.disclaimer_extra_hours) return "Please confirm the additional-hours disclaimer.";
+      if (!data.disclaimer_transport) return "Please confirm the after-17:00 transport disclaimer.";
+      return null;
+    }
+
+    async function loadSavedBookingQuestionnaire() {
+      try {
+        const profile = await fetchJson("/parents/me/profile");
+        savedBookingQuestionnaire = profile && profile.exists !== false ? profile : null;
+      } catch {
+        savedBookingQuestionnaire = null;
+      }
+    }
+
+    async function persistBookingQuestionnaireProfile(data) {
+      if (!currentParentUser?.id) return;
+      await fetchJson(`/parents/${currentParentUser.id}/profile-details`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          booking_responsibilities: data.responsibilities,
+          booking_adult_present: data.adult_present,
+          booking_reason: data.booking_reason,
+          booking_children_count: data.kids_count,
+          booking_meal_option: data.meal_option,
+          booking_food_restrictions: data.food_restrictions,
+          booking_dogs: data.dogs_info,
+          booking_disclaimer_basic_upkeep: data.disclaimer_basic_upkeep,
+          booking_disclaimer_medicine: data.disclaimer_medicine,
+          booking_disclaimer_extra_hours: data.disclaimer_extra_hours,
+          booking_disclaimer_transport: data.disclaimer_transport,
+        }),
+      });
+      savedBookingQuestionnaire = {
+        ...(savedBookingQuestionnaire || {}),
+        exists: true,
+        booking_responsibilities: data.responsibilities,
+        booking_adult_present: data.adult_present,
+        booking_reason: data.booking_reason,
+        booking_children_count: data.kids_count,
+        booking_meal_option: data.meal_option,
+        booking_food_restrictions: data.food_restrictions,
+        booking_dogs: data.dogs_info,
+        booking_disclaimer_basic_upkeep: data.disclaimer_basic_upkeep,
+        booking_disclaimer_medicine: data.disclaimer_medicine,
+        booking_disclaimer_extra_hours: data.disclaimer_extra_hours,
+        booking_disclaimer_transport: data.disclaimer_transport,
+      };
+    }
 
     function parseStoredBookingLocationSelection() {
       try {
@@ -902,11 +1101,18 @@
         status.textContent = "Please select a location.";
         return;
       }
-      const notes = document.getElementById("bookingNotes").value || null;
+      const questionnaireError = validateBookingQuestionnaire();
+      if (questionnaireError) {
+        status.textContent = questionnaireError;
+        return;
+      }
+      const questionnaire = getBookingQuestionnairePayload();
+      const notes = null;
       const locationId = locSelect ? Number(locSelect.value) : null;
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
 
       status.textContent = "Submitting...";
+      await persistBookingQuestionnaireProfile(questionnaire);
       if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length >= 1 && !bookingState.nannyId) {
         const res = await fetchJson("/booking-requests/bulk", {
           method: "POST",
@@ -918,7 +1124,18 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
-            sleepover
+            sleepover,
+            kids_count: questionnaire.kids_count,
+            responsibilities: questionnaire.responsibilities,
+            adult_present: questionnaire.adult_present,
+            booking_reason: questionnaire.booking_reason,
+            meal_option: questionnaire.meal_option,
+            food_restrictions: questionnaire.food_restrictions,
+            dogs_info: questionnaire.dogs_info,
+            disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
+            disclaimer_medicine: questionnaire.disclaimer_medicine,
+            disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
+            disclaimer_transport: questionnaire.disclaimer_transport,
           })
         });
         const displayId = res?.group_id ?? "—";
@@ -934,7 +1151,18 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
-            sleepover
+            sleepover,
+            kids_count: questionnaire.kids_count,
+            responsibilities: questionnaire.responsibilities,
+            adult_present: questionnaire.adult_present,
+            booking_reason: questionnaire.booking_reason,
+            meal_option: questionnaire.meal_option,
+            food_restrictions: questionnaire.food_restrictions,
+            dogs_info: questionnaire.dogs_info,
+            disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
+            disclaimer_medicine: questionnaire.disclaimer_medicine,
+            disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
+            disclaimer_transport: questionnaire.disclaimer_transport,
           })
         });
         const displayId = res?.group_id ?? "—";
@@ -950,7 +1178,18 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
-            sleepover
+            sleepover,
+            kids_count: questionnaire.kids_count,
+            responsibilities: questionnaire.responsibilities,
+            adult_present: questionnaire.adult_present,
+            booking_reason: questionnaire.booking_reason,
+            meal_option: questionnaire.meal_option,
+            food_restrictions: questionnaire.food_restrictions,
+            dogs_info: questionnaire.dogs_info,
+            disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
+            disclaimer_medicine: questionnaire.disclaimer_medicine,
+            disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
+            disclaimer_transport: questionnaire.disclaimer_transport,
           })
         });
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
@@ -1001,19 +1240,16 @@
       const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
       const wantedDays = new Set((Array.isArray(data.days) ? data.days : []).map(d => dayMap[d]).filter(d => d !== undefined));
       if (!wantedDays.size) return;
-      const weeks = Math.max(1, Number(data.weeks || 1));
-      const startDate = new Date(`${data.startDate}T00:00:00`);
-      if (Number.isNaN(startDate.getTime())) return;
+      const startDate = parseDateOnly(data.startDate);
+      const endDate = resolveMultiDayEndDate(data);
+      if (!startDate || !endDate || endDate < startDate) return;
       const [startHour, startMin] = String(data.startTime).split(":").map(v => Number(v));
       const [endHour, endMin] = String(data.endTime).split(":").map(v => Number(v));
       if (!Number.isFinite(startHour) || !Number.isFinite(startMin) || !Number.isFinite(endHour) || !Number.isFinite(endMin)) return;
       selectedCalendarDates = new Set();
       const slots = [];
 
-      const totalDays = weeks * 7;
-      for (let i = 0; i < totalDays; i++) {
-        const day = new Date(startDate);
-        day.setDate(startDate.getDate() + i);
+      for (let day = new Date(startDate); day <= endDate; day.setDate(day.getDate() + 1)) {
         if (!wantedDays.has(day.getDay())) continue;
         const dateStr = formatDateValue(day);
         selectedCalendarDates.add(dateStr);
@@ -1038,20 +1274,18 @@
       }
     }
 
-    function computeLastMultiDate(startDateStr, weeks, days) {
+    function computeLastMultiDate(startDateStr, endDateStr, days) {
       if (!startDateStr || !Array.isArray(days) || days.length === 0) return null;
       const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
       const wanted = new Set(days.map(d => dayMap[d]).filter(d => d !== undefined));
       if (wanted.size === 0) return null;
-      const start = new Date(startDateStr + "T00:00:00");
-      if (Number.isNaN(start.getTime())) return null;
+      const start = parseDateOnly(startDateStr);
+      const end = parseDateOnly(endDateStr);
+      if (!start || !end || end < start) return null;
       let last = null;
-      const totalDays = Math.max(1, Number(weeks || 1)) * 7;
-      for (let i = 0; i < totalDays; i++) {
-        const d = new Date(start);
-        d.setDate(start.getDate() + i);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         if (wanted.has(d.getDay())) {
-          last = d;
+          last = new Date(d);
         }
       }
       return last;
@@ -1136,7 +1370,7 @@
       if (!btn) return;
       const count = selectedNannies.size;
       btn.disabled = count === 0;
-      btn.textContent = count ? `Request selected nannies (${count})` : "Request selected nannies";
+      btn.textContent = count ? `Proceed with booking (${count})` : "Proceed with booking";
     }
 
     async function runSearch(){
@@ -1249,6 +1483,9 @@
     document.getElementById("bookingSleepover").addEventListener("change", () => {
       refreshBookingEstimate().catch(() => {});
     });
+    document.getElementById("bookingKidsCount").addEventListener("change", () => {
+      refreshBookingEstimate().catch(() => {});
+    });
 
     document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
     document.getElementById("previewModal").addEventListener("click", (e) => {
@@ -1261,6 +1498,21 @@
       if (requestBtn) requestBtn.disabled = selectedNannies.size === 0;
       renderResults(lastResults, lastProfileComplete, lastCanBook);
       closePreview();
+    });
+    document.getElementById("broadcastNearbyBtn").addEventListener("click", () => {
+      if (!previewNanny) return;
+      const nearbyIds = lastResults
+        .filter((item) => item.distance_km != null && Number(item.distance_km) <= 30)
+        .map((item) => Number(item.nanny_id));
+      if (!nearbyIds.length) {
+        const fit = document.getElementById("previewFit");
+        if (fit) fit.textContent = "No available nannies were found within 30 km for this schedule.";
+        return;
+      }
+      selectedNannies = new Set(nearbyIds);
+      renderResults(lastResults, lastProfileComplete, lastCanBook);
+      closePreview();
+      openBookingModal(null, "", nearbyIds);
     });
     document.getElementById("bookPreviewBtn").addEventListener("click", () => {
       if (!previewNanny) return;
@@ -1292,8 +1544,15 @@
       if (!ids.length) return;
       openBookingModal(null, "", ids);
     });
+    document.getElementById("toggleAdvancedSearchBtn").addEventListener("click", () => {
+      const panel = document.getElementById("advancedSearchPanel");
+      const btn = document.getElementById("toggleAdvancedSearchBtn");
+      const isOpen = panel.classList.toggle("open");
+      btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    });
 
-    guard().then(async () => {
+    guard().then(async (me) => {
+      currentParentUser = me;
       const searchState = readCandidateSearchState();
       if (!searchState || !Array.isArray(searchState.slots) || !searchState.slots.length) {
         location.href = "/static/parent_candidates.html?mode=all";
@@ -1324,6 +1583,7 @@
 
       await loadFavorites();
       await loadParentLocations();
+      await loadSavedBookingQuestionnaire();
       try {
         const tagData = await fetchJson("/nanny-tags");
         tagOptions = (Array.isArray(tagData) ? tagData : []).filter((tag) => {

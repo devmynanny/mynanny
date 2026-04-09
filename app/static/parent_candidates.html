@@ -71,6 +71,8 @@
     .calendarIntro{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
     .calendarHint{max-width:620px}
     .calendarActions{display:flex;gap:8px;flex-wrap:wrap}
+    .recurringBookingCta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:220px}
+    .recurringBookingNote{font-size:12px;color:#666;text-align:right}
     .fc .fc-bg-event.selectedDay{background:#dbeafe;opacity:0.95}
     .selectedDatesPanel{margin-top:14px;border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#f9fafb}
     .selectedDateChips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
@@ -84,8 +86,14 @@
     .slotEmpty{color:#666}
     .scheduleList{display:grid;gap:8px}
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+    .weekdays{display:flex;flex-wrap:wrap;gap:8px}
+    .weekdays label{display:flex;align-items:center;gap:6px;font-size:13px;color:#555}
+    .weekdays input{width:auto;margin:0;padding:0}
+    .inlineStatus{min-height:18px;color:#b91c1c;font-size:13px;margin-top:10px}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
+      .recurringBookingCta{align-items:flex-start}
+      .recurringBookingNote{text-align:left}
     }
   </style>
 </head>
@@ -118,6 +126,10 @@
     <div id="favoriteBroadcastNotice" class="muted" style="margin-bottom:10px; display:none;"></div>
     <div class="calendarIntro">
       <div class="calendarHint muted">Select one or more dates on the month calendar, even across different months. Then click <strong>Apply selected dates</strong> and set the arrival and finishing time for each date below.</div>
+      <div class="recurringBookingCta">
+        <button class="btn secondary" id="openRecurringBookingBtn" type="button">Make a recurring booking</button>
+        <div class="recurringBookingNote">or manually select your dates below</div>
+      </div>
     </div>
     <div id="searchCalendar"></div>
     <div class="calendarActions" style="margin-top:12px;">
@@ -167,6 +179,49 @@
   <div id="status" class="muted" style="margin-top:10px"></div>
   <div id="multiDayNotice" class="muted" style="margin-top:6px; display:none;"></div>
   <div id="list" class="grid" style="display:none;"></div>
+
+  <div id="multiDayModal" class="modalBack">
+    <div class="modal">
+      <h3 style="margin:0 0 10px;">Make a recurring booking</h3>
+      <div class="row" style="justify-content:flex-start;">
+        <div style="display:flex;flex-direction:column;gap:6px;flex:1 1 190px;">
+          <label>Start date</label>
+          <input id="multiStartDate" type="date" />
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex:1 1 190px;">
+          <label>Repeat until</label>
+          <input id="multiEndDate" type="date" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label>Repeat booking on:</label>
+        <div class="weekdays" style="margin-top:8px;">
+          <label><input type="checkbox" value="Mon" checked /> Mon</label>
+          <label><input type="checkbox" value="Tue" checked /> Tue</label>
+          <label><input type="checkbox" value="Wed" checked /> Wed</label>
+          <label><input type="checkbox" value="Thu" checked /> Thu</label>
+          <label><input type="checkbox" value="Fri" checked /> Fri</label>
+          <label><input type="checkbox" value="Sat" /> Sat</label>
+          <label><input type="checkbox" value="Sun" /> Sun</label>
+        </div>
+      </div>
+      <div class="row" style="justify-content:flex-start;margin-top:10px;">
+        <div style="display:flex;flex-direction:column;gap:6px;flex:1 1 190px;">
+          <label>Arrival time</label>
+          <input id="multiStartTime" type="time" />
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex:1 1 190px;">
+          <label>Finishing time</label>
+          <input id="multiEndTime" type="time" />
+        </div>
+      </div>
+      <div id="multiDayStatus" class="inlineStatus"></div>
+      <div class="row">
+        <button class="btn secondary" id="multiCancel" type="button">Cancel</button>
+        <button class="btn" id="multiContinue" type="button">Apply recurring dates</button>
+      </div>
+    </div>
+  </div>
 
   <div id="bookingModal" class="modalBack">
     <div class="modal">
@@ -262,6 +317,7 @@
     const BOOKING_LOCATION_STORAGE_KEY = "parentBookingLocationSelection";
     const CANDIDATE_SEARCH_STATE_KEY = "parentCandidateSearchState";
     const FAVORITE_BROADCAST_SELECTION_KEY = "parentFavoriteBroadcastSelection";
+    const PARENT_MULTI_DAY_STORAGE_KEY = "parentMultiDayRequest";
 
     async function guard() {
       const me = await requireMe();
@@ -292,6 +348,13 @@
     let selectedNannies = new Set();
     let searchCalendar = null;
     let selectedCalendarDates = new Set();
+    let candidateSearchSource = "once";
+    const multiDayModal = document.getElementById("multiDayModal");
+    const multiStartDateInput = document.getElementById("multiStartDate");
+    const multiEndDateInput = document.getElementById("multiEndDate");
+    const multiStartTimeInput = document.getElementById("multiStartTime");
+    const multiEndTimeInput = document.getElementById("multiEndTime");
+    const multiDayStatus = document.getElementById("multiDayStatus");
 
     function formatDateLabel(dateStr) {
       const date = new Date(`${dateStr}T00:00:00`);
@@ -304,11 +367,186 @@
       });
     }
 
+    function formatShortDateLabel(dateStr) {
+      const date = new Date(`${dateStr}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return dateStr;
+      return date.toLocaleDateString("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    }
+
     function formatDateValue(date) {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, "0");
       const day = String(date.getDate()).padStart(2, "0");
       return `${year}-${month}-${day}`;
+    }
+
+    function parseDateOnly(dateStr) {
+      if (!dateStr) return null;
+      const date = new Date(`${dateStr}T00:00:00`);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function resolveMultiDayEndDate(data) {
+      const startDate = parseDateOnly(data?.startDate);
+      if (!startDate) return null;
+      const explicitEndDate = parseDateOnly(data?.endDate);
+      if (explicitEndDate && explicitEndDate >= startDate) return explicitEndDate;
+      const weeks = Math.max(1, Number(data?.weeks || 1));
+      const fallbackEndDate = new Date(startDate);
+      fallbackEndDate.setDate(startDate.getDate() + (weeks * 7) - 1);
+      return fallbackEndDate;
+    }
+
+    function buildMultiDayNoticeText(data) {
+      if (!data) return "";
+      const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
+      const endDate = resolveMultiDayEndDate(data);
+      const endDateLabel = endDate ? formatShortDateLabel(formatDateValue(endDate)) : "the selected stop date";
+      const arrivalTime = data?.startTime || "--:--";
+      const finishingTime = data?.endTime || "--:--";
+      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}.`;
+    }
+
+    function addDaysToDate(dateStr, daysToAdd) {
+      const date = parseDateOnly(dateStr);
+      if (!date) return "";
+      date.setDate(date.getDate() + Number(daysToAdd || 0));
+      return formatDateValue(date);
+    }
+
+    function setMultiDayNotice(data) {
+      const notice = document.getElementById("multiDayNotice");
+      if (!notice) return;
+      if (!data) {
+        notice.textContent = "";
+        notice.style.display = "none";
+        return;
+      }
+      notice.textContent = buildMultiDayNoticeText(data);
+      notice.style.display = "block";
+    }
+
+    function updateCandidateSearchSource(source) {
+      candidateSearchSource = source === "multi" ? "multi" : "once";
+      const params = new URLSearchParams(window.location.search);
+      if (candidateSearchSource === "multi") params.set("multi", "1");
+      else params.delete("multi");
+      const nextQuery = params.toString();
+      const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
+      window.history.replaceState({}, "", nextUrl);
+    }
+
+    function resetMultiDayStatus() {
+      if (multiDayStatus) multiDayStatus.textContent = "";
+    }
+
+    function syncMultiDayEndDate() {
+      if (!multiStartDateInput || !multiEndDateInput) return;
+      const startDate = multiStartDateInput.value || "";
+      multiEndDateInput.min = startDate || "";
+      if (!startDate) return;
+      if (!multiEndDateInput.value || multiEndDateInput.value < startDate) {
+        multiEndDateInput.value = addDaysToDate(startDate, 6);
+      }
+    }
+
+    function setRecurringWeekdays(days) {
+      const selectedDays = new Set(Array.isArray(days) ? days : []);
+      multiDayModal.querySelectorAll(".weekdays input[type=\"checkbox\"]").forEach((input) => {
+        input.checked = selectedDays.has(input.value);
+      });
+    }
+
+    function getRecurringWeekdays() {
+      return Array.from(multiDayModal.querySelectorAll(".weekdays input:checked")).map((input) => input.value);
+    }
+
+    function readStoredRecurringBooking() {
+      try {
+        const raw = localStorage.getItem(PARENT_MULTI_DAY_STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+
+    function populateRecurringBookingModal() {
+      const stored = readStoredRecurringBooking();
+      const slots = sortSlots(bookingState.slots || []);
+      const firstSlot = slots[0] || null;
+      const defaultStartDate = stored?.startDate || firstSlot?.date || formatDateValue(new Date());
+      multiStartDateInput.value = defaultStartDate;
+      syncMultiDayEndDate();
+      multiEndDateInput.value = stored?.endDate || multiEndDateInput.value || addDaysToDate(defaultStartDate, 6);
+      multiStartTimeInput.value = stored?.startTime || firstSlot?.start_time || "08:00";
+      multiEndTimeInput.value = stored?.endTime || firstSlot?.end_time || "17:00";
+      setRecurringWeekdays(stored?.days?.length ? stored.days : ["Mon", "Tue", "Wed", "Thu", "Fri"]);
+      resetMultiDayStatus();
+    }
+
+    function openRecurringBookingModal() {
+      populateRecurringBookingModal();
+      multiDayModal.style.display = "flex";
+    }
+
+    function closeRecurringBookingModal() {
+      resetMultiDayStatus();
+      multiDayModal.style.display = "none";
+    }
+
+    function applyRecurringBookingSelection() {
+      resetMultiDayStatus();
+      const startDate = multiStartDateInput.value || null;
+      const endDate = multiEndDateInput.value || null;
+      const days = getRecurringWeekdays();
+      const startTime = multiStartTimeInput.value || null;
+      const endTime = multiEndTimeInput.value || null;
+
+      if (!startDate) {
+        multiDayStatus.textContent = "Select a start date.";
+        return;
+      }
+      if (!endDate) {
+        multiDayStatus.textContent = "Select the date when the recurrence should stop.";
+        return;
+      }
+      if (endDate < startDate) {
+        multiDayStatus.textContent = "The recurrence stop date must be on or after the start date.";
+        return;
+      }
+      if (!days.length) {
+        multiDayStatus.textContent = "Select at least one day for the recurring booking.";
+        return;
+      }
+      if (!startTime) {
+        multiDayStatus.textContent = "Select an arrival time.";
+        return;
+      }
+      if (!endTime) {
+        multiDayStatus.textContent = "Select a finishing time.";
+        return;
+      }
+      if (endTime <= startTime) {
+        multiDayStatus.textContent = "Finishing time must be after arrival time.";
+        return;
+      }
+
+      const payload = { startDate, endDate, days, startTime, endTime };
+      localStorage.setItem(PARENT_MULTI_DAY_STORAGE_KEY, JSON.stringify(payload));
+      updateCandidateSearchSource("multi");
+      setMultiDayNotice(payload);
+      if (searchCalendar) {
+        renderStoredMultiDaySelection(searchCalendar, payload);
+      }
+      updateSelectedDatesSummary();
+      renderSelectedSlotRows();
+      document.getElementById("status").textContent = "Recurring dates loaded. Review them and continue to available nannies.";
+      closeRecurringBookingModal();
     }
 
     function sortSlots(slots) {
@@ -1023,19 +1261,16 @@
       const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
       const wantedDays = new Set((Array.isArray(data.days) ? data.days : []).map(d => dayMap[d]).filter(d => d !== undefined));
       if (!wantedDays.size) return;
-      const weeks = Math.max(1, Number(data.weeks || 1));
-      const startDate = new Date(`${data.startDate}T00:00:00`);
-      if (Number.isNaN(startDate.getTime())) return;
+      const startDate = parseDateOnly(data.startDate);
+      const endDate = resolveMultiDayEndDate(data);
+      if (!startDate || !endDate || endDate < startDate) return;
       const [startHour, startMin] = String(data.startTime).split(":").map(v => Number(v));
       const [endHour, endMin] = String(data.endTime).split(":").map(v => Number(v));
       if (!Number.isFinite(startHour) || !Number.isFinite(startMin) || !Number.isFinite(endHour) || !Number.isFinite(endMin)) return;
       selectedCalendarDates = new Set();
       const slots = [];
 
-      const totalDays = weeks * 7;
-      for (let i = 0; i < totalDays; i++) {
-        const day = new Date(startDate);
-        day.setDate(startDate.getDate() + i);
+      for (let day = new Date(startDate); day <= endDate; day.setDate(day.getDate() + 1)) {
         if (!wantedDays.has(day.getDay())) continue;
         const dateStr = formatDateValue(day);
         selectedCalendarDates.add(dateStr);
@@ -1060,20 +1295,18 @@
       }
     }
 
-    function computeLastMultiDate(startDateStr, weeks, days) {
+    function computeLastMultiDate(startDateStr, endDateStr, days) {
       if (!startDateStr || !Array.isArray(days) || days.length === 0) return null;
       const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
       const wanted = new Set(days.map(d => dayMap[d]).filter(d => d !== undefined));
       if (wanted.size === 0) return null;
-      const start = new Date(startDateStr + "T00:00:00");
-      if (Number.isNaN(start.getTime())) return null;
+      const start = parseDateOnly(startDateStr);
+      const end = parseDateOnly(endDateStr);
+      if (!start || !end || end < start) return null;
       let last = null;
-      const totalDays = Math.max(1, Number(weeks || 1)) * 7;
-      for (let i = 0; i < totalDays; i++) {
-        const d = new Date(start);
-        d.setDate(start.getDate() + i);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         if (wanted.has(d.getDay())) {
-          last = d;
+          last = new Date(d);
         }
       }
       return last;
@@ -1310,7 +1543,7 @@
         return;
       }
       const params = new URLSearchParams(window.location.search);
-      persistCandidateSearchState(params.get("multi") === "1" ? "multi" : "once");
+      persistCandidateSearchState(candidateSearchSource);
       const nextParams = new URLSearchParams();
       if (params.get("favorite_broadcast") === "1" && readFavoriteBroadcastSelection().length) {
         nextParams.set("favorite_broadcast", "1");
@@ -1327,6 +1560,9 @@
       selectedCalendarDates = new Set();
       setBookingSlots([]);
       localStorage.removeItem(CANDIDATE_SEARCH_STATE_KEY);
+      localStorage.removeItem(PARENT_MULTI_DAY_STORAGE_KEY);
+      updateCandidateSearchSource("once");
+      setMultiDayNotice(null);
       renderCalendarSelectedDates();
       updateSelectedDatesSummary();
       renderSelectedSlotRows();
@@ -1337,6 +1573,34 @@
       const ids = Array.from(selectedNannies);
       if (!ids.length) return;
       openBookingModal(null, "", ids);
+    });
+
+    document.getElementById("openRecurringBookingBtn").addEventListener("click", () => {
+      openRecurringBookingModal();
+    });
+    document.getElementById("multiCancel").addEventListener("click", () => {
+      closeRecurringBookingModal();
+    });
+    document.getElementById("multiContinue").addEventListener("click", () => {
+      applyRecurringBookingSelection();
+    });
+    multiDayModal.addEventListener("click", (event) => {
+      if (event.target.id === "multiDayModal") {
+        closeRecurringBookingModal();
+      }
+    });
+    [multiStartDateInput, multiEndDateInput, multiStartTimeInput, multiEndTimeInput].forEach((input) => {
+      input.addEventListener("input", () => {
+        resetMultiDayStatus();
+      });
+    });
+    multiStartDateInput.addEventListener("change", () => {
+      syncMultiDayEndDate();
+    });
+    multiDayModal.querySelectorAll(".weekdays input[type=\"checkbox\"]").forEach((input) => {
+      input.addEventListener("change", () => {
+        resetMultiDayStatus();
+      });
     });
 
     guard().then(async () => {
@@ -1359,21 +1623,15 @@
       });
       const params = new URLSearchParams(window.location.search);
       let multiData = null;
+      candidateSearchSource = params.get("multi") === "1" ? "multi" : "once";
       const restoredFromSearch = params.get("restore") === "1" && hydrateStoredCandidateSearchState();
       if (params.get("multi") === "1") {
         try {
-          const raw = localStorage.getItem("parentMultiDayRequest");
+          const raw = localStorage.getItem(PARENT_MULTI_DAY_STORAGE_KEY);
           if (raw) {
             const data = JSON.parse(raw);
             multiData = data;
-            const notice = document.getElementById("multiDayNotice");
-            if (notice) {
-              const days = Array.isArray(data?.days) && data.days.length ? data.days.join(", ") : "selected days";
-              const weeks = Number(data?.weeks || 1);
-              const timeRange = (data?.startTime || data?.endTime) ? `${data?.startTime || "--:--"}–${data?.endTime || "--:--"}` : "any time";
-              notice.textContent = `Multiple days: ${days} for ${weeks} week${weeks > 1 ? "s" : ""}, ${timeRange}.`;
-              notice.style.display = "block";
-            }
+            setMultiDayNotice(data);
           }
         } catch {}
       }

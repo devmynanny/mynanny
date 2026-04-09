@@ -189,6 +189,17 @@ class ParentProfile(Base):
     family_photo_url = Column(String, nullable=True)
     residence_type = Column(String, nullable=True)
     access_flags_json = Column(Text, nullable=True)
+    booking_responsibilities = Column(Text, nullable=True)
+    booking_adult_present = Column(Text, nullable=True)
+    booking_reason = Column(Text, nullable=True)
+    booking_children_count = Column(Integer, nullable=True)
+    booking_meal_option = Column(Text, nullable=True)
+    booking_food_restrictions = Column(Text, nullable=True)
+    booking_dogs = Column(Text, nullable=True)
+    booking_disclaimer_basic_upkeep = Column(Boolean, nullable=True)
+    booking_disclaimer_medicine = Column(Boolean, nullable=True)
+    booking_disclaimer_extra_hours = Column(Boolean, nullable=True)
+    booking_disclaimer_transport = Column(Boolean, nullable=True)
 
 
 class ParentFavorite(Base):

@@ -262,6 +262,17 @@ class BookingRequestCreate(BaseModel):
     notes: Optional[str] = None
     location_id: Optional[int] = None
     sleepover: Optional[bool] = None
+    kids_count: Optional[int] = 1
+    responsibilities: Optional[str] = None
+    adult_present: Optional[str] = None
+    booking_reason: Optional[str] = None
+    meal_option: Optional[str] = None
+    food_restrictions: Optional[str] = None
+    dogs_info: Optional[str] = None
+    disclaimer_basic_upkeep: Optional[bool] = None
+    disclaimer_medicine: Optional[bool] = None
+    disclaimer_extra_hours: Optional[bool] = None
+    disclaimer_transport: Optional[bool] = None
 
 
 class BookingRequestBulkCreate(BaseModel):
@@ -272,6 +283,17 @@ class BookingRequestBulkCreate(BaseModel):
     notes: Optional[str] = None
     location_id: Optional[int] = None
     sleepover: Optional[bool] = None
+    kids_count: Optional[int] = 1
+    responsibilities: Optional[str] = None
+    adult_present: Optional[str] = None
+    booking_reason: Optional[str] = None
+    meal_option: Optional[str] = None
+    food_restrictions: Optional[str] = None
+    dogs_info: Optional[str] = None
+    disclaimer_basic_upkeep: Optional[bool] = None
+    disclaimer_medicine: Optional[bool] = None
+    disclaimer_extra_hours: Optional[bool] = None
+    disclaimer_transport: Optional[bool] = None
 
 
 class BookingEstimateRequest(BaseModel):
@@ -280,6 +302,7 @@ class BookingEstimateRequest(BaseModel):
     slots: Optional[List[BookingSlot]] = None
     sleepover: Optional[bool] = None
     selected_count: Optional[int] = 1
+    kids_count: Optional[int] = 1
 
 
 class BookingEstimateResponse(BaseModel):
@@ -423,7 +446,7 @@ class ReviewOut(BaseModel):
 
 class ParentProfileDetailsRequest(BaseModel):
     phone: Optional[str] = None
-    kids_count: int
+    kids_count: Optional[int] = None
     kids_ages: Optional[List[int]] = None
     desired_tag_ids: Optional[List[int]] = None
     home_language_id: Optional[int] = None
@@ -431,6 +454,17 @@ class ParentProfileDetailsRequest(BaseModel):
     family_photo_url: Optional[str] = None
     residence_type: Optional[str] = None
     access_flags: Optional[List[str]] = None
+    booking_responsibilities: Optional[str] = None
+    booking_adult_present: Optional[str] = None
+    booking_reason: Optional[str] = None
+    booking_children_count: Optional[int] = None
+    booking_meal_option: Optional[str] = None
+    booking_food_restrictions: Optional[str] = None
+    booking_dogs: Optional[str] = None
+    booking_disclaimer_basic_upkeep: Optional[bool] = None
+    booking_disclaimer_medicine: Optional[bool] = None
+    booking_disclaimer_extra_hours: Optional[bool] = None
+    booking_disclaimer_transport: Optional[bool] = None
 
 
 class ParentLocationBase(BaseModel):
