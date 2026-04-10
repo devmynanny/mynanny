@@ -54,6 +54,13 @@
       .dob-fields input {
         flex: 1 1 90px;
       }
+      .conditional-row {
+        margin-top: 8px;
+      }
+      .hidden-temporary,
+      .admin-only-section {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
@@ -86,7 +93,7 @@
           <input id="phoneAlt" style="width:100%; padding:8px;" placeholder="Alternative phone number" />
         </div>
         <div style="min-width:200px;">
-          <label class="small">Date of birth <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
+          <label class="small">Date of birth <span id="dobHelpTip" class="help-tip" title="">?</span></label>
           <input id="dob" type="hidden" />
           <div class="dob-fields">
             <select id="dobDay" style="padding:8px;">
@@ -99,7 +106,7 @@
           </div>
         </div>
       </div>
-      <div style="margin-top:10px;">
+      <div id="bioSection" class="hidden-temporary" style="margin-top:10px;">
         <label class="small">Bio (optional)</label>
         <textarea id="bio" style="width:100%; min-height:80px; padding:8px;" placeholder="Short bio"></textarea>
       </div>
@@ -236,14 +243,69 @@
       <div class="small" id="locationStatus"></div>
     </div>
 
-    <div class="card">
-      <div style="font-weight:600; margin-bottom:8px;">Tags</div>
+    <div class="card admin-only-section" id="dogPreferenceSection">
+      <div style="font-weight:600; margin-bottom:8px;">Preference with dogs</div>
+      <select id="dogPreference" style="width:100%; max-width:360px; padding:8px;">
+        <option value="">Select preference</option>
+        <option value="i_prefer_small_dogs">I prefer small dogs</option>
+        <option value="any_dog_is_fine">Any dog is fine</option>
+        <option value="not_pitbulls_or_rotweilers">Not pitbulls or rotweilers</option>
+        <option value="no_dogs">No dogs</option>
+      </select>
+    </div>
+
+    <div class="card admin-only-section" id="qualificationsSection">
+      <div style="font-weight:600; margin-bottom:8px;">Qualifications</div>
+      <div id="qualificationsList" class="row"></div>
+      <div id="studyingDetailsRow" class="conditional-row" style="display:none;">
+        <label class="small">What are you studying?</label>
+        <input id="studyingDetails" style="width:100%; padding:8px;" placeholder="Tell us what you are studying" />
+      </div>
+    </div>
+
+    <div class="card admin-only-section" id="areasExperienceSection">
+      <div style="font-weight:600; margin-bottom:8px;">Areas of experience</div>
       <div id="tagsList" class="row"></div>
     </div>
 
     <div class="card">
       <div style="font-weight:600; margin-bottom:8px;">Languages</div>
       <div id="languagesList" class="row"></div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Documents</div>
+      <div class="small" style="margin-bottom:10px;">
+        You can upload what you have now and finish your profile. The only mandatory documents right now are your ID/passport and one permit document: permit, waiver, or receipt.
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div class="doc-upload">
+          <label class="small">Police clearance / criminal check</label>
+          <div class="row">
+            <input id="policeClearanceFile" type="file" accept=".pdf,image/*" />
+            <button id="uploadPoliceClearanceBtn" type="button">Upload police clearance</button>
+          </div>
+          <div class="small" id="policeClearanceStatus"></div>
+        </div>
+        <div class="doc-upload">
+          <label class="small">Driver's license</label>
+          <div class="row">
+            <input id="driversLicenseFile" type="file" accept=".pdf,image/*" />
+            <button id="uploadDriversLicenseBtn" type="button">Upload driver's license</button>
+          </div>
+          <div class="small" id="driversLicenseStatus"></div>
+        </div>
+      </div>
+      <div class="doc-upload" style="margin-top:10px;">
+        <label class="small">Certificates</label>
+        <div class="row">
+          <input id="certificateFile" type="file" accept=".pdf,image/*" />
+          <button id="uploadCertificateBtn" type="button">Upload certificate</button>
+          <button id="addCertificateBtn" type="button">+ Add another</button>
+        </div>
+        <div class="small" id="certificateStatus"></div>
+        <div class="small" id="certificateList" style="margin-top:6px;"></div>
+      </div>
     </div>
 
     <div class="card">
@@ -410,6 +472,15 @@
         });
       }
 
+      function updateDobHelpTip(isApproved) {
+        const helpTip = document.getElementById("dobHelpTip");
+        const hasDob = !!(document.getElementById("dob")?.value || "").trim();
+        if (!helpTip) return;
+        helpTip.title = (isApproved || hasDob)
+          ? "If you need to change this, please contact admin."
+          : "Please enter your date of birth.";
+      }
+
       function applyApprovedFieldPolicy(isApproved) {
         const dobEl = document.getElementById("dob");
         const passportNumberEl = document.getElementById("passportNumber");
@@ -420,6 +491,7 @@
         if (passportNumberEl) passportNumberEl.disabled = !!isApproved;
         if (saIdNumberEl) saIdNumberEl.disabled = !!isApproved;
         if (lockNoticeEl) lockNoticeEl.style.display = isApproved ? "block" : "none";
+        updateDobHelpTip(isApproved);
       }
 
       function renderTags(tags, selectedIds) {
@@ -460,9 +532,42 @@
         });
       }
 
+      function renderQualifications(quals, selectedIds) {
+        const root = document.getElementById("qualificationsList");
+        root.innerHTML = "";
+        (quals || []).forEach((q) => {
+          const id = `qual_${q.id}`;
+          const wrap = document.createElement("label");
+          wrap.className = "small";
+          wrap.style.display = "flex";
+          wrap.style.alignItems = "center";
+          wrap.style.gap = "6px";
+          wrap.innerHTML = `<input type="checkbox" id="${id}" name="qualifications" value="${q.id}"> ${q.name}`;
+          root.appendChild(wrap);
+        });
+        (selectedIds || []).forEach((id) => {
+          const cb = document.getElementById(`qual_${id}`);
+          if (cb) cb.checked = true;
+        });
+        document.querySelectorAll("input[name='qualifications']").forEach((el) => {
+          el.addEventListener("change", syncStudyingDetails);
+        });
+        syncStudyingDetails();
+      }
+
       function getSelectedIds(name) {
         return Array.from(document.querySelectorAll(`input[name='${name}']:checked`))
           .map(cb => Number(cb.value));
+      }
+
+      function syncStudyingDetails() {
+        const studyingRow = document.getElementById("studyingDetailsRow");
+        const studyingSelected = Array.from(document.querySelectorAll("input[name='qualifications']:checked"))
+          .some((cb) => {
+            const label = cb.parentElement?.textContent || "";
+            return label.trim().toLowerCase() === "studying";
+          });
+        if (studyingRow) studyingRow.style.display = studyingSelected ? "block" : "none";
       }
 
       function createPreviousJobCard(item = {}) {
@@ -489,6 +594,31 @@
             </div>
           </div>
           <div class="row" style="margin-top:8px;">
+            <div style="flex:1;min-width:260px;">
+              <label class="small">What kind of care did you provide for this family?</label>
+              <select class="prev-care-type" style="width:100%; padding:8px;">
+                <option value="">Select care type</option>
+                <option value="childcare_toddlers">Childcare (toddlers)</option>
+                <option value="infant_care">Infant care (0-12 months)</option>
+                <option value="elderly_care">Elderly care</option>
+                <option value="domestic_house_cleaning">Domestic house cleaning</option>
+                <option value="disability_care">Disability care</option>
+              </select>
+            </div>
+          </div>
+          <div class="row conditional-row prev-kids-age-row" style="display:none;">
+            <div style="flex:1;min-width:260px;">
+              <label class="small">How old were the kids when you started?</label>
+              <input class="prev-kids-age-when-started" style="width:100%; padding:8px;" placeholder="e.g. 6 months and 3 years old" />
+            </div>
+          </div>
+          <div class="row conditional-row prev-disability-row" style="display:none;">
+            <div style="flex:1;min-width:260px;">
+              <label class="small">What was the disability?</label>
+              <input class="prev-disability-details" style="width:100%; padding:8px;" placeholder="Describe the disability" />
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px;">
             <div style="flex:1;min-width:220px;">
               <label class="small">Reference name</label>
               <input class="prev-ref-name" style="width:100%; padding:8px;" placeholder="Reference full name" />
@@ -502,13 +632,36 @@
               <input class="prev-ref-relationship" style="width:100%; padding:8px;" placeholder="e.g. Employer / Parent" />
             </div>
           </div>
+          <div class="row hidden-temporary prev-reference-letter-row" style="margin-top:8px;">
+            <div style="flex:1;min-width:260px;">
+              <label class="small">Reference letter / photo</label>
+              <input class="prev-reference-letter" type="file" accept=".pdf,image/*" />
+              <div class="small">This will be shown once a booking is confirmed.</div>
+            </div>
+          </div>
         `;
+        const syncCareTypeFields = () => {
+          const careType = card.querySelector(".prev-care-type")?.value || "";
+          const kidsAgeRow = card.querySelector(".prev-kids-age-row");
+          const disabilityRow = card.querySelector(".prev-disability-row");
+          if (kidsAgeRow) {
+            kidsAgeRow.style.display = (careType === "childcare_toddlers" || careType === "infant_care") ? "flex" : "none";
+          }
+          if (disabilityRow) {
+            disabilityRow.style.display = careType === "disability_care" ? "flex" : "none";
+          }
+        };
         card.querySelector(".prev-role").value = item.role || "";
         card.querySelector(".prev-employer").value = item.employer || "";
         card.querySelector(".prev-period").value = item.period || "";
+        card.querySelector(".prev-care-type").value = item.care_type || "";
+        card.querySelector(".prev-kids-age-when-started").value = item.kids_age_when_started || "";
+        card.querySelector(".prev-disability-details").value = item.disability_details || "";
         card.querySelector(".prev-ref-name").value = item.reference_name || "";
         card.querySelector(".prev-ref-phone").value = item.reference_phone || "";
         card.querySelector(".prev-ref-relationship").value = item.reference_relationship || "";
+        card.querySelector(".prev-care-type").addEventListener("change", syncCareTypeFields);
+        syncCareTypeFields();
         card.querySelector(".removePreviousJobBtn").addEventListener("click", () => {
           card.remove();
         });
@@ -532,6 +685,10 @@
           role: row.querySelector(".prev-role")?.value?.trim() || null,
           employer: row.querySelector(".prev-employer")?.value?.trim() || null,
           period: row.querySelector(".prev-period")?.value?.trim() || null,
+          care_type: row.querySelector(".prev-care-type")?.value || null,
+          kids_age_when_started: row.querySelector(".prev-kids-age-when-started")?.value?.trim() || null,
+          disability_details: row.querySelector(".prev-disability-details")?.value?.trim() || null,
+          reference_letter_url: null,
           reference_name: row.querySelector(".prev-ref-name")?.value?.trim() || null,
           reference_phone: row.querySelector(".prev-ref-phone")?.value?.trim() || null,
           reference_relationship: row.querySelector(".prev-ref-relationship")?.value?.trim() || null,
@@ -719,6 +876,51 @@
         useCurrentLocation().catch(e => setLocationStatus(e?.message || String(e), 3000));
       });
 
+      async function uploadSimpleDocument(fileInputId, statusId, endpoint, datasetKey = "url", append = false) {
+        const fileInput = document.getElementById(fileInputId);
+        const status = document.getElementById(statusId);
+        status.textContent = "";
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          status.textContent = "Choose a file first.";
+          return null;
+        }
+        const formData = new FormData();
+        formData.append("file", file);
+        try {
+          const uploadHeaders = {};
+          const impersonationToken = sessionStorage.getItem("impersonation_token");
+          const legacyToken = localStorage.getItem("token");
+          const authToken = impersonationToken || legacyToken;
+          if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+          if (getCsrfToken && getCsrfToken()) uploadHeaders["X-CSRF-Token"] = getCsrfToken();
+          const res = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: uploadHeaders,
+            body: formData
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(text || "Upload failed");
+          }
+          const data = await res.json();
+          fileInput.value = "";
+          if (append) {
+            const current = JSON.parse(fileInput.dataset[datasetKey] || "[]");
+            current.push(data.url || "");
+            fileInput.dataset[datasetKey] = JSON.stringify(current.filter(Boolean));
+          } else {
+            fileInput.dataset[datasetKey] = data.url || "";
+          }
+          status.textContent = "Uploaded.";
+          return data.url || null;
+        } catch (e) {
+          status.textContent = e.message || "Upload failed";
+          return null;
+        }
+      }
+
       document.getElementById("uploadSaIdBtn").addEventListener("click", async () => {
         const fileInput = document.getElementById("saIdFile");
         const status = document.getElementById("saIdStatus");
@@ -827,6 +1029,37 @@
           status.textContent = e.message || "Upload failed";
         }
       });
+      document.getElementById("uploadPoliceClearanceBtn").addEventListener("click", async () => {
+        await uploadSimpleDocument("policeClearanceFile", "policeClearanceStatus", "/nannies/me/police-clearance-document");
+      });
+      document.getElementById("uploadDriversLicenseBtn").addEventListener("click", async () => {
+        await uploadSimpleDocument("driversLicenseFile", "driversLicenseStatus", "/nannies/me/drivers-license-document");
+      });
+      document.getElementById("uploadCertificateBtn").addEventListener("click", async () => {
+        const url = await uploadSimpleDocument("certificateFile", "certificateStatus", "/nannies/me/certificates", "urls", true);
+        if (url) renderCertificateList();
+      });
+      document.getElementById("addCertificateBtn").addEventListener("click", () => {
+        document.getElementById("certificateFile").click();
+      });
+      document.getElementById("certificateFile").addEventListener("change", async () => {
+        if (!(document.getElementById("certificateFile").files || [])[0]) return;
+        const url = await uploadSimpleDocument("certificateFile", "certificateStatus", "/nannies/me/certificates", "urls", true);
+        if (url) renderCertificateList();
+      });
+
+      function renderCertificateList() {
+        const listEl = document.getElementById("certificateList");
+        const raw = document.getElementById("certificateFile").dataset.urls || "[]";
+        let items = [];
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) items = parsed.filter(Boolean);
+        } catch {}
+        listEl.textContent = items.length
+          ? `${items.length} certificate${items.length === 1 ? "" : "s"} uploaded.`
+          : "No certificates uploaded yet.";
+      }
 
       function toggleNationalityFields() {
         const nat = (document.getElementById("nationality").value || "").trim().toLowerCase();
@@ -848,6 +1081,9 @@
       document.getElementById("dobDay").addEventListener("change", syncDobInput);
       document.getElementById("dobMonth").addEventListener("change", syncDobInput);
       document.getElementById("dobYear").addEventListener("input", syncDobInput);
+      document.getElementById("dobDay").addEventListener("change", () => updateDobHelpTip(false));
+      document.getElementById("dobMonth").addEventListener("change", () => updateDobHelpTip(false));
+      document.getElementById("dobYear").addEventListener("input", () => updateDobHelpTip(false));
 
       function validateSaId(idNumber, dobValue) {
         const s = (idNumber || "").trim();
@@ -917,10 +1153,6 @@
           alert("Please set your home address");
           return;
         }
-        if (tagIds.length === 0) {
-          alert("Select at least one tag");
-          return;
-        }
         if (languageIds.length === 0) {
           alert("Select at least one language");
           return;
@@ -958,7 +1190,6 @@
           }
           return;
         }
-
         const saIdNumber = document.getElementById("saIdNumber").value || "";
         const saIdErrorEl = document.getElementById("saIdError");
         const passportErrorEl = document.getElementById("passportError");
@@ -1014,7 +1245,6 @@
               phone: document.getElementById("phone").value || null,
               phone_alt: document.getElementById("phoneAlt").value || null,
               dob: dob,
-              bio: document.getElementById("bio").value || null,
               nationality: document.getElementById("nationality").value || null,
               ethnicity: document.getElementById("race").value || null,
               passport_number: document.getElementById("passportNumber").value || null,
@@ -1026,15 +1256,17 @@
               waiver: document.getElementById("waiver").value === "yes" ? true : (document.getElementById("waiver").value === "no" ? false : null),
               sa_id_number: document.getElementById("saIdNumber").value || null,
               sa_id_document_url: document.getElementById("saIdFile").dataset.url || null,
+              police_clearance_document_url: document.getElementById("policeClearanceFile").dataset.url || null,
+              drivers_license_document_url: document.getElementById("driversLicenseFile").dataset.url || null,
+              certificate_urls: JSON.parse(document.getElementById("certificateFile").dataset.urls || "[]"),
               previous_jobs: collectPreviousJobs(),
-              tag_ids: tagIds,
               language_ids: languageIds,
             })
           });
           savedMsg.style.display = "block";
           setTimeout(() => {
-            savedMsg.style.display = "none";
-          }, 5000);
+            location.href = "/static/nanny_availability.html?v=2";
+          }, 800);
         } catch (e) {
           status.textContent = "Save failed: " + (e?.message || String(e));
         } finally {
@@ -1058,8 +1290,9 @@
           window.location.href = "/static/nanny_home.html?v=2";
           return;
         }
-        const [profile, tags, langs] = await Promise.all([
+        const [profile, quals, tags, langs] = await Promise.all([
           fetchJson("/nannies/me/profile"),
+          fetchJson("/qualifications"),
           fetchJson("/nanny-tags"),
           fetchJson("/languages"),
         ]);
@@ -1072,7 +1305,8 @@
         document.getElementById("phone").value = profile.phone || "";
         document.getElementById("phoneAlt").value = profile.phone_alt || "";
         setDobValue(profile.dob || "");
-        document.getElementById("bio").value = profile.bio || "";
+        document.getElementById("dogPreference").value = profile.dog_preference || "";
+        document.getElementById("studyingDetails").value = profile.studying_details || "";
         document.getElementById("nationality").value = profile.nationality || "";
         document.getElementById("race").value = profile.ethnicity || "";
         document.getElementById("passportNumber").value = profile.passport_number || "";
@@ -1093,9 +1327,20 @@
         if (profile.sa_id_document_url) {
           document.getElementById("saIdStatus").textContent = "ID uploaded.";
         }
+        document.getElementById("policeClearanceFile").dataset.url = profile.police_clearance_document_url || "";
+        if (profile.police_clearance_document_url) {
+          document.getElementById("policeClearanceStatus").textContent = "Police clearance uploaded.";
+        }
+        document.getElementById("driversLicenseFile").dataset.url = profile.drivers_license_document_url || "";
+        if (profile.drivers_license_document_url) {
+          document.getElementById("driversLicenseStatus").textContent = "Driver's license uploaded.";
+        }
+        document.getElementById("certificateFile").dataset.urls = JSON.stringify(profile.certificate_urls || []);
+        renderCertificateList();
         renderPreviousJobs(profile.previous_jobs || []);
 
         toggleNationalityFields();
+        updateDobHelpTip(isApproved);
         const waiverSelect = document.getElementById("waiver");
         if (waiverSelect?.parentElement && (document.getElementById("workPermit").value !== "no")) {
           waiverSelect.parentElement.style.display = "none";
@@ -1120,6 +1365,7 @@
         locationState.suburb = profile.suburb || null;
         locationState.city = profile.city || null;
 
+        renderQualifications(quals, profile.qualification_ids || []);
         renderTags(tags, profile.tag_ids || []);
         renderLanguages(langs, profile.language_ids || []);
         const addPreviousJobBtn = document.getElementById("addPreviousJobBtn");

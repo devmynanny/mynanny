@@ -29,14 +29,17 @@ from app.utils.text_guard import redact_contact_info
 router = APIRouter()
 
 DEFAULT_NANNY_TAGS = [
-    "Infant care",
+    "Baby care (0-12 months)",
+    "Newborn care",
     "Toddler care",
-    "Special needs support",
-    "First aid",
-    "CPR",
-    "Homework help",
-    "Cooking for children",
-    "Sleep routine support",
+    "Domestic nanny",
+    "Mostly domestic",
+    "Elderly care",
+    "Disability care",
+    "Twin infant care",
+    "Nursing",
+    "Hospital NICU (baby ICU)",
+    "Pre-mature infant care",
 ]
 
 def _normalize_previous_jobs(raw: object) -> List[dict]:
@@ -58,6 +61,10 @@ def _normalize_previous_jobs(raw: object) -> List[dict]:
             "role": (row.get("role") or "").strip(),
             "employer": (row.get("employer") or "").strip(),
             "period": (row.get("period") or "").strip(),
+            "care_type": (row.get("care_type") or "").strip(),
+            "kids_age_when_started": (row.get("kids_age_when_started") or "").strip(),
+            "disability_details": (row.get("disability_details") or "").strip(),
+            "reference_letter_url": (row.get("reference_letter_url") or "").strip(),
             "reference_name": (row.get("reference_name") or "").strip(),
             "reference_phone": (row.get("reference_phone") or "").strip(),
             "reference_relationship": (row.get("reference_relationship") or "").strip(),
@@ -139,14 +146,45 @@ def _build_nanny_profile_summary(
     return " ".join(parts)
 
 
+def _public_nanny_name(full_name: Optional[str]) -> str:
+    parts = [p for p in str(full_name or "").strip().split() if p]
+    if not parts:
+        return "Nanny"
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} {parts[-1][0]}."
+
+
 def _ensure_default_nanny_tags(db: Session) -> List[models.NannyTag]:
-    rows = db.query(models.NannyTag).order_by(models.NannyTag.name.asc()).all()
-    if rows:
-        return rows
-    created = [models.NannyTag(name=name) for name in DEFAULT_NANNY_TAGS]
-    db.add_all(created)
+    rows = db.query(models.NannyTag).all()
+    by_lower = {((row.name or "").strip().lower()): row for row in rows}
+    desired_lowers = {name.lower() for name in DEFAULT_NANNY_TAGS}
+
+    for name in DEFAULT_NANNY_TAGS:
+        existing = by_lower.get(name.lower())
+        if existing:
+            if existing.name != name:
+                existing.name = name
+        else:
+            row = models.NannyTag(name=name)
+            db.add(row)
+            db.flush()
+            by_lower[name.lower()] = row
+
+    extra_rows = [row for row in rows if ((row.name or "").strip().lower()) not in desired_lowers]
+    extra_ids = [row.id for row in extra_rows]
+    if extra_ids:
+        db.execute(
+            models.nanny_profile_tags.delete().where(models.nanny_profile_tags.c.tag_id.in_(extra_ids))
+        )
+        for row in extra_rows:
+            db.delete(row)
+
     db.commit()
-    return db.query(models.NannyTag).order_by(models.NannyTag.name.asc()).all()
+
+    synced_rows = db.query(models.NannyTag).all()
+    synced_by_lower = {((row.name or "").strip().lower()): row for row in synced_rows}
+    return [synced_by_lower[name.lower()] for name in DEFAULT_NANNY_TAGS if name.lower() in synced_by_lower]
 
 def get_google_maps_browser_api_key() -> tuple[Optional[str], Optional[str]]:
     db = SessionLocal()
@@ -1359,7 +1397,34 @@ def auth_signup(payload: schemas.SignupRequest, request: Request, response: Resp
     if payload.role == "parent":
         db.add(models.ParentProfile(user_id=user.id))
     elif payload.role == "nanny":
+        def _norm_text(value: Optional[str]) -> Optional[str]:
+            if value is None:
+                return None
+            value = value.strip()
+            return value or None
+
         nat = payload.nationality.strip().lower() if payload.nationality else ""
+        permit_status = _norm_text(payload.permit_status)
+        has_own_car = payload.has_own_car if payload.has_own_car is not None else None
+        has_drivers_license = payload.has_drivers_license if payload.has_drivers_license is not None else None
+        has_own_kids = payload.has_own_kids if payload.has_own_kids is not None else None
+        own_kids_details = _norm_text(payload.own_kids_details)
+
+        if not _norm_text(payload.gender):
+            raise HTTPException(status_code=400, detail="Gender is required")
+        if not _norm_text(payload.ethnicity):
+            raise HTTPException(status_code=400, detail="Race is required")
+        if not _norm_text(payload.job_type):
+            raise HTTPException(status_code=400, detail="Job type is required")
+        if not _norm_text(payload.police_clearance_status):
+            raise HTTPException(status_code=400, detail="Police clearance status is required")
+        if not _norm_text(payload.my_nanny_training_status):
+            raise HTTPException(status_code=400, detail="Training status is required")
+        if has_own_car is True and has_drivers_license is None:
+            raise HTTPException(status_code=400, detail="Driver's license status is required")
+        if has_own_kids is True and not own_kids_details:
+            raise HTTPException(status_code=400, detail="Please share how old your children are and where they stay")
+
         if nat == "south african":
             if not payload.sa_id_number:
                 raise HTTPException(status_code=400, detail="South African ID number is required")
@@ -1369,20 +1434,35 @@ def auth_signup(payload: schemas.SignupRequest, request: Request, response: Resp
         elif nat:
             if not payload.passport_number:
                 raise HTTPException(status_code=400, detail="Passport number is required")
+            if permit_status not in {"permit", "waiver", "receipt"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="You need a waiver/receipt or permit for approval. Once you obtain this, please email it to nannies.info@gmail.com",
+                )
         nanny = models.Nanny(user_id=user.id, approved=False)
         db.add(nanny)
         db.flush()
         profile = models.NannyProfile(
             nanny_id=nanny.id,
-            nationality=payload.nationality.strip() if payload.nationality else None,
-            ethnicity=payload.ethnicity.strip() if payload.ethnicity else None,
-            passport_number=payload.passport_number.strip() if payload.passport_number else None,
-            passport_expiry=payload.passport_expiry.strip() if payload.passport_expiry else None,
-            work_permit=payload.work_permit if payload.work_permit is not None else None,
-            work_permit_expiry=payload.work_permit_expiry.strip() if payload.work_permit_expiry else None,
-            waiver=payload.waiver if payload.waiver is not None else None,
-            sa_id_number=payload.sa_id_number.strip() if payload.sa_id_number else None,
-            sa_id_document_url=payload.sa_id_document_url.strip() if payload.sa_id_document_url else None,
+            nationality=_norm_text(payload.nationality),
+            gender=_norm_text(payload.gender),
+            ethnicity=_norm_text(payload.ethnicity),
+            passport_number=_norm_text(payload.passport_number),
+            passport_expiry=_norm_text(payload.passport_expiry),
+            permit_status=permit_status,
+            work_permit=True if permit_status == "permit" else (False if permit_status in {"waiver", "receipt"} else payload.work_permit if payload.work_permit is not None else None),
+            work_permit_expiry=_norm_text(payload.work_permit_expiry),
+            waiver=True if permit_status == "waiver" else (False if permit_status in {"permit", "receipt"} else payload.waiver if payload.waiver is not None else None),
+            sa_id_number=_norm_text(payload.sa_id_number),
+            sa_id_document_url=_norm_text(payload.sa_id_document_url),
+            has_own_car=has_own_car,
+            has_drivers_license=has_drivers_license,
+            job_type=_norm_text(payload.job_type),
+            police_clearance_status=_norm_text(payload.police_clearance_status),
+            has_own_kids=has_own_kids,
+            own_kids_details=own_kids_details,
+            medical_conditions=_norm_text(payload.medical_conditions),
+            my_nanny_training_status=_norm_text(payload.my_nanny_training_status),
         )
         db.add(profile)
         nanny_id = nanny.id
@@ -1545,11 +1625,38 @@ def _nanny_profile_snapshot(user: models.User, profile: models.NannyProfile) -> 
                 previous_jobs = parsed
         except Exception:
             previous_jobs = []
+    certificate_urls = []
+    raw_certs = getattr(profile, "certificates_json", None)
+    if raw_certs:
+        try:
+            parsed_certs = json.loads(raw_certs)
+            if isinstance(parsed_certs, list):
+                certificate_urls = [str(url).strip() for url in parsed_certs if str(url).strip()]
+        except Exception:
+            certificate_urls = []
     return {
         "full_name": user.name,
+        "gender": getattr(profile, "gender", None),
         "dob": getattr(profile, "date_of_birth", None),
         "bio": getattr(profile, "bio", None),
+        "nationality": getattr(profile, "nationality", None),
+        "race": getattr(profile, "ethnicity", None),
+        "permit_status": getattr(profile, "permit_status", None),
+        "has_own_car": getattr(profile, "has_own_car", None),
+        "has_drivers_license": getattr(profile, "has_drivers_license", None),
+        "job_type": getattr(profile, "job_type", None),
+        "police_clearance_status": getattr(profile, "police_clearance_status", None),
+        "has_own_kids": getattr(profile, "has_own_kids", None),
+        "own_kids_details": getattr(profile, "own_kids_details", None),
+        "medical_conditions": getattr(profile, "medical_conditions", None),
+        "my_nanny_training_status": getattr(profile, "my_nanny_training_status", None),
+        "dog_preference": getattr(profile, "dog_preference", None),
+        "studying_details": getattr(profile, "studying_details", None),
+        "police_clearance_document_url": getattr(profile, "police_clearance_document_url", None),
+        "drivers_license_document_url": getattr(profile, "drivers_license_document_url", None),
+        "certificate_urls": certificate_urls,
         "previous_jobs": previous_jobs,
+        "qualification_ids": sorted([q.id for q in (profile.qualifications or [])]),
         "tag_ids": sorted(tag_ids),
         "language_ids": sorted(language_ids),
     }
@@ -1887,6 +1994,148 @@ def upload_nanny_work_permit_document(
     return {"url": profile.work_permit_document_url}
 
 
+def _upload_nanny_optional_document(
+    *,
+    user: models.User,
+    request: Request,
+    db: Session,
+    file: UploadFile,
+    filename_prefix: str,
+    profile_attr: str,
+    append_json_list: bool = False,
+):
+    allowed = {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    ext = allowed.get(file.content_type or "")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{filename_prefix}_{user.id}_{uuid.uuid4().hex}{ext}"
+    dest = upload_dir / filename
+
+    try:
+        data = file.file.read()
+        dest.write_bytes(data)
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+    if not profile:
+        profile = models.NannyProfile(nanny_id=nanny.id)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+
+    url = f"/static/uploads/nannies/{filename}"
+    before = {profile_attr: getattr(profile, profile_attr, None)}
+    if append_json_list:
+        raw = getattr(profile, profile_attr, None)
+        items = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    items = [str(item).strip() for item in parsed if str(item).strip()]
+            except Exception:
+                items = []
+        items.append(url)
+        setattr(profile, profile_attr, json.dumps(items))
+    else:
+        setattr(profile, profile_attr, url)
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+
+    after = {profile_attr: getattr(profile, profile_attr, None)}
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=user.id,
+        entity="nanny_profiles",
+        entity_id=profile.id,
+        action="update",
+        before_obj=before,
+        after_obj=after,
+        changed_fields=None,
+        request=request,
+    )
+    return {"url": url}
+
+
+@router.post("/nannies/me/police-clearance-document")
+def upload_nanny_police_clearance_document(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return _upload_nanny_optional_document(
+        user=user,
+        request=request,
+        db=db,
+        file=file,
+        filename_prefix="police",
+        profile_attr="police_clearance_document_url",
+    )
+
+
+@router.post("/nannies/me/drivers-license-document")
+def upload_nanny_drivers_license_document(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return _upload_nanny_optional_document(
+        user=user,
+        request=request,
+        db=db,
+        file=file,
+        filename_prefix="drivers_license",
+        profile_attr="drivers_license_document_url",
+    )
+
+
+@router.post("/nannies/me/certificates")
+def upload_nanny_certificate_document(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return _upload_nanny_optional_document(
+        user=user,
+        request=request,
+        db=db,
+        file=file,
+        filename_prefix="certificate",
+        profile_attr="certificates_json",
+        append_json_list=True,
+    )
+
+
 @router.get("/nannies/me/profile", response_model=NannyMeProfileResponse)
 def get_nanny_me_profile(
     authorization: Optional[str] = Header(default=None),
@@ -1907,6 +2156,7 @@ def get_nanny_me_profile(
         db.commit()
         db.refresh(profile)
 
+    qualification_ids = [q.id for q in (profile.qualifications or [])]
     tag_ids = [t.id for t in (profile.tags or [])]
     language_ids = [l.id for l in (profile.languages or [])]
 
@@ -1924,6 +2174,15 @@ def get_nanny_me_profile(
                 previous_jobs = parsed
         except Exception:
             previous_jobs = []
+    certificate_urls = []
+    raw_certs = getattr(profile, "certificates_json", None)
+    if raw_certs:
+        try:
+            parsed_certs = json.loads(raw_certs)
+            if isinstance(parsed_certs, list):
+                certificate_urls = [str(url).strip() for url in parsed_certs if str(url).strip()]
+        except Exception:
+            certificate_urls = []
 
     return {
         "nanny_id": nanny.id,
@@ -1934,17 +2193,33 @@ def get_nanny_me_profile(
         "dob": getattr(profile, "date_of_birth", None),
         "bio": getattr(profile, "bio", None),
         "nationality": getattr(profile, "nationality", None),
+        "gender": getattr(profile, "gender", None),
         "ethnicity": getattr(profile, "ethnicity", None),
         "passport_number": getattr(profile, "passport_number", None),
         "passport_expiry": getattr(profile, "passport_expiry", None),
         "passport_document_url": getattr(profile, "passport_document_url", None),
+        "permit_status": getattr(profile, "permit_status", None),
         "work_permit": getattr(profile, "work_permit", None),
         "work_permit_expiry": getattr(profile, "work_permit_expiry", None),
         "work_permit_document_url": getattr(profile, "work_permit_document_url", None),
         "waiver": getattr(profile, "waiver", None),
         "sa_id_number": getattr(profile, "sa_id_number", None),
         "sa_id_document_url": getattr(profile, "sa_id_document_url", None),
+        "has_own_car": getattr(profile, "has_own_car", None),
+        "has_drivers_license": getattr(profile, "has_drivers_license", None),
+        "job_type": getattr(profile, "job_type", None),
+        "police_clearance_status": getattr(profile, "police_clearance_status", None),
+        "has_own_kids": getattr(profile, "has_own_kids", None),
+        "own_kids_details": getattr(profile, "own_kids_details", None),
+        "medical_conditions": getattr(profile, "medical_conditions", None),
+        "my_nanny_training_status": getattr(profile, "my_nanny_training_status", None),
+        "dog_preference": getattr(profile, "dog_preference", None),
+        "studying_details": getattr(profile, "studying_details", None),
+        "police_clearance_document_url": getattr(profile, "police_clearance_document_url", None),
+        "drivers_license_document_url": getattr(profile, "drivers_license_document_url", None),
+        "certificate_urls": certificate_urls,
         "previous_jobs": previous_jobs,
+        "qualification_ids": qualification_ids,
         "tag_ids": tag_ids,
         "language_ids": language_ids,
         "is_approved": bool(getattr(profile, "is_approved", 0)),
@@ -2011,6 +2286,9 @@ def update_nanny_me_profile(
     if payload.nationality is not None:
         profile.nationality = payload.nationality.strip() if payload.nationality else None
 
+    if payload.gender is not None:
+        profile.gender = payload.gender.strip() if payload.gender else None
+
     if payload.ethnicity is not None:
         profile.ethnicity = payload.ethnicity.strip() if payload.ethnicity else None
 
@@ -2030,6 +2308,9 @@ def update_nanny_me_profile(
         if is_approved and current_passport_doc and not new_passport_doc:
             raise HTTPException(status_code=400, detail="Approved nannies cannot remove uploaded passport documents")
         profile.passport_document_url = new_passport_doc
+
+    if payload.permit_status is not None:
+        profile.permit_status = _norm_text(payload.permit_status)
 
     if payload.work_permit is not None:
         profile.work_permit = bool(payload.work_permit)
@@ -2058,6 +2339,33 @@ def update_nanny_me_profile(
         if is_approved and current_sa_doc and not new_sa_doc:
             raise HTTPException(status_code=400, detail="Approved nannies cannot remove uploaded ID documents")
         profile.sa_id_document_url = new_sa_doc
+    if payload.has_own_car is not None:
+        profile.has_own_car = bool(payload.has_own_car)
+    if payload.has_drivers_license is not None:
+        profile.has_drivers_license = bool(payload.has_drivers_license)
+    if payload.job_type is not None:
+        profile.job_type = _norm_text(payload.job_type)
+    if payload.police_clearance_status is not None:
+        profile.police_clearance_status = _norm_text(payload.police_clearance_status)
+    if payload.has_own_kids is not None:
+        profile.has_own_kids = bool(payload.has_own_kids)
+    if payload.own_kids_details is not None:
+        profile.own_kids_details = _norm_text(payload.own_kids_details)
+    if payload.medical_conditions is not None:
+        profile.medical_conditions = _norm_text(payload.medical_conditions)
+    if payload.my_nanny_training_status is not None:
+        profile.my_nanny_training_status = _norm_text(payload.my_nanny_training_status)
+    if payload.dog_preference is not None:
+        profile.dog_preference = _norm_text(payload.dog_preference)
+    if payload.studying_details is not None:
+        profile.studying_details = _norm_text(payload.studying_details)
+    if payload.police_clearance_document_url is not None:
+        profile.police_clearance_document_url = _norm_text(payload.police_clearance_document_url)
+    if payload.drivers_license_document_url is not None:
+        profile.drivers_license_document_url = _norm_text(payload.drivers_license_document_url)
+    if payload.certificate_urls is not None:
+        cleaned_urls = [_norm_text(url) for url in payload.certificate_urls]
+        profile.certificates_json = json.dumps([url for url in cleaned_urls if url])
     if payload.previous_jobs is not None:
         cleaned_jobs = []
         for item in payload.previous_jobs:
@@ -2066,6 +2374,10 @@ def update_nanny_me_profile(
                 "role": _norm_text(job.get("role")),
                 "employer": _norm_text(job.get("employer")),
                 "period": _norm_text(job.get("period")),
+                "care_type": _norm_text(job.get("care_type")),
+                "kids_age_when_started": _norm_text(job.get("kids_age_when_started")),
+                "disability_details": _norm_text(job.get("disability_details")),
+                "reference_letter_url": _norm_text(job.get("reference_letter_url")),
                 "reference_name": _norm_text(job.get("reference_name")),
                 "reference_phone": _norm_text(job.get("reference_phone")),
                 "reference_relationship": _norm_text(job.get("reference_relationship")),
@@ -2073,6 +2385,13 @@ def update_nanny_me_profile(
             if any(cleaned.values()):
                 cleaned_jobs.append(cleaned)
         profile.previous_jobs_json = json.dumps(cleaned_jobs)
+
+    if payload.qualification_ids is not None:
+        profile.qualifications = (
+            db.query(models.Qualification)
+            .filter(models.Qualification.id.in_(payload.qualification_ids))
+            .all()
+        )
 
     if payload.tag_ids is not None:
         profile.tags = (
@@ -2097,8 +2416,23 @@ def update_nanny_me_profile(
     if not profile.nationality:
         raise HTTPException(status_code=400, detail="Nationality is required")
     nat = profile.nationality.strip().lower()
+    if not profile.gender:
+        raise HTTPException(status_code=400, detail="Gender is required")
     if not profile.ethnicity:
         raise HTTPException(status_code=400, detail="Race is required")
+    if not profile.job_type:
+        raise HTTPException(status_code=400, detail="Job type is required")
+    if not profile.police_clearance_status:
+        raise HTTPException(status_code=400, detail="Police clearance status is required")
+    if not profile.my_nanny_training_status:
+        raise HTTPException(status_code=400, detail="Training status is required")
+    qualification_names = {str(getattr(q, "name", "") or "").strip().lower() for q in (profile.qualifications or [])}
+    if "studying" in qualification_names and not _norm_text(getattr(profile, "studying_details", None)):
+        raise HTTPException(status_code=400, detail="Please tell us what you are studying")
+    if profile.has_own_car is True and profile.has_drivers_license is None:
+        raise HTTPException(status_code=400, detail="Driver's license status is required")
+    if profile.has_own_kids is True and not _norm_text(getattr(profile, "own_kids_details", None)):
+        raise HTTPException(status_code=400, detail="Please share how old your children are and where they stay")
     if nat == "south african":
         if not profile.sa_id_number:
             raise HTTPException(status_code=400, detail="South African ID number is required")
@@ -2114,14 +2448,26 @@ def update_nanny_me_profile(
     else:
         if not profile.passport_number:
             raise HTTPException(status_code=400, detail="Passport number is required")
+        permit_status = _norm_text(getattr(profile, "permit_status", None))
+        if permit_status == "permit":
+            profile.work_permit = True
+            profile.waiver = False
+        elif permit_status == "waiver":
+            profile.work_permit = False
+            profile.waiver = True
+        elif permit_status == "receipt":
+            profile.work_permit = False
+            profile.waiver = False
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="You need a waiver/receipt or permit for approval. Once you obtain this, please email it to nannies.info@gmail.com",
+            )
         needs_docs = False
         if not profile.passport_number or not profile.passport_expiry or not profile.passport_document_url:
             needs_docs = True
-        if profile.work_permit:
+        if permit_status == "permit":
             if not profile.work_permit_expiry or not profile.work_permit_document_url:
-                needs_docs = True
-        else:
-            if profile.waiver is not True:
                 needs_docs = True
         if needs_docs:
             user.is_active = False
@@ -2453,6 +2799,27 @@ def delete_nanny_me_availability(
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+@router.delete("/nannies/me/availability")
+def clear_nanny_me_availability(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+
+    deleted = (
+        db.query(models.NannyAvailability)
+        .filter(models.NannyAvailability.nanny_id == nanny.id)
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 @router.patch("/nannies/me/availability/{availability_id}")
@@ -3108,6 +3475,17 @@ def _search_nannies_by_area(
         qualifications = simple_list(getattr(p, "qualifications", None))
         tags = simple_list(getattr(p, "tags", None))
         previous_jobs = _normalize_previous_jobs(getattr(p, "previous_jobs_json", None))
+        public_jobs = [
+            {
+                "role": job.get("role"),
+                "employer": job.get("employer"),
+                "period": job.get("period"),
+                "care_type": job.get("care_type"),
+                "kids_age_when_started": job.get("kids_age_when_started"),
+                "disability_details": job.get("disability_details"),
+            }
+            for job in previous_jobs
+        ]
         age = compute_age(getattr(p, "date_of_birth", None))
 
         results.append(
@@ -3115,7 +3493,7 @@ def _search_nannies_by_area(
                 "nanny_id": p.nanny_id,
                 "approved": nanny.approved,
                 "user_id": nanny_user.id,
-                "name": nanny_user.name,
+                "name": _public_nanny_name(nanny_user.name),
                 "nickname": getattr(nanny_user, "nickname", None),
                 "last_initial": getattr(nanny_user, "last_initial", None),
                 "profile_photo_url": getattr(nanny_user, "profile_photo_url", None),
@@ -3125,9 +3503,9 @@ def _search_nannies_by_area(
                     qualifications=qualifications,
                     tags=tags,
                     previous_jobs=previous_jobs,
-                    bio=getattr(p, "bio", None),
+                    bio=None,
                 ),
-                "bio": getattr(p, "bio", None),
+                "bio": None,
                 "date_of_birth": getattr(p, "date_of_birth", None),
                 "age": age,
                 "nationality": getattr(p, "nationality", None),
@@ -3135,14 +3513,18 @@ def _search_nannies_by_area(
                 "qualifications": qualifications,
                 "tags": tags,
                 "languages": simple_list(getattr(p, "languages", None)),
+                "job_type": getattr(p, "job_type", None),
+                "has_drivers_license": getattr(p, "has_drivers_license", None),
+                "has_own_car": getattr(p, "has_own_car", None),
+                "dog_preference": getattr(p, "dog_preference", None),
                 "average_rating_12m": avg,
                 "review_count_12m": cnt or 0,
                 "distance_km": distance_km,
                 "location_hint": location_hint,
                 "completed_jobs_count": completed_jobs_map.get(int(p.nanny_id), 0),
-                "has_identity_document": bool(getattr(p, "sa_id_document_url", None) or getattr(p, "work_permit_document_url", None)),
-                "has_passport_document": bool(getattr(p, "passport_document_url", None)),
-                "previous_jobs": previous_jobs,
+                "has_identity_document": False,
+                "has_passport_document": False,
+                "previous_jobs": public_jobs,
             }
         )
 
@@ -5383,6 +5765,14 @@ def admin_get_nanny_profile(
     qualifications = simple_list(getattr(profile, "qualifications", None)) if profile else []
     tags = simple_list(getattr(profile, "tags", None)) if profile else []
     previous_jobs = _normalize_previous_jobs(getattr(profile, "previous_jobs_json", None)) if profile else []
+    certificate_urls = []
+    if profile and getattr(profile, "certificates_json", None):
+        try:
+            parsed_certs = json.loads(getattr(profile, "certificates_json", None))
+            if isinstance(parsed_certs, list):
+                certificate_urls = [str(url).strip() for url in parsed_certs if str(url).strip()]
+        except Exception:
+            certificate_urls = []
     age = compute_age(getattr(profile, "date_of_birth", None)) if profile else None
     return {
         "name": user.name,
@@ -5419,6 +5809,13 @@ def admin_get_nanny_profile(
         "waiver": getattr(profile, "waiver", None) if profile else None,
         "sa_id_number": getattr(profile, "sa_id_number", None) if profile else None,
         "sa_id_document_url": getattr(profile, "sa_id_document_url", None) if profile else None,
+        "police_clearance_document_url": getattr(profile, "police_clearance_document_url", None) if profile else None,
+        "drivers_license_document_url": getattr(profile, "drivers_license_document_url", None) if profile else None,
+        "certificate_urls": certificate_urls,
+        "dog_preference": getattr(profile, "dog_preference", None) if profile else None,
+        "job_type": getattr(profile, "job_type", None) if profile else None,
+        "has_drivers_license": getattr(profile, "has_drivers_license", None) if profile else None,
+        "has_own_car": getattr(profile, "has_own_car", None) if profile else None,
         "tags": tags,
         "languages": simple_list(getattr(profile, "languages", None)) if profile else [],
         "qualifications": qualifications,

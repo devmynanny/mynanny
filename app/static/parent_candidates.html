@@ -168,8 +168,50 @@
       </select>
     </div>
     <div class="filter-group" style="min-width:280px;">
-      <label>Tags</label>
+      <label>Areas of experience</label>
       <div id="filterTags" class="tag-filters"></div>
+    </div>
+    <div class="filter-group" style="min-width:280px;">
+      <label>Qualifications</label>
+      <div id="filterQualifications" class="tag-filters"></div>
+    </div>
+    <div class="filter-group" style="min-width:280px;">
+      <label>Languages</label>
+      <div id="filterLanguages" class="tag-filters"></div>
+    </div>
+    <div class="filter-group">
+      <label for="filterJobType">Job type</label>
+      <select id="filterJobType">
+        <option value="">Any</option>
+        <option value="stay_in">Stay in</option>
+        <option value="stay_out">Stay out</option>
+        <option value="both">Can do both</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label for="filterLicense">License</label>
+      <select id="filterLicense">
+        <option value="">Any</option>
+        <option value="yes">Has license</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label for="filterTransport">Transport</label>
+      <select id="filterTransport">
+        <option value="">Any</option>
+        <option value="own_car">Own car</option>
+        <option value="public_transport">Public transport</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label for="filterDogs">Dogs</label>
+      <select id="filterDogs">
+        <option value="">Any</option>
+        <option value="small_dogs">Yes, we have small dogs</option>
+        <option value="calm_big_dogs">Yes, we have calm big dogs</option>
+        <option value="pitbull_rottweiler">I have a rotweiler/pitbul</option>
+        <option value="no_dogs">No, I don't</option>
+      </select>
     </div>
   </div>
   <div style="margin-top:12px; display:none;">
@@ -942,6 +984,8 @@
     let lastProfileComplete = false;
     let lastCanBook = false;
     let tagOptions = [];
+    let qualificationOptions = [];
+    let languageOptions = [];
     let parentLocations = [];
     let selectedBookingLocationChoice = "default";
 
@@ -1074,8 +1118,6 @@
       const trustEl = document.getElementById("previewTrust");
       const trustBits = [];
       trustBits.push(n.approved ? "Approved by My Nanny" : "Pending approval");
-      trustBits.push(n.has_identity_document ? "Identity document on file" : "Identity document pending");
-      trustBits.push(n.has_passport_document ? "Passport document on file" : "Passport document pending");
       trustBits.push((n.review_count_12m || 0) > 0 ? `${n.review_count_12m} recent review(s)` : "No recent reviews yet");
       trustEl.innerHTML = trustBits.map(v => `<span class="trustPill">${escapeHtml(v)}</span>`).join("");
 
@@ -1100,13 +1142,9 @@
           const role = job.role || "Previous role";
           const employer = job.employer || "Employer not listed";
           const period = job.period || "Period not listed";
-          const reference = [job.reference_name, job.reference_phone].filter(Boolean).join(" • ");
-          const relationship = job.reference_relationship || "";
-          const referenceBits = [reference, relationship].filter(Boolean).join(" • ");
           return `<div class="workItem">
             <div class="workRole">${escapeHtml(role)}</div>
             <div class="workMeta">${escapeHtml(employer)} • ${escapeHtml(period)}</div>
-            <div class="workMeta">${escapeHtml(referenceBits || "Reference details not provided")}</div>
           </div>`;
         }).join("");
       }
@@ -1317,12 +1355,33 @@
       return checked.map(i => i.value);
     }
 
+    function getSelectedFilterValues(rootSelector) {
+      return Array.from(document.querySelectorAll(`${rootSelector} input[type="checkbox"]:checked`)).map(i => i.value);
+    }
+
+    function matchesDogPreference(clientDogFilter, nannyDogPreference) {
+      if (!clientDogFilter) return true;
+      const pref = String(nannyDogPreference || "").trim();
+      if (!pref) return false;
+      if (clientDogFilter === "small_dogs") return pref === "i_prefer_small_dogs" || pref === "any_dog_is_fine";
+      if (clientDogFilter === "calm_big_dogs") return pref === "any_dog_is_fine" || pref === "not_pitbulls_or_rotweilers";
+      if (clientDogFilter === "pitbull_rottweiler") return pref === "any_dog_is_fine";
+      if (clientDogFilter === "no_dogs") return true;
+      return true;
+    }
+
     function applyFilters(results) {
       let filtered = [...results];
       const onlyFav = document.getElementById("filterFavorites").checked;
       const onlyRated = document.getElementById("filterRated").checked;
       const maxDist = Number(document.getElementById("filterDistance").value || 0);
       const selectedTags = new Set(getSelectedTagNames());
+      const selectedQualifications = new Set(getSelectedFilterValues("#filterQualifications"));
+      const selectedLanguages = new Set(getSelectedFilterValues("#filterLanguages"));
+      const jobType = document.getElementById("filterJobType").value || "";
+      const license = document.getElementById("filterLicense").value || "";
+      const transport = document.getElementById("filterTransport").value || "";
+      const dogs = document.getElementById("filterDogs").value || "";
 
       if (onlyFav) {
         filtered = filtered.filter(n => favorites.has(n.nanny_id));
@@ -1338,6 +1397,26 @@
           const names = (n.tags || []).map(t => t.name);
           return names.some(name => selectedTags.has(name));
         });
+      }
+      if (selectedQualifications.size > 0) {
+        filtered = filtered.filter(n => (n.qualifications || []).map(q => q.name).some(name => selectedQualifications.has(name)));
+      }
+      if (selectedLanguages.size > 0) {
+        filtered = filtered.filter(n => (n.languages || []).map(l => l.name).some(name => selectedLanguages.has(name)));
+      }
+      if (jobType) {
+        filtered = filtered.filter(n => String(n.job_type || "") === jobType);
+      }
+      if (license === "yes") {
+        filtered = filtered.filter(n => n.has_drivers_license === true);
+      }
+      if (transport === "own_car") {
+        filtered = filtered.filter(n => n.has_own_car === true);
+      } else if (transport === "public_transport") {
+        filtered = filtered.filter(n => n.has_own_car === false);
+      }
+      if (dogs) {
+        filtered = filtered.filter(n => matchesDogPreference(dogs, n.dog_preference));
       }
       return filtered;
     }
@@ -1612,11 +1691,31 @@
       } catch {
         tagOptions = [];
       }
+      try {
+        const qualificationData = await fetchJson("/qualifications");
+        qualificationOptions = Array.isArray(qualificationData) ? qualificationData : [];
+      } catch {
+        qualificationOptions = [];
+      }
+      try {
+        const languageData = await fetchJson("/languages");
+        languageOptions = Array.isArray(languageData) ? languageData : [];
+      } catch {
+        languageOptions = [];
+      }
       const tagRoot = document.getElementById("filterTags");
       if (tagRoot && tagOptions.length) {
         tagRoot.innerHTML = tagOptions.map(t => `<label><input type="checkbox" value="${escapeHtml(t.name)}"> ${escapeHtml(t.name)}</label>`).join("");
       }
-      document.querySelectorAll("#filterFavorites,#filterRated,#filterDistance,#filterTags input[type=\"checkbox\"]").forEach(el => {
+      const qualificationsRoot = document.getElementById("filterQualifications");
+      if (qualificationsRoot && qualificationOptions.length) {
+        qualificationsRoot.innerHTML = qualificationOptions.map(q => `<label><input type="checkbox" value="${escapeHtml(q.name)}"> ${escapeHtml(q.name)}</label>`).join("");
+      }
+      const languagesRoot = document.getElementById("filterLanguages");
+      if (languagesRoot && languageOptions.length) {
+        languagesRoot.innerHTML = languageOptions.map(l => `<label><input type="checkbox" value="${escapeHtml(l.name)}"> ${escapeHtml(l.name)}</label>`).join("");
+      }
+      document.querySelectorAll("#filterFavorites,#filterRated,#filterDistance,#filterJobType,#filterLicense,#filterTransport,#filterDogs,#filterTags input[type=\"checkbox\"],#filterQualifications input[type=\"checkbox\"],#filterLanguages input[type=\"checkbox\"]").forEach(el => {
         el.addEventListener("change", () => {
           refreshFilters(lastProfileComplete, lastCanBook);
         });

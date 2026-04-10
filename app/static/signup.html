@@ -11,7 +11,8 @@
     h1 { font-size: 44px; margin: 0 0 18px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
     label { display: block; margin: 12px 0 6px; font-weight: 600; }
-    input { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; font-size: 16px; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 10px; font-size: 16px; }
+    textarea { min-height: 96px; resize: vertical; }
     button { margin-top: 14px; width: 100%; padding: 12px; border: 1px solid #222; border-radius: 10px; font-size: 16px; cursor: pointer; }
     .roleRow { display: flex; gap: 10px; margin-top: 8px; }
     .roleBtn { flex: 1; padding: 12px; border: 1px solid #bbb; border-radius: 10px; background: #fff; cursor: pointer; }
@@ -19,6 +20,14 @@
     .row { margin-top: 12px; }
     .err { color: #b00020; margin-top: 10px; white-space: pre-wrap; }
     .muted { color: #555; font-size: 14px; }
+    .fieldGroup { margin-top: 16px; padding-top: 10px; border-top: 1px solid #eee; }
+    .fieldGroupTitle { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
+    .inlineNotice { margin-top: 10px; padding: 10px 12px; border: 1px solid #e5c07b; border-radius: 10px; background: #fff8e1; color: #6b4f00; }
+    .modalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 1000; }
+    .modalCard { width: min(420px, 100%); background: #fff; border-radius: 14px; padding: 18px; box-shadow: 0 16px 40px rgba(0,0,0,0.18); }
+    .modalCard h2 { margin: 0 0 10px; font-size: 22px; }
+    .modalActions { display: flex; justify-content: flex-end; margin-top: 14px; }
+    .modalActions button { width: auto; margin-top: 0; padding-inline: 18px; }
     a { color: #0b57d0; text-decoration: none; }
   </style>
 </head>
@@ -50,75 +59,152 @@
     </div>
 
     <div id="nannyDocs" style="display:none;">
-      <label>Nationality</label>
-      <select id="nationality">
-        <option value="">Select nationality</option>
-        <option value="Angolan">Angolan</option>
-        <option value="Botswanan">Botswanan</option>
-        <option value="Comorian">Comorian</option>
-        <option value="Congolese (DRC)">Congolese (DRC)</option>
-        <option value="Eswatini">Eswatini</option>
-        <option value="Lesotho">Lesotho</option>
-        <option value="Madagascan">Madagascan</option>
-        <option value="Malawian">Malawian</option>
-        <option value="Mauritian">Mauritian</option>
-        <option value="Mozambican">Mozambican</option>
-        <option value="Namibian">Namibian</option>
-        <option value="Seychellois">Seychellois</option>
-        <option value="South African">South African</option>
-        <option value="Tanzanian">Tanzanian</option>
-        <option value="Zambian">Zambian</option>
-        <option value="Zimbabwean">Zimbabwean</option>
-      </select>
+      <div class="fieldGroup" style="border-top:none; padding-top:0;">
+        <div class="fieldGroupTitle">Personal details</div>
+        <label>Gender</label>
+        <select id="gender">
+          <option value="">Select gender</option>
+          <option value="Female">Female</option>
+          <option value="Male">Male</option>
+          <option value="Other">Other</option>
+        </select>
 
-      <label>Race</label>
-      <select id="race">
-        <option value="">Select race</option>
-        <option value="Black">Black</option>
-        <option value="Coloured">Coloured</option>
-        <option value="Indian/Asian">Indian/Asian</option>
-        <option value="White">White</option>
-        <option value="Other">Other</option>
-      </select>
+        <label>Nationality</label>
+        <select id="nationality">
+          <option value="">Select nationality</option>
+          <option value="Angolan">Angolan</option>
+          <option value="Botswanan">Botswanan</option>
+          <option value="Comorian">Comorian</option>
+          <option value="Congolese (DRC)">Congolese (DRC)</option>
+          <option value="Eswatini">Eswatini</option>
+          <option value="Lesotho">Lesotho</option>
+          <option value="Madagascan">Madagascan</option>
+          <option value="Malawian">Malawian</option>
+          <option value="Mauritian">Mauritian</option>
+          <option value="Mozambican">Mozambican</option>
+          <option value="Namibian">Namibian</option>
+          <option value="Seychellois">Seychellois</option>
+          <option value="South African">South African</option>
+          <option value="Tanzanian">Tanzanian</option>
+          <option value="Zambian">Zambian</option>
+          <option value="Zimbabwean">Zimbabwean</option>
+        </select>
 
-      <div id="passportRow">
-        <label>Passport number (if not South African)</label>
-        <input id="passportNumber" type="text" placeholder="Passport number" />
-        <div class="err" id="passportError" style="display:none;"></div>
-        <label>Passport expiry date</label>
-        <input id="passportExpiry" type="date" />
-        <label>Passport copy</label>
-        <input id="passportFile" type="file" accept=".pdf,image/*" />
-        <div class="muted" id="passportHint">Upload after selecting non‑SA nationality.</div>
+        <label>Race</label>
+        <select id="race">
+          <option value="">Select race</option>
+          <option value="Black">Black</option>
+          <option value="Coloured">Coloured</option>
+          <option value="Indian/Asian">Indian/Asian</option>
+          <option value="White">White</option>
+          <option value="Other">Other</option>
+        </select>
       </div>
 
-      <div id="saIdRow">
-        <label>South African ID number</label>
-        <input id="saIdNumber" type="text" placeholder="ID number" />
-        <div class="err" id="saIdError" style="display:none;"></div>
-        <label>Copy of ID</label>
-        <input id="saIdFile" type="file" accept=".pdf,image/*" />
-        <div class="muted" id="saIdHint">Upload after selecting South African nationality.</div>
+      <div class="fieldGroup">
+        <div class="fieldGroupTitle">Identity and permit</div>
+        <div id="passportRow">
+          <label>Passport number (if not South African)</label>
+          <input id="passportNumber" type="text" placeholder="Passport number" />
+          <div class="err" id="passportError" style="display:none;"></div>
+          <label>Passport expiry date</label>
+          <input id="passportExpiry" type="date" />
+          <label>Passport copy</label>
+          <input id="passportFile" type="file" accept=".pdf,image/*" />
+          <div class="muted" id="passportHint">Upload after selecting non-SA nationality.</div>
+        </div>
+
+        <div id="saIdRow">
+          <label>South African ID number</label>
+          <input id="saIdNumber" type="text" placeholder="ID number" />
+          <div class="err" id="saIdError" style="display:none;"></div>
+          <label>Copy of ID</label>
+          <input id="saIdFile" type="file" accept=".pdf,image/*" />
+          <div class="muted" id="saIdHint">Upload after selecting South African nationality.</div>
+        </div>
+
+        <div id="permitRow">
+          <label>Do you have a valid permit?</label>
+          <select id="permitStatus">
+            <option value="">Select</option>
+            <option value="permit">Yes I do</option>
+            <option value="waiver">I have a waiver</option>
+            <option value="receipt">I have a receipt</option>
+            <option value="no_permit">No I don't</option>
+          </select>
+          <div id="permitDeclineNotice" class="inlineNotice" style="display:none;">
+            You need a waiver/receipt or permit for approval. Once you obtain this, please email it to nannies.info@gmail.com
+          </div>
+          <div id="permitUploadRow">
+            <label>Work permit expiry</label>
+            <input id="workPermitExpiry" type="date" />
+            <label>Work permit copy</label>
+            <input id="permitFile" type="file" accept=".pdf,image/*" />
+            <div class="muted" id="permitHint">Upload your permit if you selected "Yes I do".</div>
+          </div>
+        </div>
       </div>
 
-      <div id="permitRow">
-        <label>Work permit</label>
-        <select id="workPermit">
+      <div class="fieldGroup">
+        <div class="fieldGroupTitle">Work preferences</div>
+        <label>Do you have your own car?</label>
+        <select id="ownCar">
+          <option value="">Select</option>
+          <option value="yes">Yes I do</option>
+          <option value="no">No, I use public transport</option>
+        </select>
+
+        <div id="driversLicenseRow">
+          <label>Do you have a driver's license?</label>
+          <select id="driversLicense">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+
+        <label>Job type</label>
+        <select id="jobType">
+          <option value="">Select job type</option>
+          <option value="stay_in">Stay in</option>
+          <option value="stay_out">Stay out</option>
+          <option value="both">I can do both</option>
+        </select>
+
+        <label>Do you have police clearance?</label>
+        <select id="policeClearanceStatus">
           <option value="">Select</option>
           <option value="yes">Yes</option>
-          <option value="no">No</option>
+          <option value="not_yet">Not yet</option>
         </select>
-        <label>Work permit expiry</label>
-        <input id="workPermitExpiry" type="date" />
-        <label>Waiver (if no permit)</label>
-        <select id="waiver">
+      </div>
+
+      <div class="fieldGroup">
+        <div class="fieldGroupTitle">Family and health</div>
+        <label>Do you have your own kids?</label>
+        <select id="ownKids">
           <option value="">Select</option>
           <option value="yes">Yes</option>
-          <option value="no">No</option>
+          <option value="no">No, I don't</option>
         </select>
-        <label>Work permit copy</label>
-        <input id="permitFile" type="file" accept=".pdf,image/*" />
-        <div class="muted" id="permitHint">Upload after selecting work permit = Yes.</div>
+
+        <div id="ownKidsDetailsRow">
+          <label>How old are they and where do they stay?</label>
+          <textarea id="ownKidsDetails" placeholder="Example: 8 and 12 years old, staying with my mother in Soweto."></textarea>
+        </div>
+
+        <label>Do you have any medical conditions or chronic medications?</label>
+        <textarea id="medicalConditions" placeholder="Share anything important here, or write 'None'."></textarea>
+      </div>
+
+      <div class="fieldGroup">
+        <div class="fieldGroupTitle">Training</div>
+        <label>Have you done training with My Nanny?</label>
+        <select id="myNannyTrainingStatus">
+          <option value="">Select</option>
+          <option value="yes">Yes</option>
+          <option value="not_yet">Not yet</option>
+        </select>
       </div>
     </div>
 
@@ -136,12 +222,42 @@
     </div>
   </div>
 
+  <div id="permitDeclineModal" class="modalOverlay" aria-hidden="true">
+    <div class="modalCard">
+      <h2>Permit required</h2>
+      <div>You need a waiver/receipt or permit for approval. Once you obtain this, please email it to nannies.info@gmail.com</div>
+      <div class="modalActions">
+        <button id="permitDeclineCloseBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
   <script>
     const errEl = document.getElementById("err");
     const roleParent = document.getElementById("roleParent");
     const roleNanny = document.getElementById("roleNanny");
     let role = "parent";
+
+    function toNullableBool(value) {
+      if (value === "yes") return true;
+      if (value === "no") return false;
+      return null;
+    }
+
+    function showPermitDeclineModal() {
+      const modal = document.getElementById("permitDeclineModal");
+      if (!modal) return;
+      modal.style.display = "flex";
+      modal.setAttribute("aria-hidden", "false");
+    }
+
+    function hidePermitDeclineModal() {
+      const modal = document.getElementById("permitDeclineModal");
+      if (!modal) return;
+      modal.style.display = "none";
+      modal.setAttribute("aria-hidden", "true");
+    }
 
     function validateSaId(idNumber) {
       const s = (idNumber || "").trim();
@@ -198,14 +314,24 @@
       const password = document.getElementById("password").value;
       const phone = document.getElementById("phone")?.value?.trim() || null;
       const phoneAlt = document.getElementById("phoneAlt")?.value?.trim() || null;
+      const gender = document.getElementById("gender")?.value || null;
       const nationality = document.getElementById("nationality")?.value || null;
       const race = document.getElementById("race")?.value || null;
       const passportNumber = document.getElementById("passportNumber")?.value || null;
       const passportExpiry = document.getElementById("passportExpiry")?.value || null;
-      const workPermit = document.getElementById("workPermit")?.value === "yes" ? true : (document.getElementById("workPermit")?.value === "no" ? false : null);
+      const permitStatus = document.getElementById("permitStatus")?.value || null;
+      const workPermit = permitStatus === "permit" ? true : (permitStatus ? false : null);
       const workPermitExpiry = document.getElementById("workPermitExpiry")?.value || null;
-      const waiver = document.getElementById("waiver")?.value === "yes" ? true : (document.getElementById("waiver")?.value === "no" ? false : null);
+      const waiver = permitStatus === "waiver" ? true : (permitStatus ? false : null);
       const saIdNumber = document.getElementById("saIdNumber")?.value || null;
+      const hasOwnCar = toNullableBool(document.getElementById("ownCar")?.value || "");
+      const hasDriversLicense = toNullableBool(document.getElementById("driversLicense")?.value || "");
+      const jobType = document.getElementById("jobType")?.value || null;
+      const policeClearanceStatus = document.getElementById("policeClearanceStatus")?.value || null;
+      const hasOwnKids = toNullableBool(document.getElementById("ownKids")?.value || "");
+      const ownKidsDetails = document.getElementById("ownKidsDetails")?.value?.trim() || null;
+      const medicalConditions = document.getElementById("medicalConditions")?.value?.trim() || null;
+      const myNannyTrainingStatus = document.getElementById("myNannyTrainingStatus")?.value || null;
       const natValue = (document.getElementById("nationality")?.value || "").trim().toLowerCase();
 
       const saIdErrorEl = document.getElementById("saIdError");
@@ -219,6 +345,34 @@
         passportErrorEl.style.display = "none";
       }
       if (role === "nanny") {
+        if (!gender) {
+          errEl.textContent = "Gender is required.";
+          return;
+        }
+        if (!race) {
+          errEl.textContent = "Race is required.";
+          return;
+        }
+        if (!jobType) {
+          errEl.textContent = "Job type is required.";
+          return;
+        }
+        if (!policeClearanceStatus) {
+          errEl.textContent = "Police clearance status is required.";
+          return;
+        }
+        if (!myNannyTrainingStatus) {
+          errEl.textContent = "Training status is required.";
+          return;
+        }
+        if (hasOwnCar === true && hasDriversLicense === null) {
+          errEl.textContent = "Please tell us whether you have a driver's license.";
+          return;
+        }
+        if (hasOwnKids === true && !ownKidsDetails) {
+          errEl.textContent = "Please share how old your children are and where they stay.";
+          return;
+        }
         if (natValue === "south african") {
           if (!saIdNumber) {
             if (saIdErrorEl) {
@@ -249,6 +403,15 @@
             }
             return;
           }
+          if (!permitStatus) {
+            errEl.textContent = "Please select your permit status.";
+            return;
+          }
+          if (permitStatus === "no_permit") {
+            showPermitDeclineModal();
+            errEl.textContent = "You need a waiver/receipt or permit for approval. Once you obtain this, please email it to nannies.info@gmail.com";
+            return;
+          }
         }
       }
 
@@ -259,9 +422,12 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name, email, password, role, phone, phone_alt: phoneAlt,
-            nationality, ethnicity: race, passport_number: passportNumber, passport_expiry: passportExpiry,
-            work_permit: workPermit, work_permit_expiry: workPermitExpiry, waiver,
-            sa_id_number: saIdNumber
+            nationality, gender, ethnicity: race, passport_number: passportNumber, passport_expiry: passportExpiry,
+            permit_status: permitStatus, work_permit: workPermit, work_permit_expiry: workPermitExpiry, waiver,
+            sa_id_number: saIdNumber, has_own_car: hasOwnCar, has_drivers_license: hasDriversLicense,
+            job_type: jobType, police_clearance_status: policeClearanceStatus, has_own_kids: hasOwnKids,
+            own_kids_details: ownKidsDetails, medical_conditions: medicalConditions,
+            my_nanny_training_status: myNannyTrainingStatus
           })
         });
 
@@ -329,20 +495,27 @@
       const saIdFile = document.getElementById("saIdFile");
       if (passportFile) passportFile.style.display = isSa ? "none" : "block";
       if (saIdFile) saIdFile.style.display = isSa ? "block" : "none";
-      const permitFile = document.getElementById("permitFile");
-      if (permitFile) {
-        const showPermitFile = document.getElementById("workPermit")?.value === "yes";
-        permitFile.style.display = showPermitFile ? "block" : "none";
-        const hint = document.getElementById("permitHint");
-        if (hint) hint.style.display = showPermitFile ? "none" : "block";
-      }
-      const waiverSelect = document.getElementById("waiver");
-      if (waiverSelect?.parentElement) {
-        waiverSelect.parentElement.style.display = document.getElementById("workPermit")?.value === "no" ? "block" : "none";
+      const permitStatus = document.getElementById("permitStatus")?.value || "";
+      const permitUploadRow = document.getElementById("permitUploadRow");
+      const permitDeclineNotice = document.getElementById("permitDeclineNotice");
+      if (permitUploadRow) permitUploadRow.style.display = permitStatus === "permit" && !isSa ? "block" : "none";
+      if (permitDeclineNotice) permitDeclineNotice.style.display = permitStatus === "no_permit" && !isSa ? "block" : "none";
+      const driversLicenseRow = document.getElementById("driversLicenseRow");
+      if (driversLicenseRow) driversLicenseRow.style.display = document.getElementById("ownCar")?.value === "yes" ? "block" : "none";
+      const ownKidsDetailsRow = document.getElementById("ownKidsDetailsRow");
+      if (ownKidsDetailsRow) ownKidsDetailsRow.style.display = document.getElementById("ownKids")?.value === "yes" ? "block" : "none";
+      if (permitStatus === "no_permit" && !isSa) {
+        showPermitDeclineModal();
       }
     }
     document.getElementById("nationality")?.addEventListener("change", toggleNationalityFields);
-    document.getElementById("workPermit")?.addEventListener("change", toggleNationalityFields);
+    document.getElementById("permitStatus")?.addEventListener("change", toggleNationalityFields);
+    document.getElementById("ownCar")?.addEventListener("change", toggleNationalityFields);
+    document.getElementById("ownKids")?.addEventListener("change", toggleNationalityFields);
+    document.getElementById("permitDeclineCloseBtn")?.addEventListener("click", hidePermitDeclineModal);
+    document.getElementById("permitDeclineModal")?.addEventListener("click", (event) => {
+      if (event.target?.id === "permitDeclineModal") hidePermitDeclineModal();
+    });
   </script>
 </body>
 </html>

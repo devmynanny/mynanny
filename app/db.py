@@ -332,12 +332,27 @@ def ensure_nanny_profiles_schema() -> None:
         add_col("passport_number", "TEXT")
         add_col("passport_expiry", "TEXT")
         add_col("passport_document_url", "TEXT")
+        add_col("gender", "TEXT")
+        add_col("permit_status", "TEXT")
         add_col("work_permit", "BOOLEAN")
         add_col("work_permit_expiry", "TEXT")
         add_col("work_permit_document_url", "TEXT")
         add_col("waiver", "BOOLEAN")
         add_col("sa_id_number", "TEXT")
         add_col("sa_id_document_url", "TEXT")
+        add_col("has_own_car", "BOOLEAN")
+        add_col("has_drivers_license", "BOOLEAN")
+        add_col("job_type", "TEXT")
+        add_col("police_clearance_status", "TEXT")
+        add_col("has_own_kids", "BOOLEAN")
+        add_col("own_kids_details", "TEXT")
+        add_col("medical_conditions", "TEXT")
+        add_col("my_nanny_training_status", "TEXT")
+        add_col("dog_preference", "TEXT")
+        add_col("studying_details", "TEXT")
+        add_col("police_clearance_document_url", "TEXT")
+        add_col("drivers_license_document_url", "TEXT")
+        add_col("certificates_json", "TEXT")
         add_col("previous_jobs_json", "TEXT")
 
 
@@ -484,25 +499,89 @@ def ensure_languages_seed() -> None:
     with engine.begin() as conn:
         if not _table_exists(conn, "languages"):
             return
-        rows = conn.execute(text("SELECT name FROM languages")).fetchall()
-        existing = {row[0] for row in rows}
+        rows = conn.execute(text("SELECT id, name FROM languages")).fetchall()
+        existing_by_lower = {str(row[1]).strip().lower(): {"id": row[0], "name": row[1]} for row in rows}
         languages = [
             "Afrikaans",
             "English",
-            "isiNdebele",
-            "isiXhosa",
-            "isiZulu",
+            "Tswana",
+            "Sotho",
+            "Xhosa",
+            "Venda",
+            "French",
+            "Shona",
+            "Tsivenda",
+            "Ndebele",
+            "Zulu",
             "Sepedi",
-            "Sesotho",
-            "Setswana",
-            "siSwati",
-            "Tshivenda",
-            "Xitsonga",
-            "South African Sign Language",
+            "German",
+            "Chichewa",
+            "Tsonga",
+            "Portuguese",
+            "Swati",
         ]
+        desired_lowers = {name.lower() for name in languages}
+
         for name in languages:
-            if name not in existing:
+            existing = existing_by_lower.get(name.lower())
+            if existing:
+                if existing["name"] != name:
+                    conn.execute(
+                        text("UPDATE languages SET name = :name WHERE id = :id"),
+                        {"name": name, "id": existing["id"]},
+                    )
+            else:
                 conn.execute(text("INSERT INTO languages (name) VALUES (:name)"), {"name": name})
+
+        extra_ids = [row["id"] for key, row in existing_by_lower.items() if key not in desired_lowers]
+        if extra_ids:
+            placeholders = ", ".join([f":id_{i}" for i in range(len(extra_ids))])
+            params = {f"id_{i}": value for i, value in enumerate(extra_ids)}
+            conn.execute(text(f"DELETE FROM nanny_profile_languages WHERE language_id IN ({placeholders})"), params)
+            conn.execute(text(f"DELETE FROM languages WHERE id IN ({placeholders})"), params)
+
+
+def ensure_qualifications_seed() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "qualifications"):
+            return
+        rows = conn.execute(text("SELECT id, name FROM qualifications")).fetchall()
+        existing_by_lower = {str(row[1]).strip().lower(): {"id": row[0], "name": row[1]} for row in rows}
+        qualifications = [
+            "First aid and CPR certificate",
+            "Childcare / Nanny certificate",
+            "Aupair certificate",
+            "Night Nurse / night nanny certificate",
+            "Nurse aid certificate",
+            "Elderly care / Caregiver certificate",
+            "ECD Certificate",
+            "Teaching diploma",
+            "Qualified midwife / Doula",
+            "Disability care certificate",
+            "Cooking course",
+            "Cleaning course",
+            "Pediatric CPR/First aid",
+            "Studying",
+        ]
+        desired_lowers = {name.lower() for name in qualifications}
+
+        for name in qualifications:
+            existing = existing_by_lower.get(name.lower())
+            if existing:
+                if existing["name"] != name:
+                    conn.execute(
+                        text("UPDATE qualifications SET name = :name WHERE id = :id"),
+                        {"name": name, "id": existing["id"]},
+                    )
+            else:
+                conn.execute(text("INSERT INTO qualifications (name) VALUES (:name)"), {"name": name})
+
+        extra_ids = [row["id"] for key, row in existing_by_lower.items() if key not in desired_lowers]
+        if extra_ids:
+            placeholders = ", ".join([f":id_{i}" for i in range(len(extra_ids))])
+            params = {f"id_{i}": value for i, value in enumerate(extra_ids)}
+            conn.execute(text(f"DELETE FROM nanny_profile_qualifications WHERE qualification_id IN ({placeholders})"), params)
+            conn.execute(text(f"DELETE FROM qualifications WHERE id IN ({placeholders})"), params)
 
 
 def ensure_parent_favorites_schema() -> None:

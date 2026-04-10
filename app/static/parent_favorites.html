@@ -264,8 +264,6 @@
 
       const trustBits = [
         n.approved ? "Approved by My Nanny" : "Pending approval",
-        n.has_identity_document ? "Identity document on file" : "Identity document pending",
-        n.has_passport_document ? "Passport document on file" : "Passport document pending",
         (n.review_count_12m || 0) > 0 ? `${n.review_count_12m} recent review(s)` : "No recent reviews yet",
       ];
       document.getElementById("previewTrust").innerHTML = trustBits.map((v) => `<span class="trustPill">${escapeHtml(v)}</span>`).join("");

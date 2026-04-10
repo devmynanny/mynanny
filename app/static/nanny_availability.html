@@ -19,6 +19,23 @@
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
     input, select{padding:10px;border-radius:10px;border:1px solid #ccc}
     #calendar { max-width: 100%; margin-top: 12px; }
+    .weeklyPatternGrid{display:grid;grid-template-columns:minmax(180px,1.1fr) minmax(110px,.7fr) minmax(260px,1.8fr) minmax(160px,1.1fr) minmax(150px,.9fr);gap:14px 12px;align-items:end}
+    .weeklyField input,.weeklyField select{width:100%;box-sizing:border-box}
+    .weekdayGroup{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:10px 0 4px}
+    .timeGroup{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .weeklyActions{display:flex;gap:12px;align-items:center;margin-top:14px}
+    .weeklyActions .btn{min-width:140px}
+    #weeklyStatus{min-height:20px}
+    @media (max-width: 820px) {
+      .weeklyPatternGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .weeklyField--weekdays,.weeklyField--times,.weeklyField--type{grid-column:1 / -1}
+    }
+    @media (max-width: 560px) {
+      .weeklyPatternGrid{grid-template-columns:1fr}
+      .timeGroup{grid-template-columns:1fr}
+      .weeklyActions{flex-direction:column;align-items:stretch}
+      .weeklyActions .btn{width:100%}
+    }
 
     /* Simple modal picker */
     .modal-overlay {
@@ -57,7 +74,7 @@
       </div>
       <label class="row" style="gap:8px;align-items:center;">
         <input id="inactiveToggle" type="checkbox" />
-        <span>Away</span>
+        <span>Unavailable</span>
       </label>
     </div>
     <div class="row" style="margin-top:8px;">
@@ -67,18 +84,18 @@
 
   <div class="card">
     <h3 style="margin:0 0 10px;">Weekly Pattern</h3>
-    <div class="row" style="margin-bottom:8px;">
-      <div>
+    <div class="weeklyPatternGrid">
+      <div class="weeklyField">
         <div class="muted">Start date</div>
         <input id="weeklyStartDate" type="date" />
       </div>
-      <div>
+      <div class="weeklyField">
         <div class="muted">Weeks</div>
         <input id="weeklyWeeks" type="number" min="1" max="52" value="4" />
       </div>
-      <div>
+      <div class="weeklyField weeklyField--weekdays">
         <div class="muted">Weekdays</div>
-        <div class="row">
+        <div class="weekdayGroup">
           <label class="muted"><input type="checkbox" value="0" class="weekdayBox"> Mon</label>
           <label class="muted"><input type="checkbox" value="1" class="weekdayBox"> Tue</label>
           <label class="muted"><input type="checkbox" value="2" class="weekdayBox"> Wed</label>
@@ -88,21 +105,28 @@
           <label class="muted"><input type="checkbox" value="6" class="weekdayBox"> Sun</label>
         </div>
       </div>
-      <div>
-        <div class="muted">Start time (optional)</div>
-        <input id="weeklyStartTime" type="time" />
+      <div class="weeklyField weeklyField--times">
+        <div class="muted">Time range (optional)</div>
+        <div class="timeGroup">
+          <div class="weeklyField">
+            <div class="muted">Start time</div>
+            <input id="weeklyStartTime" type="time" />
+          </div>
+          <div class="weeklyField">
+            <div class="muted">End time</div>
+            <input id="weeklyEndTime" type="time" />
+          </div>
+        </div>
       </div>
-      <div>
-        <div class="muted">End time (optional)</div>
-        <input id="weeklyEndTime" type="time" />
-      </div>
-      <div>
+      <div class="weeklyField weeklyField--type">
         <div class="muted">Type</div>
         <select id="weeklyType">
           <option value="available">Available</option>
           <option value="blocked">Unavailable</option>
         </select>
       </div>
+    </div>
+    <div class="weeklyActions">
       <button class="btn" id="applyWeeklyBtn" type="button">Apply weekly</button>
       <span id="weeklyStatus" class="muted"></span>
     </div>
@@ -110,6 +134,10 @@
 
   <div class="card">
     <h3 style="margin:0 0 10px;">Calendar view</h3>
+    <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+      <div id="calendarStatus" class="muted"></div>
+      <button class="btn" id="clearCalendarBtn" type="button">Clear calendar</button>
+    </div>
     <div id="calendar"></div>
   </div>
 
@@ -365,8 +393,10 @@
 
     const inactiveToggle = document.getElementById("inactiveToggle");
     const inactiveStatus = document.getElementById("inactiveStatus");
+    const clearCalendarBtn = document.getElementById("clearCalendarBtn");
     const disableSections = (disabled) => {
       document.getElementById("applyWeeklyBtn").disabled = disabled;
+      clearCalendarBtn.disabled = disabled;
     };
 
     const setWorkingStatus = (isActive) => {
@@ -375,7 +405,7 @@
         inactiveStatus.classList.add("statusActive");
         inactiveStatus.classList.remove("statusInactive");
       } else {
-        inactiveStatus.textContent = "Away — no booking requests";
+        inactiveStatus.textContent = "Unavailable — no booking requests";
         inactiveStatus.classList.add("statusInactive");
         inactiveStatus.classList.remove("statusActive");
       }
@@ -432,10 +462,42 @@
             type
           })
         });
-        status.textContent = `Created ${res.created || 0} entries.`;
+        const created = Number(res.created || 0);
+        const skipped = Number(res.skipped || 0);
+        if (created && skipped) {
+          status.textContent = `Created ${created} entries. Skipped ${skipped} duplicates.`;
+        } else if (created) {
+          status.textContent = `Created ${created} entries.`;
+        } else if (skipped) {
+          status.textContent = `No new entries created. Skipped ${skipped} duplicates.`;
+        } else {
+          status.textContent = "No entries created.";
+        }
         loadAvailability();
       } catch (e) {
         status.textContent = e.message || "Error";
+      }
+    });
+
+    clearCalendarBtn.addEventListener("click", async () => {
+      const status = document.getElementById("calendarStatus");
+      status.textContent = "";
+      const confirmed = confirm("Clear all availability from your calendar and start over?");
+      if (!confirmed) return;
+
+      clearCalendarBtn.disabled = true;
+      status.textContent = "Clearing calendar...";
+      try {
+        const res = await fetchJson("/nannies/me/availability", { method: "DELETE" });
+        const deleted = Number(res.deleted || 0);
+        status.textContent = deleted
+          ? `Cleared ${deleted} calendar entr${deleted === 1 ? "y" : "ies"}.`
+          : "Calendar was already empty.";
+        loadAvailability();
+      } catch (e) {
+        status.textContent = e.message || "Error";
+      } finally {
+        clearCalendarBtn.disabled = inactiveToggle.checked;
       }
     });
 

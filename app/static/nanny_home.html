@@ -33,6 +33,8 @@
       <button class="btn" id="goRequestsBtn" type="button">View booking requests</button>
       <button class="btn" id="goHistoryBtn" type="button">Booking history</button>
       <button class="btn" id="goProfileBtn" type="button">My profile</button>
+      <button class="btn" id="complaintTicketBtn" type="button">Complaint / ticket</button>
+      <button class="btn" id="shareProfileBtn" type="button">Share my profile</button>
     </div>
   </div>
 
@@ -61,6 +63,22 @@
     });
     document.getElementById("goProfileBtn").addEventListener("click", () => {
       location.href = "/static/nanny.html?from=ops";
+    });
+    document.getElementById("complaintTicketBtn").addEventListener("click", () => {
+      const subject = encodeURIComponent("My Nanny complaint / ticket");
+      const body = encodeURIComponent("Hi,\n\nI need help with:\n\n");
+      location.href = `mailto:nannies.info@gmail.com?subject=${subject}&body=${body}`;
+    });
+    document.getElementById("shareProfileBtn").addEventListener("click", async () => {
+      const shareUrl = `${location.origin}/static/nanny.html?from=ops`;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(shareUrl);
+          alert("Profile link copied.");
+          return;
+        }
+      } catch {}
+      window.prompt("Copy your profile link:", shareUrl);
     });
 
     (async () => {
