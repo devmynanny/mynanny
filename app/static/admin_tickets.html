@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <link rel="stylesheet" href="/static/theme.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Tickets</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 900px; margin: 28px auto; padding: 0 16px; }
+    h1 { margin: 8px 0 18px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 10px 0; }
+    .muted { color: #666; }
+    .btn { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  </style>
+  <script defer src="/static/nav_buttons.js"></script>
+</head>
+<body>
+  <h1>Tickets / complaints</h1>
+
+  <div class="card">
+    <div class="muted">A dedicated complaints dashboard has not been built yet.</div>
+    <div style="margin-top:10px;">
+      Complaints and tickets currently come in through <strong>`nannies.info@gmail.com`</strong>.
+    </div>
+    <div class="actions">
+      <button class="btn" id="openMailboxBtn" type="button">Email tickets inbox</button>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById("openMailboxBtn").addEventListener("click", () => {
+      location.href = "mailto:nannies.info@gmail.com?subject=My%20Nanny%20ticket%20review";
+    });
+  </script>
+</body>
+</html>

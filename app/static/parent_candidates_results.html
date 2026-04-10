@@ -28,8 +28,8 @@
     .avatar{width:64px;height:64px;border-radius:12px;object-fit:cover;background:#f3f4f6;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;font-weight:600;color:#6b7280}
     .card-title{font-weight:700;font-size:18px}
     .actions{display:flex;gap:10px;align-items:center;margin-top:10px}
-    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999;}
-    .modal{background:#fff;border-radius:10px;width:min(760px,100%);border:1px solid #ddd;padding:16px}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:flex-start;justify-content:center;padding:20px;z-index:9999;overflow-y:auto}
+    .modal{background:#fff;border-radius:10px;width:min(760px,100%);border:1px solid #ddd;padding:16px;max-height:calc(100vh - 40px);overflow-y:auto;margin:auto 0}
     .modal input, .modal select, .modal textarea{width:100%;padding:10px;margin-top:6px;box-sizing:border-box;border-radius:10px;border:1px solid #ccc}
     .modal .row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px}
     .estimateBox{margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
@@ -93,8 +93,11 @@
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
+      .modalBack{padding:12px}
+      .modal{max-height:calc(100vh - 24px)}
     }
   </style>
+  <script defer src="/static/nav_buttons.js"></script>
 </head>
 <body>
   <div id="topbar" class="topbar"></div>
@@ -107,18 +110,18 @@
     <button class="btn secondary" id="toggleAdvancedSearchBtn" type="button" aria-expanded="false" aria-controls="advancedSearchPanel">Advanced search</button>
     <div id="favoriteBroadcastBanner" class="muted" style="margin-top:8px; display:none;"></div>
     <div id="advancedSearchPanel" class="advancedSearchPanel">
-      <div class="muted" style="margin-top:4px;">Refine the nanny list using the filters below.</div>
+      <div class="muted" style="margin-top:4px;">Refine the search even more using the following filters for parents to choose attributes of nannies:</div>
       <div class="filters">
         <div class="filter-group">
-          <label>Favourites</label>
-          <label><input id="filterFavorites" type="checkbox" /> Only favourites</label>
+          <label>Favorites only</label>
+          <label><input id="filterFavorites" type="checkbox" /> Favorites only</label>
         </div>
         <div class="filter-group">
-          <label>Rated</label>
-          <label><input id="filterRated" type="checkbox" /> Rated only</label>
+          <label>Top rated</label>
+          <label><input id="filterRated" type="checkbox" /> Top rated</label>
         </div>
         <div class="filter-group" style="min-width:280px;">
-          <label>Areas of experience</label>
+          <label>Area of experience</label>
           <div id="filterTags" class="tag-filters"></div>
         </div>
         <div class="filter-group" style="min-width:280px;">
@@ -126,8 +129,36 @@
           <div id="filterQualifications" class="tag-filters"></div>
         </div>
         <div class="filter-group" style="min-width:280px;">
-          <label>Languages</label>
+          <label>Language</label>
           <div id="filterLanguages" class="tag-filters"></div>
+        </div>
+        <div class="filter-group" style="min-width:280px;">
+          <label>Nationality</label>
+          <div id="filterNationality" class="tag-filters"></div>
+        </div>
+        <div class="filter-group">
+          <label for="filterDogs">Should the nannies love dogs</label>
+          <select id="filterDogs">
+            <option value="">Any</option>
+            <option value="small_dogs">Yes, we have small dogs</option>
+            <option value="calm_big_dogs">Yes, we have calm big dogs</option>
+            <option value="pitbull_rottweiler">I have a rotweiler/pitbul</option>
+            <option value="no_dogs">No, I don't</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filterTransport">Must have a car</label>
+          <select id="filterTransport">
+            <option value="">Any</option>
+            <option value="own_car">Must have a car</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filterLicense">Must have license</label>
+          <select id="filterLicense">
+            <option value="">Any</option>
+            <option value="yes">Must have license</option>
+          </select>
         </div>
         <div class="filter-group">
           <label for="filterJobType">Job type</label>
@@ -136,31 +167,6 @@
             <option value="stay_in">Stay in</option>
             <option value="stay_out">Stay out</option>
             <option value="both">Can do both</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="filterLicense">License</label>
-          <select id="filterLicense">
-            <option value="">Any</option>
-            <option value="yes">Has license</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="filterTransport">Transport</label>
-          <select id="filterTransport">
-            <option value="">Any</option>
-            <option value="own_car">Own car</option>
-            <option value="public_transport">Public transport</option>
-          </select>
-        </div>
-        <div class="filter-group">
-          <label for="filterDogs">Dogs</label>
-          <select id="filterDogs">
-            <option value="">Any</option>
-            <option value="small_dogs">Yes, we have small dogs</option>
-            <option value="calm_big_dogs">Yes, we have calm big dogs</option>
-            <option value="pitbull_rottweiler">I have a rotweiler/pitbul</option>
-            <option value="no_dogs">No, I don't</option>
           </select>
         </div>
       </div>
@@ -269,6 +275,11 @@
       </div>
 
       <div id="bookingEstimate" class="estimateBox muted">Calculating estimate...</div>
+      <div class="muted" style="margin-top:8px; font-size:14px; line-height:1.5;">
+        Kindly note that afterhours, weekends, public holidays and sleep overs are charged higher than the std rate per day/per hour.<br>
+        Agency booking fees included.<br>
+        Liability insurance fees included.
+      </div>
       <div id="bookingStatus" class="muted" style="margin-top:8px; min-height:18px"></div>
 
       <div class="row">
@@ -310,12 +321,13 @@
         <div id="previewWorkHistory" class="workList muted"></div>
       </div>
       <div class="previewSection">
-        <div class="previewSectionTitle">Proficiencies</div>
+        <div class="previewSectionTitle">Areas of experience</div>
         <div id="previewProficiencies"></div>
       </div>
       <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
         <button class="btn" id="selectPreviewBtn" type="button">Select nanny</button>
-        <button class="btn" id="broadcastNearbyBtn" type="button">Broadcast to nearby 30 km</button>
+        <button class="btn" id="broadcastFavoritesBtn" type="button">Broadcast to my favorites</button>
+        <button class="btn" id="broadcastNearbyBtn" type="button">Notify nearby 30km</button>
         <button class="btn primary" id="bookPreviewBtn" type="button">Book now</button>
         <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
       </div>
@@ -768,12 +780,8 @@
           }),
         });
         const cur = data?.currency || "ZAR";
-        const perNanny = formatCurrencyCents(data?.per_nanny_total_cents, cur);
         const total = formatCurrencyCents(data?.selected_total_cents, cur);
-        const feePct = Number(data?.booking_fee_pct || 0) * 100;
         estimateEl.innerHTML = `
-          <div><strong>Per nanny:</strong> ${escapeHtml(perNanny)}</div>
-          <div><strong>Booking fee:</strong> ${feePct.toFixed(1)}%</div>
           <div><strong>Total${selectedCount > 1 ? ` (${selectedCount} nannies)` : ""}:</strong> ${escapeHtml(total)}</div>
         `;
       } catch (e) {
@@ -1356,6 +1364,7 @@
       const selectedTags = new Set(getSelectedTagNames());
       const selectedQualifications = new Set(getSelectedFilterValues("#filterQualifications"));
       const selectedLanguages = new Set(getSelectedFilterValues("#filterLanguages"));
+      const selectedNationalities = new Set(getSelectedFilterValues("#filterNationality"));
       const jobType = document.getElementById("filterJobType").value || "";
       const license = document.getElementById("filterLicense").value || "";
       const transport = document.getElementById("filterTransport").value || "";
@@ -1381,6 +1390,9 @@
       }
       if (selectedLanguages.size > 0) {
         filtered = filtered.filter(n => (n.languages || []).map(l => l.name).some(name => selectedLanguages.has(name)));
+      }
+      if (selectedNationalities.size > 0) {
+        filtered = filtered.filter(n => selectedNationalities.has(String(n.nationality || "")));
       }
       if (jobType) {
         filtered = filtered.filter(n => String(n.job_type || "") === jobType);
@@ -1442,6 +1454,18 @@
       const label = favoriteBroadcastActive ? "selected favourite nannies available" : "nannies found";
       document.getElementById("status").textContent = `${filtered.length} ${label}`;
       renderResults(filtered, profileComplete, canBook);
+    }
+
+    function renderNationalityFilters(results) {
+      const nationalityRoot = document.getElementById("filterNationality");
+      if (!nationalityRoot) return;
+      const names = Array.from(new Set((results || []).map((item) => String(item.nationality || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+      nationalityRoot.innerHTML = names.map((name) => `<label><input type="checkbox" value="${escapeHtml(name)}"> ${escapeHtml(name)}</label>`).join("");
+      nationalityRoot.querySelectorAll("input[type=\"checkbox\"]").forEach((el) => {
+        el.addEventListener("change", () => {
+          refreshFilters(lastProfileComplete, lastCanBook);
+        });
+      });
     }
 
     function updateSelectedButton() {
@@ -1509,6 +1533,7 @@
 
       const results = data.results || [];
       lastResults = Array.isArray(results) ? results : [];
+      renderNationalityFilters(lastResults);
       if (favoriteBroadcastActive && favoriteBroadcastIds.size) {
         selectedNannies = new Set(
           lastResults
@@ -1577,6 +1602,21 @@
       if (requestBtn) requestBtn.disabled = selectedNannies.size === 0;
       renderResults(lastResults, lastProfileComplete, lastCanBook);
       closePreview();
+    });
+    document.getElementById("broadcastFavoritesBtn").addEventListener("click", () => {
+      if (!previewNanny) return;
+      const favoriteIds = lastResults
+        .filter((item) => favorites.has(Number(item.nanny_id)))
+        .map((item) => Number(item.nanny_id));
+      if (!favoriteIds.length) {
+        const fit = document.getElementById("previewFit");
+        if (fit) fit.textContent = "No favorite nannies are available for this schedule.";
+        return;
+      }
+      selectedNannies = new Set(favoriteIds);
+      renderResults(lastResults, lastProfileComplete, lastCanBook);
+      closePreview();
+      openBookingModal(null, "", favoriteIds);
     });
     document.getElementById("broadcastNearbyBtn").addEventListener("click", () => {
       if (!previewNanny) return;

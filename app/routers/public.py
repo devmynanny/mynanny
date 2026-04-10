@@ -625,6 +625,11 @@ def _next_booking_request_id(db: Session) -> int:
     return int(max_id or 0) + 1
 
 
+def _next_booking_request_slot_id(db: Session) -> int:
+    max_id = db.query(func.max(models.BookingRequestSlot.id)).scalar()
+    return int(max_id or 0) + 1
+
+
 def _get_pricing_settings(db: Session) -> dict:
     row = db.query(models.PricingSettings).first()
     if not row:
@@ -849,14 +854,17 @@ def _build_booking_questionnaire_notes(base_notes: Optional[str], questionnaire:
 
 
 def _attach_booking_request_slots(db: Session, req_id: int, windows: List[tuple]) -> None:
+    next_id = _next_booking_request_slot_id(db)
     for start_dt, end_dt in windows:
         db.add(
             models.BookingRequestSlot(
+                id=next_id,
                 booking_request_id=req_id,
                 starts_at=start_dt,
                 ends_at=end_dt,
             )
         )
+        next_id += 1
 
 
 def _compute_day_rate(hours: float, is_weekend: bool, settings: dict) -> int:
@@ -5026,6 +5034,7 @@ def list_nanny_bookings(
 def create_bulk_booking_request(payload: BulkBookingRequest, request: Request, db: Session = Depends(get_db)):
     created_slots = []
     errors = []
+    next_slot_id = _next_booking_request_slot_id(db)
     req = models.BookingRequest(
         id=_next_booking_request_id(db),
         parent_user_id=payload.parent_user_id,
@@ -5055,10 +5064,12 @@ def create_bulk_booking_request(payload: BulkBookingRequest, request: Request, d
             errors.append({"index": i, "error": "overlaps an existing booking or hold"})
             continue
         s = models.BookingRequestSlot(
+            id=next_slot_id,
             booking_request_id=req.id,
             starts_at=slot.starts_at,
             ends_at=slot.ends_at,
         )
+        next_slot_id += 1
         db.add(s)
         db.flush()
         created_slots.append({"id": s.id, "starts_at": s.starts_at, "ends_at": s.ends_at})
@@ -5736,13 +5747,40 @@ def admin_get_parent_profile(
         .filter(models.ParentLocation.parent_user_id == user_id, models.ParentLocation.is_default == True)
         .first()
     )
+    kids_ages = []
+    if profile and getattr(profile, "kids_ages_json", None):
+        try:
+            kids_ages = json.loads(getattr(profile, "kids_ages_json", None)) or []
+        except Exception:
+            kids_ages = []
+    access_flags = []
+    if profile and getattr(profile, "access_flags_json", None):
+        try:
+            access_flags = json.loads(getattr(profile, "access_flags_json", None)) or []
+        except Exception:
+            access_flags = []
     return {
         "name": user.name,
         "phone": getattr(profile, "phone", None) if profile else None,
+        "phone_alt": getattr(user, "phone_alt", None),
         "kids_count": getattr(profile, "kids_count", None) if profile else None,
+        "kids_ages": kids_ages,
         "suburb": (default_loc.suburb if default_loc else None) or (getattr(profile, "suburb", None) if profile else None),
         "city": (default_loc.city if default_loc else None) or (getattr(profile, "city", None) if profile else None),
         "province": (default_loc.province if default_loc else None) or (getattr(profile, "province", None) if profile else None),
+        "formatted_address": getattr(default_loc, "formatted_address", None) if default_loc else getattr(profile, "formatted_address", None) if profile else None,
+        "location_label": getattr(default_loc, "label", None) if default_loc else getattr(profile, "location_label", None) if profile else None,
+        "residence_type": getattr(profile, "residence_type", None) if profile else None,
+        "special_notes": getattr(profile, "special_notes", None) if profile else None,
+        "family_photo_url": getattr(profile, "family_photo_url", None) if profile else None,
+        "access_flags": access_flags,
+        "booking_responsibilities": getattr(profile, "booking_responsibilities", None) if profile else None,
+        "booking_adult_present": getattr(profile, "booking_adult_present", None) if profile else None,
+        "booking_reason": getattr(profile, "booking_reason", None) if profile else None,
+        "booking_children_count": getattr(profile, "booking_children_count", None) if profile else None,
+        "booking_meal_option": getattr(profile, "booking_meal_option", None) if profile else None,
+        "booking_food_restrictions": getattr(profile, "booking_food_restrictions", None) if profile else None,
+        "booking_dogs": getattr(profile, "booking_dogs", None) if profile else None,
     }
 
 

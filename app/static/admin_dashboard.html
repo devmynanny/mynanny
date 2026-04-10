@@ -16,6 +16,7 @@
     .clickable-row{cursor:pointer}
     .clickable-row:hover{background:#f7f7f7}
   </style>
+  <script defer src="/static/nav_buttons.js"></script>
 </head>
 <body>
   <div class="topbar">
@@ -31,6 +32,7 @@
       <button class="btn" id="btnPendingNannies" type="button">Pending nannies</button>
       <button class="btn" id="btnUsers" type="button">Users</button>
       <button class="btn" id="btnBilling" type="button">Billing</button>
+      <button class="btn" id="ticketsBtn" type="button">View tickets / complaints</button>
       <button class="btn" id="reportsBtn" type="button">Reports</button>
       <button class="btn" id="pricingBtn" type="button">Pricing</button>
       <button class="btn" id="integrationsBtn" type="button">Integrations</button>
@@ -130,6 +132,13 @@
     if (reportsBtn) {
       reportsBtn.addEventListener("click", () => {
         window.location.href = "/static/admin_reports.html";
+      });
+    }
+
+    const ticketsBtn = document.getElementById("ticketsBtn");
+    if (ticketsBtn) {
+      ticketsBtn.addEventListener("click", () => {
+        window.location.href = "/static/admin_tickets.html";
       });
     }
 

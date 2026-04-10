@@ -16,7 +16,49 @@
     .err { color:#b00020; }
     .summary-block { margin-top: 10px; line-height: 1.5; }
     .summary-block:first-child { margin-top: 0; }
+    .actionRow { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .contactAction {
+      width: 52px;
+      height: 52px;
+      border-radius: 999px;
+      border: none;
+      background: #22c55e;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 18px rgba(34, 197, 94, 0.18);
+    }
+    .contactAction:disabled {
+      background: #bbf7d0;
+      color: #4b5563;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .profilePreview {
+      display: grid;
+      grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .profilePreview img {
+      width: 160px;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 14px;
+      border: 1px solid #ddd;
+      background: #f3f4f6;
+    }
+    .infoList { display:grid; gap:8px; }
+    .pillRow { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    .pill { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; border:1px solid #ddd; background:#f9fafb; font-size:13px; }
+    @media (max-width: 720px) {
+      .profilePreview { grid-template-columns: 1fr; }
+    }
   </style>
+  <script defer src="/static/nav_buttons.js"></script>
 </head>
 <body>
   <div class="row" style="margin-bottom:10px;">
@@ -40,9 +82,19 @@
     <div id="revenueBody" class="muted">Loading...</div>
   </div>
 
+  <div class="card" id="profileViewCard" style="display:none;">
+    <h2>Profile view</h2>
+    <div id="profileViewBody" class="muted">Loading...</div>
+  </div>
+
   <div class="card" id="editProfile">
     <h2>Edit profile</h2>
-    <button class="btn" id="editProfileBtn" type="button">Edit profile</button>
+    <div class="actionRow">
+      <button class="btn" id="editProfileBtn" type="button">Edit profile</button>
+      <button class="contactAction" id="whatsappBtn" type="button" title="WhatsApp">WA</button>
+      <button class="contactAction" id="callBtn" type="button" title="Call">Call</button>
+      <button class="contactAction" id="emailBtn" type="button" title="Email">Mail</button>
+    </div>
   </div>
 
   <div class="card" id="nannyApplication" style="display:none;">
@@ -141,6 +193,96 @@
       document.getElementById("profileSummaryBody").innerHTML = lines.join("");
     }
 
+    function cleanPhoneNumber(value) {
+      return String(value || "").replace(/[^\d+]/g, "");
+    }
+
+    function normalizeWhatsAppNumber(value) {
+      const raw = cleanPhoneNumber(value);
+      if (!raw) return "";
+      if (raw.startsWith("+")) return raw.slice(1);
+      if (raw.startsWith("0")) return `27${raw.slice(1)}`;
+      return raw;
+    }
+
+    function renderProfileView(user, profile) {
+      const card = document.getElementById("profileViewCard");
+      const body = document.getElementById("profileViewBody");
+      if (!card || !body) return;
+
+      if (user.role !== "parent") {
+        card.style.display = "none";
+        return;
+      }
+
+      card.style.display = "block";
+      const kidsAges = Array.isArray(profile?.kids_ages) && profile.kids_ages.length
+        ? profile.kids_ages.join(", ")
+        : "-";
+      const flags = Array.isArray(profile?.access_flags) ? profile.access_flags.filter(Boolean) : [];
+      const location = profile?.formatted_address || [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
+      const familyPhoto = profile?.family_photo_url
+        ? `<img src="${escapeHtml(profile.family_photo_url)}" alt="Family photo" />`
+        : `<div style="width:160px;height:160px;border-radius:14px;border:1px solid #ddd;background:#f3f4f6;display:flex;align-items:center;justify-content:center;color:#666;">No family photo</div>`;
+
+      body.innerHTML = `
+        <div class="profilePreview">
+          <div>${familyPhoto}</div>
+          <div class="infoList">
+            <div><strong>Family name:</strong> ${escapeHtml(profile?.name || "-")}</div>
+            <div><strong>Children in home:</strong> ${escapeHtml(profile?.kids_count ?? "-")}</div>
+            <div><strong>Children ages:</strong> ${escapeHtml(kidsAges)}</div>
+            <div><strong>Residence type:</strong> ${escapeHtml(profile?.residence_type || "-")}</div>
+            <div><strong>Location:</strong> ${escapeHtml(location)}</div>
+            <div><strong>Booking responsibilities:</strong> ${escapeHtml(profile?.booking_responsibilities || "-")}</div>
+            <div><strong>Adult present:</strong> ${escapeHtml(profile?.booking_adult_present || "-")}</div>
+            <div><strong>Reason for booking:</strong> ${escapeHtml(profile?.booking_reason || "-")}</div>
+            <div><strong>Children present during booking:</strong> ${escapeHtml(profile?.booking_children_count ?? profile?.kids_count ?? "-")}</div>
+            <div><strong>Meal arrangement:</strong> ${escapeHtml(profile?.booking_meal_option || "-")}</div>
+            <div><strong>Foods not allowed:</strong> ${escapeHtml(profile?.booking_food_restrictions || "-")}</div>
+            <div><strong>Dogs at home:</strong> ${escapeHtml(profile?.booking_dogs || "-")}</div>
+            <div><strong>Notes for nanny:</strong> ${escapeHtml(profile?.special_notes || "-")}</div>
+            <div>
+              <strong>Home / access notes:</strong>
+              <div class="pillRow">${flags.length ? flags.map((flag) => `<span class="pill">${escapeHtml(flag)}</span>`).join("") : `<span class="muted">No access notes added.</span>`}</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function bindContactActions(user, profile) {
+      const primaryPhone = cleanPhoneNumber(profile?.phone || user?.phone || "");
+      const whatsappPhone = normalizeWhatsAppNumber(profile?.phone_alt || profile?.phone || user?.phone_alt || user?.phone || "");
+      const email = String(user?.email || "").trim();
+
+      const whatsappBtn = document.getElementById("whatsappBtn");
+      const callBtn = document.getElementById("callBtn");
+      const emailBtn = document.getElementById("emailBtn");
+
+      if (whatsappBtn) {
+        whatsappBtn.disabled = !whatsappPhone;
+        whatsappBtn.onclick = () => {
+          if (!whatsappPhone) return;
+          window.location.href = `https://wa.me/${encodeURIComponent(whatsappPhone)}`;
+        };
+      }
+      if (callBtn) {
+        callBtn.disabled = !primaryPhone;
+        callBtn.onclick = () => {
+          if (!primaryPhone) return;
+          window.location.href = `tel:${primaryPhone}`;
+        };
+      }
+      if (emailBtn) {
+        emailBtn.disabled = !email;
+        emailBtn.onclick = () => {
+          if (!email) return;
+          window.location.href = `mailto:${encodeURIComponent(email)}`;
+        };
+      }
+    }
+
     function renderNannyApplication(user, profile) {
       const card = document.getElementById("nannyApplication");
       const body = document.getElementById("nannyApplicationBody");
@@ -216,7 +358,9 @@
       }
 
       renderProfileSummary(user, profile || {});
+      renderProfileView(user, profile || {});
       renderNannyApplication(user, profile || {});
+      bindContactActions(user, profile || {});
 
       const stats = await loadBookingStats();
       renderBookingStats(user, stats);

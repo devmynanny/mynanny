@@ -16,6 +16,7 @@
     .muted{color:#666}
     .err{color:#b00020}
   </style>
+  <script defer src="/static/nav_buttons.js"></script>
 </head>
 <body>
   <div id="topbar" class="topbar"></div>
@@ -26,9 +27,9 @@
 
   <div class="card">
     <h3 style="margin-top:0;">Google Maps</h3>
-    <div class="muted" style="margin-bottom:12px;">Update the key used for Places autocomplete and reverse geocoding. Leaving this blank falls back to the server environment variable if one is set.</div>
+    <div class="muted" style="margin-bottom:12px;">Save the browser key used for Places autocomplete and map scripts. Reverse geocoding on the server continues to use the Render environment variable.</div>
     <div id="mapsMeta" class="muted" style="margin-bottom:12px;">Loading...</div>
-    <label for="googleMapsApiKey">Google Maps API key</label>
+    <label for="googleMapsApiKey">Google Maps browser API key</label>
     <input id="googleMapsApiKey" type="text" placeholder="AIza..." autocomplete="off" />
     <div class="actions">
       <button class="btn" id="clearBtn" type="button">Clear saved key</button>
@@ -43,9 +44,8 @@
       const data = await fetchJson("/admin/integrations/google-maps");
       document.getElementById("googleMapsApiKey").value = data.google_maps_api_key || "";
       const parts = [];
-      parts.push(`Configured: ${data.configured ? "Yes" : "No"}`);
-      parts.push(`Source: ${data.source || "none"}`);
-      if (data.using_env_fallback) parts.push("Using environment fallback");
+      parts.push(`Browser key saved: ${data.configured ? "Yes" : "No"}`);
+      parts.push(`Server env key: ${data.server_env_configured ? "Yes" : "No"}`);
       document.getElementById("mapsMeta").textContent = parts.join(" | ");
     }
 
