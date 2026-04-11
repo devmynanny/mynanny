@@ -475,6 +475,10 @@
           await Promise.all(uploads).catch(() => {});
         }
 
+        if (u.role === "nanny") {
+          window.location.href = "/static/nanny.html?post_signup=1";
+          return;
+        }
         routeByRole(u.role);
       } catch (e) {
         errEl.textContent = e.message;

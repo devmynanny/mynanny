@@ -1195,6 +1195,254 @@ def notify_booking_reassigned(parent_user_id: int, nanny_id: int, request_id: in
         db.close()
 
 
+def notify_booking_nanny_response(
+    req: models.BookingRequest,
+    nanny_user: Optional[models.User],
+    response: str,
+) -> None:
+    client = get_email_client()
+    db = SessionLocal()
+    try:
+        parent = db.query(models.User).filter(models.User.id == req.parent_user_id).first()
+        admins = admin_emails()
+        nanny_name = getattr(nanny_user, "name", None) or f"Nanny #{req.nanny_id}"
+        response_label = {
+            "accepted": "accepted",
+            "declined": "declined",
+            "deciding": "marked the booking as still deciding",
+        }.get(response, response)
+        subject = f"Nanny response for booking request #{req.id}"
+        body = "\n".join(
+            [
+                f"{nanny_name} has {response_label}.",
+                f"booking_request_id: {req.id}",
+                f"start: {req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else '-')}",
+                f"end: {req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else '-')}",
+                f"response_note: {getattr(req, 'nanny_response_note', None) or '-'}",
+                f"admin_link: {app_base_url()}/static/admin_dashboard.html",
+            ]
+        )
+        recipients = []
+        if parent and getattr(parent, "email", None):
+            recipients.append(parent.email)
+        recipients.extend(admins or [])
+        sent = set()
+        for recipient in recipients:
+            if not recipient or recipient in sent:
+                continue
+            sent.add(recipient)
+            client.send(EmailMessage(to=[recipient], subject=subject, body=body))
+    except Exception as e:
+        print(f"[EMAIL][BOOKING_NANNY_RESPONSE_FAIL] {e!r}")
+    finally:
+        db.close()
+
+
+def notify_admin_unaccepted_booking_request(
+    req: models.BookingRequest,
+    parent_user: Optional[models.User],
+    nanny_user: Optional[models.User],
+) -> None:
+    admins = admin_emails()
+    if not admins:
+        return
+    client = get_email_client()
+    subject = f"Booking request #{req.id} still unaccepted after 6 hours"
+    body = "\n".join(
+        [
+            "A booking request has not been accepted within 6 hours and may need manual admin intervention.",
+            f"booking_request_id: {req.id}",
+            f"parent: {getattr(parent_user, 'name', None) or '-'} ({getattr(parent_user, 'email', None) or '-'})",
+            f"requested_nanny: {getattr(nanny_user, 'name', None) or '-'}",
+            f"start: {req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else '-')}",
+            f"end: {req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else '-')}",
+            f"admin_link: {app_base_url()}/static/admin_dashboard.html",
+        ]
+    )
+    try:
+        client.send(EmailMessage(to=admins, subject=subject, body=body))
+    except Exception as e:
+        print(f"[EMAIL][UNACCEPTED_BOOKING_NOTIFY_FAIL] {e!r}")
+
+
+def notify_admin_nanny_cancelled_booking(
+    booking: models.Booking,
+    nanny_user: Optional[models.User],
+    reason: Optional[str],
+) -> None:
+    client = get_email_client()
+    admins = admin_emails()
+    if not admins:
+        return
+
+    subject = f"Nanny cancelled booking #{booking.id}"
+    body = "\n".join(
+        [
+            "A nanny cancelled a booking and admin attention is required before the client is contacted.",
+            f"booking_id: {booking.id}",
+            f"nanny: {getattr(nanny_user, 'name', None) or 'Unknown nanny'}",
+            f"parent_user_id: {booking.client_user_id}",
+            f"starts_at: {booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else '-')}",
+            f"ends_at: {booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else '-')}",
+            f"reason: {reason or '-'}",
+            f"admin_link: {app_base_url()}/static/admin_dashboard.html",
+        ]
+    )
+    try:
+        client.send(EmailMessage(to=admins, subject=subject, body=body))
+    except Exception as e:
+        print(f"[EMAIL][ADMIN_CANCEL_NOTIFY_FAIL] {e!r}")
+
+
+def _booking_request_reason_label(reason: Optional[str]) -> Optional[str]:
+    raw = (reason or "").strip()
+    if not raw:
+        return None
+    labels = {
+        "accepted_by_nanny": "Accepted by nanny",
+        "filled": "Filled by another nanny",
+        "filled_higher_rating": "Filled by another nanny with a higher rating",
+        "cancelled_by_parent": "Cancelled by parent",
+    }
+    return labels.get(raw, raw.replace("_", " ").strip().capitalize())
+
+
+def _parse_booking_questionnaire_notes(notes: Optional[str]) -> dict:
+    parsed = {"additional_notes": None, "items": []}
+    text = (notes or "").strip()
+    if not text:
+        return parsed
+    for line in [line.strip() for line in text.splitlines() if line.strip()]:
+        if ":" in line:
+            label, value = line.split(":", 1)
+            clean_label = label.strip()
+            clean_value = value.strip() or "-"
+            if clean_label.lower() == "additional notes":
+                parsed["additional_notes"] = clean_value
+            parsed["items"].append({"label": clean_label, "value": clean_value})
+        else:
+            parsed["items"].append({"label": "Notes", "value": line})
+    return parsed
+
+
+def _booking_questionnaire_from_notes(notes: Optional[str]) -> dict:
+    parsed = _parse_booking_questionnaire_notes(notes)
+    values = {
+        "notes": parsed.get("additional_notes"),
+        "responsibilities": None,
+        "adult_present": None,
+        "booking_reason": None,
+        "kids_count": 1,
+        "meal_option": None,
+        "food_restrictions": None,
+        "dogs_info": None,
+        "disclaimer_basic_upkeep": False,
+        "disclaimer_medicine": False,
+        "disclaimer_extra_hours": False,
+        "disclaimer_transport": False,
+    }
+    bool_map = {"yes": True, "true": True, "no": False, "false": False}
+    label_map = {
+        "nanny responsibilities": "responsibilities",
+        "adult present at address": "adult_present",
+        "reason for booking": "booking_reason",
+        "children present": "kids_count",
+        "meal arrangement": "meal_option",
+        "foods not allowed in home": "food_restrictions",
+        "dogs at home": "dogs_info",
+        "house upkeep disclaimer understood": "disclaimer_basic_upkeep",
+        "medicine disclaimer understood": "disclaimer_medicine",
+        "additional hours disclaimer understood": "disclaimer_extra_hours",
+        "after-17:00 transport disclaimer understood": "disclaimer_transport",
+    }
+    for item in parsed.get("items", []):
+        label = str(item.get("label") or "").strip().lower()
+        target = label_map.get(label)
+        if not target:
+            continue
+        raw_value = item.get("value")
+        if target == "kids_count":
+            try:
+                values[target] = _sanitize_booking_kids_count(raw_value)
+            except Exception:
+                values[target] = 1
+        elif target.startswith("disclaimer_"):
+            values[target] = bool_map.get(str(raw_value or "").strip().lower(), False)
+        else:
+            values[target] = raw_value
+    return values
+
+
+def _booking_elapsed_minutes(booking: models.Booking) -> Optional[int]:
+    if not getattr(booking, "check_in_at", None) or not getattr(booking, "check_out_at", None):
+        return None
+    delta = booking.check_out_at - booking.check_in_at
+    return max(0, int(delta.total_seconds() // 60))
+
+
+def _booking_scheduled_minutes(booking: models.Booking) -> Optional[int]:
+    if not getattr(booking, "starts_at", None) or not getattr(booking, "ends_at", None):
+        return None
+    delta = booking.ends_at - booking.starts_at
+    return max(0, int(delta.total_seconds() // 60))
+
+
+def _find_related_bookings_for_request(db: Session, req: models.BookingRequest) -> List[models.Booking]:
+    rows = (
+        db.query(models.Booking)
+        .filter(models.Booking.booking_request_id == req.id)
+        .order_by(models.Booking.starts_at.asc(), models.Booking.id.asc())
+        .all()
+    )
+    if rows:
+        return rows
+
+    windows = _booking_request_windows(db, req)
+    if not windows:
+        try:
+            start_dt = _parse_iso_dt(req.start_dt or req.requested_starts_at)
+            end_dt = _parse_iso_dt(req.end_dt or req.requested_ends_at)
+            windows = [(start_dt, end_dt)]
+        except Exception:
+            return []
+
+    start_floor = min(w[0] for w in windows)
+    end_ceiling = max(w[1] for w in windows)
+    return (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.client_user_id == req.parent_user_id,
+            models.Booking.nanny_id == req.nanny_id,
+            models.Booking.starts_at <= end_ceiling,
+            models.Booking.ends_at >= start_floor,
+        )
+        .order_by(models.Booking.starts_at.asc(), models.Booking.id.asc())
+        .all()
+    )
+
+
+def _cancel_related_bookings_for_request(
+    db: Session,
+    req: models.BookingRequest,
+    *,
+    actor_role: str,
+    actor_user_id: Optional[int],
+    reason: str,
+) -> List[models.Booking]:
+    cancelled: List[models.Booking] = []
+    now = datetime.utcnow()
+    for booking in _find_related_bookings_for_request(db, req):
+        if booking.status in ("completed", "cancelled", "rejected"):
+            continue
+        booking.status = "cancelled"
+        booking.cancelled_at = now
+        booking.cancellation_reason = reason
+        booking.cancellation_actor_role = actor_role
+        booking.cancellation_actor_user_id = actor_user_id
+        cancelled.append(booking)
+    return cancelled
+
+
 def _send_whatsapp_message(phone: Optional[str], message: str) -> bool:
     to = (phone or "").strip()
     if not to:
@@ -1548,10 +1796,16 @@ def auth_me(authorization: Optional[str] = Header(default=None), db: Session = D
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     nanny_id = None
+    nanny_application_status = None
+    nanny_admin_reason = None
     if user.role == "nanny":
         nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
         if nanny:
             nanny_id = nanny.id
+            profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+            if profile:
+                nanny_application_status = getattr(profile, "application_status", None)
+                nanny_admin_reason = getattr(profile, "admin_reason", None)
     return {
         "id": user.id,
         "name": user.name,
@@ -1560,6 +1814,8 @@ def auth_me(authorization: Optional[str] = Header(default=None), db: Session = D
         "nanny_id": nanny_id,
         "is_admin": bool(getattr(user, "is_admin", False)),
         "is_active": bool(getattr(user, "is_active", True)),
+        "nanny_application_status": nanny_application_status,
+        "nanny_admin_reason": nanny_admin_reason,
     }
 
 
@@ -1619,6 +1875,22 @@ def require_admin(authorization: Optional[str], db: Session) -> models.User:
 
 def _require_admin_user(authorization: Optional[str], db: Session) -> models.User:
     return require_admin(authorization, db)
+
+
+def _require_nanny_user_not_on_hold(authorization: Optional[str], db: Session) -> tuple[models.User, models.Nanny, Optional[models.NannyProfile]]:
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+    if profile and getattr(profile, "application_status", None) == "hold":
+        raise HTTPException(
+            status_code=423,
+            detail="Your profile is on hold due to outstanding information. Please update your profile to continue.",
+        )
+    return user, nanny, profile
 
 
 def _nanny_profile_snapshot(user: models.User, profile: models.NannyProfile) -> dict:
@@ -2577,12 +2849,7 @@ def get_nanny_me_availability(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     rows = (
         db.query(models.NannyAvailability)
         .filter(models.NannyAvailability.nanny_id == nanny.id)
@@ -2607,12 +2874,7 @@ def create_nanny_me_availability(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     try:
         start_dt = _parse_iso_dt(payload.start_dt)
         end_dt = _parse_iso_dt(payload.end_dt)
@@ -2646,12 +2908,7 @@ def create_nanny_me_availability_bulk(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     if payload.type not in ("available", "blocked"):
         raise HTTPException(status_code=400, detail="Invalid type")
 
@@ -2717,12 +2974,7 @@ def create_nanny_me_availability_weekly(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     if payload.type not in ("available", "blocked"):
         raise HTTPException(status_code=400, detail="Invalid type")
     if payload.weeks <= 0 or payload.weeks > 52:
@@ -2791,12 +3043,7 @@ def delete_nanny_me_availability(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     row = (
         db.query(models.NannyAvailability)
         .filter(models.NannyAvailability.id == availability_id, models.NannyAvailability.nanny_id == nanny.id)
@@ -2814,12 +3061,7 @@ def clear_nanny_me_availability(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
 
     deleted = (
         db.query(models.NannyAvailability)
@@ -2837,12 +3079,7 @@ def update_nanny_me_availability(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    _, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     row = (
         db.query(models.NannyAvailability)
         .filter(models.NannyAvailability.id == availability_id, models.NannyAvailability.nanny_id == nanny.id)
@@ -2866,9 +3103,7 @@ def set_nanny_inactive(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
+    user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
     inactive = bool(payload.get("inactive"))
     user.is_active = not inactive
     db.commit()
@@ -2880,12 +3115,7 @@ def list_nanny_me_booking_requests(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     parent_user = aliased(models.User)
     location = aliased(models.ParentLocation)
     parent_profile = aliased(models.ParentProfile)
@@ -2926,6 +3156,9 @@ def list_nanny_me_booking_requests(
             "id": req.id,
             "group_id": req.group_id or req.id,
             "status": req.status,
+            "nanny_response_status": getattr(req, "nanny_response_status", None) or "pending",
+            "nanny_responded_at": req.nanny_responded_at.isoformat() if getattr(req, "nanny_responded_at", None) else None,
+            "nanny_response_note": getattr(req, "nanny_response_note", None),
             "parent_name": parent.name,
             "parent_email": parent.email,
             "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
@@ -2947,12 +3180,7 @@ def list_nanny_me_bookings(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     parent_user = aliased(models.User)
     location = aliased(models.ParentLocation)
     parent_profile = aliased(models.ParentProfile)
@@ -3036,12 +3264,7 @@ def list_nanny_me_duty_bookings(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
 
     parent_user = aliased(models.User)
     rows = (
@@ -3086,9 +3309,7 @@ def nanny_check_in_booking(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
+    user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
     booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
     target_lat, target_lng = _ensure_booking_geo(booking)
     distance_m = _distance_m(payload.lat, payload.lng, target_lat, target_lng)
@@ -3138,9 +3359,7 @@ def nanny_check_out_booking(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
+    user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
     booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
     if not booking.check_in_at:
         raise HTTPException(status_code=400, detail="Check in first before checking out")
@@ -3181,6 +3400,67 @@ def nanny_check_out_booking(
     }
 
 
+@router.post("/nannies/me/bookings/{booking_id}/cancel")
+def nanny_cancel_booking(
+    booking_id: int,
+    payload: schemas.BookingCancellationRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for cancelling this booking")
+
+    booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
+    if booking.status in ("completed", "cancelled", "rejected"):
+        raise HTTPException(status_code=400, detail="This booking can no longer be cancelled")
+
+    before_status = booking.status
+    booking.status = "cancelled"
+    booking.cancelled_at = datetime.utcnow()
+    booking.cancellation_reason = reason
+    booking.cancellation_actor_role = "nanny"
+    booking.cancellation_actor_user_id = user.id
+
+    related_request = None
+    if getattr(booking, "booking_request_id", None):
+        related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+    if related_request:
+        related_request.status = "cancelled"
+        related_request.admin_reason = reason
+        related_request.admin_decided_at = datetime.utcnow()
+        related_request.cancelled_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(booking)
+
+    log_booking_status_change(
+        db,
+        actor_user=user,
+        target_user_id=booking.client_user_id,
+        booking_id=booking.id,
+        before_status=before_status,
+        after_status=booking.status,
+        request=request,
+    )
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=booking.client_user_id,
+        entity="bookings",
+        entity_id=booking.id,
+        action="cancel",
+        before_obj={"status": before_status},
+        after_obj={"status": booking.status, "reason": reason},
+        changed_fields=["status", "cancellation_reason"],
+        request=request,
+    )
+    notify_admin_nanny_cancelled_booking(booking, user, reason)
+    return {"ok": True, "booking_id": booking.id, "status": booking.status, "reason": reason}
+
+
 @router.post("/nannies/me/booking-requests/{request_id}/accept")
 def accept_nanny_booking_request(
     request_id: int,
@@ -3188,25 +3468,22 @@ def accept_nanny_booking_request(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user = _require_user(authorization, db)
-    if user.role != "nanny":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
-    if not nanny:
-        raise HTTPException(status_code=404, detail="Nanny not found")
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
 
     req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
     if not req or req.nanny_id != nanny.id:
         raise HTTPException(status_code=404, detail="Booking request not found")
-    if req.status not in ("tbc", "pending_admin"):
-        raise HTTPException(status_code=400, detail="Booking request is not pending")
+    if req.status not in ("tbc", "pending_admin", "approved"):
+        raise HTTPException(status_code=400, detail="Booking request is not available")
 
+    existing_bookings = _find_related_bookings_for_request(db, req) if req.status == "approved" else []
     windows = _booking_request_windows(db, req)
     if not windows:
         raise HTTPException(status_code=400, detail="Invalid booking window")
-    for start_dt, end_dt in windows:
-        if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
-            raise HTTPException(status_code=409, detail="Requested time is not available")
+    if not existing_bookings:
+        for start_dt, end_dt in windows:
+            if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
+                raise HTTPException(status_code=409, detail="Requested time is not available")
     start_dt = min(w[0] for w in windows)
     end_dt = max(w[1] for w in windows)
 
@@ -3243,75 +3520,104 @@ def accept_nanny_booking_request(
     if req.location_id:
         location = db.query(models.ParentLocation).filter(models.ParentLocation.id == req.location_id).first()
 
+    before_status = req.status
+    before_response = getattr(req, "nanny_response_status", None) or "pending"
     req.status = "approved"
     req.start_dt = req.start_dt or _to_iso_z(start_dt)
     req.end_dt = req.end_dt or _to_iso_z(end_dt)
     req.admin_decided_at = datetime.utcnow()
     req.admin_reason = "accepted_by_nanny"
+    req.nanny_response_status = "accepted"
+    req.nanny_responded_at = datetime.utcnow()
+    req.nanny_response_note = None
 
-    db.flush()
-    winner = _resolve_group_acceptance(group_id)
-    if winner and winner.id != req.id:
-        db.commit()
-        raise HTTPException(status_code=409, detail="Another nanny with a higher rating has been selected for this job")
+    created_bookings = existing_bookings or _find_related_bookings_for_request(db, req)
+    if not created_bookings:
+        db.flush()
+        winner = _resolve_group_acceptance(group_id)
+        if winner and winner.id != req.id:
+            db.commit()
+            raise HTTPException(status_code=409, detail="Another nanny has already been selected for this job")
 
-    created_bookings = []
-    for slot_start, slot_end in windows:
-        booking = models.Booking(
-            nanny_id=req.nanny_id,
-            client_user_id=req.parent_user_id,
-            day=slot_start.date(),
-            status="approved",
-            price_cents=0,
-            starts_at=slot_start,
-            ends_at=slot_end,
-            start_dt=_to_iso_z(slot_start),
-            end_dt=_to_iso_z(slot_end),
-            lat=location.lat if location else None,
-            lng=location.lng if location else None,
-            location_mode="saved" if location else None,
-            location_label=(location.label or "Location").strip() if location else None,
-            formatted_address=getattr(location, "formatted_address", None) if location else None,
+        created_bookings = []
+        for slot_start, slot_end in windows:
+            booking = models.Booking(
+                booking_request_id=req.id,
+                nanny_id=req.nanny_id,
+                client_user_id=req.parent_user_id,
+                day=slot_start.date(),
+                status="approved",
+                price_cents=0,
+                starts_at=slot_start,
+                ends_at=slot_end,
+                start_dt=_to_iso_z(slot_start),
+                end_dt=_to_iso_z(slot_end),
+                lat=location.lat if location else None,
+                lng=location.lng if location else None,
+                location_mode="saved" if location else None,
+                location_label=(location.label or "Location").strip() if location else None,
+                formatted_address=getattr(location, "formatted_address", None) if location else None,
+            )
+            db.add(booking)
+            created_bookings.append(booking)
+
+        others = (
+            db.query(models.BookingRequest)
+            .filter(
+                models.BookingRequest.parent_user_id == req.parent_user_id,
+                models.BookingRequest.id != req.id,
+                models.BookingRequest.status.in_(["tbc", "pending_admin"]),
+            )
+            .all()
         )
-        db.add(booking)
-        created_bookings.append(booking)
+        for other in others:
+            try:
+                other_start = _parse_iso_dt(other.start_dt or other.requested_starts_at)
+                other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
+            except Exception:
+                continue
+            if any(_overlaps(slot_start, slot_end, other_start, other_end) for slot_start, slot_end in windows):
+                other.status = "rejected"
+                other.admin_reason = "filled"
+                other.admin_decided_at = datetime.utcnow()
 
-    # Reject other pending requests for same parent & time window
-    others = (
-        db.query(models.BookingRequest)
-        .filter(
-            models.BookingRequest.parent_user_id == req.parent_user_id,
-            models.BookingRequest.id != req.id,
-            models.BookingRequest.status.in_(["tbc", "pending_admin"]),
-        )
-        .all()
-    )
-    for other in others:
-        try:
-            other_start = _parse_iso_dt(other.start_dt or other.requested_starts_at)
-            other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
-        except Exception:
-            continue
-        if any(_overlaps(slot_start, slot_end, other_start, other_end) for slot_start, slot_end in windows):
-            other.status = "rejected"
-            other.admin_reason = "filled"
-            other.admin_decided_at = datetime.utcnow()
-
-    for slot_start, slot_end in windows:
-        block_row = models.NannyAvailability(
-            nanny_id=req.nanny_id,
-            date=slot_start.date(),
-            start_time=slot_start.time(),
-            end_time=slot_end.time(),
-            is_available=False,
-            created_by="nanny",
-            type="blocked",
-            start_dt=_to_iso_z(slot_start),
-            end_dt=_to_iso_z(slot_end),
-        )
-        db.add(block_row)
+        for slot_start, slot_end in windows:
+            block_row = models.NannyAvailability(
+                nanny_id=req.nanny_id,
+                date=slot_start.date(),
+                start_time=slot_start.time(),
+                end_time=slot_end.time(),
+                is_available=False,
+                created_by="nanny",
+                type="blocked",
+                start_dt=_to_iso_z(slot_start),
+                end_dt=_to_iso_z(slot_end),
+            )
+            db.add(block_row)
 
     db.commit()
+    log_booking_request_status_change(
+        db,
+        actor_user=user,
+        target_user_id=req.parent_user_id,
+        booking_request_id=req.id,
+        before_status=before_status,
+        after_status=req.status,
+        request=request,
+    )
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=req.parent_user_id,
+        entity="booking_requests",
+        entity_id=req.id,
+        action="nanny_response",
+        before_obj={"status": before_status, "nanny_response_status": before_response},
+        after_obj={"status": req.status, "nanny_response_status": "accepted"},
+        changed_fields=["nanny_response_status", "nanny_responded_at"],
+        request=request,
+    )
+    notify_booking_nanny_response(req, user, "accepted")
     primary_booking_id = created_bookings[0].id if created_bookings else None
     return {
         "ok": True,
@@ -3319,6 +3625,66 @@ def accept_nanny_booking_request(
         "booking_ids": [b.id for b in created_bookings],
         "booking_request_id": req.id,
     }
+
+
+@router.post("/nannies/me/booking-requests/{request_id}/respond")
+def respond_nanny_booking_request(
+    request_id: int,
+    payload: schemas.NannyBookingRequestResponse,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
+    if not req or req.nanny_id != nanny.id:
+        raise HTTPException(status_code=404, detail="Booking request not found")
+    if req.status not in ("tbc", "pending_admin", "approved"):
+        raise HTTPException(status_code=400, detail="Booking request can no longer be updated")
+
+    response_value = (payload.response or "").strip().lower()
+    reason = (payload.reason or "").strip() or None
+    if response_value == "accepted":
+        raise HTTPException(status_code=400, detail="Use the accept action to confirm this booking")
+    if response_value == "declined" and not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for declining this booking")
+
+    before_status = req.status
+    before_response = getattr(req, "nanny_response_status", None) or "pending"
+    req.nanny_response_status = response_value
+    req.nanny_responded_at = datetime.utcnow()
+    req.nanny_response_note = reason
+
+    changed_fields = ["nanny_response_status", "nanny_responded_at", "nanny_response_note"]
+    if response_value == "declined":
+        req.status = "rejected"
+        req.admin_reason = reason or "declined_by_nanny"
+        req.admin_decided_at = datetime.utcnow()
+        changed_fields.append("status")
+        _cancel_related_bookings_for_request(
+            db,
+            req,
+            actor_role="nanny",
+            actor_user_id=user.id,
+            reason=reason or "Declined by nanny",
+        )
+
+    db.commit()
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=req.parent_user_id,
+        entity="booking_requests",
+        entity_id=req.id,
+        action="nanny_response",
+        before_obj={"status": before_status, "nanny_response_status": before_response},
+        after_obj={"status": req.status, "nanny_response_status": req.nanny_response_status, "reason": req.nanny_response_note},
+        changed_fields=changed_fields,
+        request=request,
+    )
+    notify_booking_nanny_response(req, user, response_value)
+    return {"ok": True, "booking_request_id": req.id, "status": req.status, "nanny_response_status": req.nanny_response_status}
 
 
 # ...existing code...
@@ -4020,15 +4386,23 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         start_dt = req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None)
         end_dt = req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None)
         if not entry:
+            booking_form = _booking_questionnaire_from_notes(req.client_notes)
+            try:
+                starts_at_dt = _parse_iso_dt(start_dt or req.requested_starts_at)
+            except Exception:
+                starts_at_dt = None
             grouped[gid] = {
                 "job_id": gid,
                 "status": status,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
                 "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
+                "can_edit_form": bool(starts_at_dt and (starts_at_dt - datetime.utcnow()) >= timedelta(hours=15) and status not in ("cancelled", "completed")),
+                "edit_locked_reason": None if starts_at_dt and (starts_at_dt - datetime.utcnow()) >= timedelta(hours=15) else "Booking form can only be edited more than 15 hours before the booking starts.",
                 "accepted_nanny_id": None,
                 "accepted_nanny_name": None,
                 "requested_nannies": [],
+                "booking_form": booking_form,
             }
             entry = grouped[gid]
         entry["requested_nannies"].append({"id": req.nanny_id, "name": nanny_u.name})
@@ -4047,10 +4421,19 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
 
 
 @router.patch("/parents/me/booking-requests/{job_id}/cancel")
-def cancel_parent_booking_request(job_id: int, request: Request, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+def cancel_parent_booking_request(
+    job_id: int,
+    payload: schemas.BookingCancellationRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for cancelling this booking")
 
     rows = (
         db.query(models.BookingRequest)
@@ -4087,9 +4470,16 @@ def cancel_parent_booking_request(job_id: int, request: Request, authorization: 
         if req.status == "cancelled":
             continue
         req.status = "cancelled"
-        req.admin_reason = "cancelled_by_parent"
+        req.admin_reason = reason
         req.admin_decided_at = datetime.utcnow()
         req.cancelled_at = datetime.utcnow()
+        _cancel_related_bookings_for_request(
+            db,
+            req,
+            actor_role="parent",
+            actor_user_id=user.id,
+            reason=reason,
+        )
 
         # If paid and accepted, compute retention/refund
         if req.payment_status == "paid":
@@ -4122,11 +4512,73 @@ def cancel_parent_booking_request(job_id: int, request: Request, authorization: 
         entity_id=job_id,
         action="cancel",
         before_obj={},
-        after_obj={"status": "cancelled"},
+        after_obj={"status": "cancelled", "reason": reason},
         changed_fields=None,
         request=request,
     )
-    return {"ok": True, "job_id": job_id}
+    return {"ok": True, "job_id": job_id, "reason": reason}
+
+
+@router.patch("/parents/me/booking-requests/{job_id}/form")
+def update_parent_booking_request_form(
+    job_id: int,
+    payload: schemas.ParentBookingRequestUpdate,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.parent_user_id == user.id,
+            or_(models.BookingRequest.group_id == job_id, models.BookingRequest.id == job_id),
+        )
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    earliest_start = None
+    for req in rows:
+        try:
+            candidate = _parse_iso_dt(req.start_dt or req.requested_starts_at)
+        except Exception:
+            continue
+        if earliest_start is None or candidate < earliest_start:
+            earliest_start = candidate
+    if earliest_start is None:
+        raise HTTPException(status_code=400, detail="Booking start time is missing")
+    if (earliest_start - datetime.utcnow()) < timedelta(hours=15):
+        raise HTTPException(status_code=400, detail="This booking form can no longer be edited within 15 hours of the booking start time")
+
+    questionnaire = _sanitize_booking_questionnaire_payload(payload)
+    _validate_booking_questionnaire(questionnaire)
+    notes = redact_contact_info((payload.notes or "").strip() or "")
+    rebuilt_notes = _build_booking_questionnaire_notes(notes or None, questionnaire)
+
+    for req in rows:
+        if req.status in ("cancelled", "completed"):
+            continue
+        req.client_notes = rebuilt_notes
+
+    db.commit()
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=user.id,
+        entity="booking_requests",
+        entity_id=job_id,
+        action="update_form",
+        before_obj=None,
+        after_obj={"client_notes": rebuilt_notes},
+        changed_fields=["client_notes"],
+        request=request,
+    )
+    return {"ok": True, "job_id": job_id, "client_notes": rebuilt_notes}
 
 
 @router.get("/parents/me/favorites")
@@ -5443,6 +5895,7 @@ def approve_booking_request(
     created_bookings = []
     for slot_start, slot_end in windows:
         booking = models.Booking(
+            booking_request_id=req.id,
             nanny_id=req.nanny_id,
             client_user_id=req.parent_user_id,
             day=slot_start.date(),
@@ -5551,10 +6004,13 @@ def reject_booking_request(
         raise HTTPException(status_code=404, detail="Booking request not found")
     if req.status not in ("pending_admin", "tbc"):
         raise HTTPException(status_code=400, detail="Booking request is not pending")
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for rejecting this booking request")
 
     before_status = req.status
     req.status = "rejected"
-    req.admin_reason = (payload.reason or "").strip() or None
+    req.admin_reason = reason
     req.admin_user_id = admin.id
     req.admin_decided_at = datetime.utcnow()
 
@@ -5571,6 +6027,7 @@ def reject_booking_request(
             raise HTTPException(status_code=400, detail="Location not found")
 
         booking = models.Booking(
+            booking_request_id=req.id,
             nanny_id=payload.assign_nanny_id,
             client_user_id=req.parent_user_id,
             day=req.requested_starts_at.date() if req.requested_starts_at else datetime.utcnow().date(),
@@ -5679,6 +6136,51 @@ def list_pending_nanny_approvals(
     return {"results": out}
 
 
+@router.get("/admin/nannies/applications")
+def list_nanny_applications(
+    status: Optional[str] = Query(default="pending"),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _require_admin_user(authorization, db)
+
+    normalized = (status or "pending").strip().lower()
+    allowed = {"all", "pending", "hold", "approved", "declined"}
+    if normalized not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid application status filter")
+
+    q = (
+        db.query(models.Nanny, models.User, models.NannyProfile)
+        .join(models.User, models.User.id == models.Nanny.user_id)
+        .outerjoin(models.NannyProfile, models.NannyProfile.nanny_id == models.Nanny.id)
+    )
+
+    if normalized == "pending":
+        q = q.filter(
+            (models.NannyProfile.application_status == None)
+            | (models.NannyProfile.application_status == "pending")
+        )
+    elif normalized != "all":
+        q = q.filter(models.NannyProfile.application_status == normalized)
+
+    rows = q.order_by(models.User.name.asc()).all()
+    out = []
+    for nanny, user, profile in rows:
+        out.append({
+            "nanny_id": nanny.id,
+            "user_id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "profile_photo_url": user.profile_photo_url,
+            "suburb": getattr(profile, "suburb", None),
+            "city": getattr(profile, "city", None),
+            "application_status": getattr(profile, "application_status", None) or "pending",
+            "admin_reason": getattr(profile, "admin_reason", None),
+            "approved": bool(getattr(nanny, "approved", False)),
+        })
+    return {"results": out}
+
+
 @router.get("/admin/booking-requests/pending")
 def list_pending_booking_requests(
     authorization: Optional[str] = Header(default=None),
@@ -5697,9 +6199,11 @@ def list_pending_booking_requests(
         .order_by(models.BookingRequest.created_at.desc())
         .all()
     )
+    _mark_overdue_booking_requests_notified(db, rows)
 
     results = []
     for req, parent, nanny in rows:
+        is_overdue = bool(getattr(req, "created_at", None) and (datetime.utcnow() - req.created_at) >= timedelta(hours=6))
         results.append({
             "id": req.id,
             "parent_name": parent.name,
@@ -5707,9 +6211,251 @@ def list_pending_booking_requests(
             "nanny_name": nanny.name,
             "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
             "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            "is_overdue": is_overdue,
         })
 
     return {"results": results}
+
+
+def _mark_overdue_booking_requests_notified(db: Session, request_rows: List[tuple]) -> None:
+    now = datetime.utcnow()
+    changed = False
+    for req, parent, nanny in request_rows:
+        if req.status not in ("tbc", "pending_admin"):
+            continue
+        created_at = getattr(req, "created_at", None)
+        if not created_at or (now - created_at) < timedelta(hours=6):
+            continue
+        if getattr(req, "unaccepted_admin_notified_at", None):
+            continue
+        notify_admin_unaccepted_booking_request(req, parent, nanny)
+        req.unaccepted_admin_notified_at = now
+        changed = True
+    if changed:
+        db.commit()
+
+
+@router.get("/admin/booking-requests/{request_id}/detail")
+def get_admin_booking_request_detail(
+    request_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_admin(authorization, db)
+
+    parent_user = aliased(models.User)
+    nanny_user = aliased(models.User)
+    profile = aliased(models.ParentProfile)
+    loc = aliased(models.ParentLocation)
+
+    row = (
+        db.query(models.BookingRequest, parent_user, nanny_user, profile, loc)
+        .join(parent_user, parent_user.id == models.BookingRequest.parent_user_id)
+        .join(models.Nanny, models.Nanny.id == models.BookingRequest.nanny_id)
+        .join(nanny_user, nanny_user.id == models.Nanny.user_id)
+        .outerjoin(profile, profile.user_id == models.BookingRequest.parent_user_id)
+        .outerjoin(loc, loc.id == models.BookingRequest.location_id)
+        .filter(models.BookingRequest.id == request_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Booking request not found")
+
+    req, parent, nanny, parent_profile, location = row
+    _mark_overdue_booking_requests_notified(db, [(req, parent, nanny)])
+    slots = _booking_request_windows(db, req)
+    related_bookings = _find_related_bookings_for_request(db, req)
+    questionnaire = _parse_booking_questionnaire_notes(getattr(req, "client_notes", None))
+    created_at = getattr(req, "created_at", None)
+    is_overdue = bool(created_at and (datetime.utcnow() - created_at) >= timedelta(hours=6) and req.status in ("tbc", "pending_admin"))
+
+    return {
+        "request_id": req.id,
+        "group_id": req.group_id or req.id,
+        "status": req.status,
+        "admin_reason": req.admin_reason,
+        "payment_status": getattr(req, "payment_status", None),
+        "is_overdue": is_overdue,
+        "unaccepted_admin_notified_at": req.unaccepted_admin_notified_at.isoformat() if getattr(req, "unaccepted_admin_notified_at", None) else None,
+        "created_at": created_at.isoformat() if created_at else None,
+        "parent": {
+            "user_id": parent.id,
+            "name": parent.name,
+            "email": parent.email,
+            "phone": getattr(parent_profile, "phone", None) if parent_profile else None,
+        },
+        "nanny": {
+            "nanny_id": req.nanny_id,
+            "name": nanny.name,
+            "email": nanny.email,
+        },
+        "location": {
+            "label": getattr(location, "label", None) if location else None,
+            "address": getattr(location, "formatted_address", None) if location else None,
+            "suburb": getattr(location, "suburb", None) if location else None,
+            "city": getattr(location, "city", None) if location else None,
+            "province": getattr(location, "province", None) if location else None,
+        },
+        "pricing": {
+            "wage_cents": getattr(req, "wage_cents", None),
+            "booking_fee_cents": getattr(req, "booking_fee_cents", None),
+            "total_cents": getattr(req, "total_cents", None),
+        },
+        "schedule": [
+            {
+                "start_dt": _to_iso_z(slot_start),
+                "end_dt": _to_iso_z(slot_end),
+            }
+            for slot_start, slot_end in slots
+        ] or [
+            {
+                "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
+                "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            }
+        ],
+        "booking_form": {
+            "additional_notes": questionnaire.get("additional_notes"),
+            "items": questionnaire.get("items", []),
+            "fallback_profile": {
+                "booking_responsibilities": getattr(parent_profile, "booking_responsibilities", None) if parent_profile else None,
+                "booking_adult_present": getattr(parent_profile, "booking_adult_present", None) if parent_profile else None,
+                "booking_reason": getattr(parent_profile, "booking_reason", None) if parent_profile else None,
+                "booking_children_count": getattr(parent_profile, "booking_children_count", None) if parent_profile else None,
+                "booking_meal_option": getattr(parent_profile, "booking_meal_option", None) if parent_profile else None,
+                "booking_food_restrictions": getattr(parent_profile, "booking_food_restrictions", None) if parent_profile else None,
+                "booking_dogs": getattr(parent_profile, "booking_dogs", None) if parent_profile else None,
+                "special_notes": getattr(parent_profile, "special_notes", None) if parent_profile else None,
+            },
+        },
+        "booking_days": [
+            {
+                "booking_id": booking.id,
+                "status": booking.status,
+                "start_dt": booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None),
+                "end_dt": booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None),
+                "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
+                "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+                "scheduled_minutes": _booking_scheduled_minutes(booking),
+                "worked_minutes": _booking_elapsed_minutes(booking),
+                "extra_minutes": (
+                    max(0, (_booking_elapsed_minutes(booking) or 0) - (_booking_scheduled_minutes(booking) or 0))
+                    if _booking_elapsed_minutes(booking) is not None and _booking_scheduled_minutes(booking) is not None
+                    else None
+                ),
+                "location_label": getattr(booking, "location_label", None),
+                "location_address": getattr(booking, "formatted_address", None),
+            }
+            for booking in related_bookings
+        ],
+    }
+
+
+@router.get("/admin/bookings/overview")
+def list_admin_bookings_overview(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_admin(authorization, db)
+
+    now = datetime.utcnow()
+    parent_user = aliased(models.User)
+    nanny_user = aliased(models.User)
+
+    request_rows = (
+        db.query(models.BookingRequest, parent_user, nanny_user)
+        .join(parent_user, parent_user.id == models.BookingRequest.parent_user_id)
+        .join(models.Nanny, models.Nanny.id == models.BookingRequest.nanny_id)
+        .join(nanny_user, nanny_user.id == models.Nanny.user_id)
+        .order_by(models.BookingRequest.created_at.desc())
+        .all()
+    )
+    _mark_overdue_booking_requests_notified(db, request_rows)
+    booking_rows = (
+        db.query(models.Booking, parent_user, nanny_user)
+        .join(parent_user, parent_user.id == models.Booking.client_user_id)
+        .join(models.Nanny, models.Nanny.id == models.Booking.nanny_id)
+        .join(nanny_user, nanny_user.id == models.Nanny.user_id)
+        .order_by(models.Booking.starts_at.desc(), models.Booking.id.desc())
+        .all()
+    )
+    booking_request_ids = {
+        getattr(booking, "booking_request_id", None)
+        for booking, _, _ in booking_rows
+        if getattr(booking, "booking_request_id", None) is not None
+    }
+
+    pending_requests = []
+    unsuccessful_bookings = []
+    upcoming_bookings = []
+    bookings_in_progress = []
+    past_bookings = []
+
+    for req, parent, nanny in request_rows:
+        item = {
+            "source": "request",
+            "request_id": req.id,
+            "booking_id": None,
+            "status": req.status,
+            "parent_name": parent.name,
+            "parent_email": parent.email,
+            "nanny_name": nanny.name,
+            "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
+            "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            "location_label": None,
+            "reason": _booking_request_reason_label(req.admin_reason),
+            "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
+            "updated_at": req.updated_at.isoformat() if getattr(req, "updated_at", None) else None,
+            "is_overdue": bool(getattr(req, "created_at", None) and (now - req.created_at) >= timedelta(hours=6)),
+        }
+        if req.status in ("tbc", "pending_admin"):
+            pending_requests.append(item)
+        elif req.status in ("rejected", "cancelled") and req.id not in booking_request_ids:
+            unsuccessful_bookings.append(item)
+
+    for booking, parent, nanny in booking_rows:
+        start_dt = booking.starts_at
+        end_dt = booking.ends_at
+        item = {
+            "source": "booking",
+            "request_id": getattr(booking, "booking_request_id", None),
+            "booking_id": booking.id,
+            "status": booking.status,
+            "parent_name": parent.name,
+            "parent_email": parent.email,
+            "nanny_name": nanny.name,
+            "start_dt": booking.start_dt or (start_dt.isoformat() if start_dt else None),
+            "end_dt": booking.end_dt or (end_dt.isoformat() if end_dt else None),
+            "location_label": getattr(booking, "location_label", None) or getattr(booking, "formatted_address", None),
+            "reason": getattr(booking, "cancellation_reason", None),
+            "created_at": None,
+            "updated_at": getattr(booking, "cancelled_at", None).isoformat() if getattr(booking, "cancelled_at", None) else None,
+            "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
+            "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+        }
+        if booking.status in ("cancelled", "rejected"):
+            unsuccessful_bookings.append(item)
+            continue
+        if booking.status == "completed" or (end_dt and end_dt < now):
+            past_bookings.append(item)
+            continue
+        if booking.check_in_at and not booking.check_out_at:
+            bookings_in_progress.append(item)
+            continue
+        if booking.status in ("approved", "accepted", "pending"):
+            upcoming_bookings.append(item)
+            continue
+        past_bookings.append(item)
+
+    def _sort_desc(items: List[dict]) -> List[dict]:
+        return sorted(items, key=lambda row: row.get("start_dt") or row.get("created_at") or "", reverse=True)
+
+    return {
+        "pending_requests": _sort_desc(pending_requests),
+        "upcoming_bookings": _sort_desc(upcoming_bookings),
+        "bookings_in_progress": _sort_desc(bookings_in_progress),
+        "past_bookings": _sort_desc(past_bookings),
+        "unsuccessful_bookings": _sort_desc(unsuccessful_bookings),
+    }
 
 
 @router.get("/admin/users/{user_id}")
@@ -6033,6 +6779,8 @@ def admin_list_users(
             parent_locations[loc.parent_user_id] = loc
 
     nanny_profiles = {}
+    nanny_ids = {}
+    nanny_approved_map = {}
     nanny_user_ids = [u.id for u in users if u.role == "nanny"]
     if nanny_user_ids:
         nannies = (
@@ -6043,12 +6791,13 @@ def admin_list_users(
         )
         for nanny, profile in nannies:
             nanny_profiles[nanny.user_id] = profile
-
-    nanny_ids = {}
-    nanny_user_ids = [u.id for u in users if u.role == "nanny"]
-    if nanny_user_ids:
-        for nanny in db.query(models.Nanny).filter(models.Nanny.user_id.in_(nanny_user_ids)).all():
             nanny_ids[nanny.user_id] = nanny.id
+            nanny_approved_map[nanny.user_id] = bool(getattr(nanny, "approved", False)) or bool(getattr(profile, "is_approved", 0) if profile else 0)
+
+    users = [
+        u for u in users
+        if u.role != "nanny" or nanny_approved_map.get(u.id, False)
+    ]
 
     rating_map = {}
     for nanny_id in set(nanny_ids.values()):
@@ -6194,6 +6943,9 @@ def admin_set_nanny_application_status(
         "is_approved": bool(getattr(profile, "is_approved", 0)),
         "approved_at": getattr(profile, "approved_at", None),
     }
+
+    if payload.status == "hold" and not (payload.reason or "").strip():
+        raise HTTPException(status_code=400, detail="Please provide a note explaining what information is still outstanding")
 
     profile.application_status = payload.status
     profile.admin_reason = (payload.reason or "").strip() or None

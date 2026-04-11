@@ -135,13 +135,68 @@ async function requireMe() {
     throw new Error("Not logged in");
   }
   localStorage.setItem("is_admin", String(!!me.is_admin));
+  await enforceNannyHold(me);
   return me;
 }
 
-function routeByRole(role) {
+function routeByRole(role, me = null) {
   if (role === "parent") window.location.href = "/static/parent_home.html";
-  else if (role === "nanny") window.location.href = "/static/nanny_home.html?v=2";
+  else if (role === "nanny") {
+    if ((me?.nanny_application_status || "") === "hold") {
+      window.location.href = "/static/nanny.html?hold=1";
+      return;
+    }
+    window.location.href = "/static/nanny_home.html?v=2";
+  }
   else window.location.href = "/static/login.html";
+}
+
+function showNannyHoldBrowserNotice(message) {
+  if (!("Notification" in window)) return;
+  const title = "My Nanny profile on hold";
+  if (Notification.permission === "granted") {
+    try {
+      new Notification(title, { body: message });
+    } catch {}
+    return;
+  }
+  if (Notification.permission !== "default") return;
+  Notification.requestPermission().then((permission) => {
+    if (permission === "granted") {
+      try {
+        new Notification(title, { body: message });
+      } catch {}
+    }
+  }).catch(() => {});
+}
+
+async function enforceNannyHold(me) {
+  if (!me || me.role !== "nanny") return;
+  if ((me.nanny_application_status || "") !== "hold") return;
+  if (getImpersonationToken()) return;
+  if (window.location.search && window.location.search.includes("admin=1")) return;
+
+  const profilePath = "/static/nanny.html";
+  const currentPath = window.location.pathname || "";
+  const isProfilePage = currentPath.includes(profilePath);
+  const note = (me.nanny_admin_reason || "").trim();
+  const message = note
+    ? `Your profile is on hold due to outstanding information.\n\n${note}\n\nChoose OK to complete it now or Cancel for later.`
+    : "Your profile is on hold due to outstanding information.\n\nChoose OK to complete it now or Cancel for later.";
+
+  showNannyHoldBrowserNotice("Your profile is on hold due to outstanding information. Please log in and complete your profile.");
+  const completeNow = window.confirm(message);
+  if (completeNow) {
+    if (!isProfilePage) {
+      window.location.href = `${profilePath}?hold=1`;
+      throw new Error("Redirecting to profile");
+    }
+    return;
+  }
+  if (!isProfilePage) {
+    window.location.href = `${profilePath}?hold=1&later=1`;
+    throw new Error("Profile on hold");
+  }
 }
 
 function logout() {
@@ -186,31 +241,6 @@ function renderTopbar(container, me, profileComplete) {
   if (showLogout) {
     const btn = document.getElementById("logoutBtn");
     if (btn) btn.onclick = logout;
-  }
-}
-
-function ensureSiteLogo() {
-  if (document.querySelector(".site-logo")) return;
-  const logoHtml = '<img class="site-logo" src="/static/logo.jpg" alt="My Nanny logo" />';
-  const topbar = document.querySelector(".topbar");
-  if (topbar) {
-    const brand = document.createElement("div");
-    brand.className = "brand";
-    brand.innerHTML = logoHtml;
-    const firstChild = topbar.firstElementChild;
-    if (firstChild && firstChild.tagName === "DIV") {
-      firstChild.prepend(brand);
-    } else {
-      topbar.prepend(brand);
-    }
-    return;
-  }
-
-  const bar = document.createElement("div");
-  bar.className = "logo-bar";
-  bar.innerHTML = logoHtml;
-  if (document.body) {
-    document.body.prepend(bar);
   }
 }
 
@@ -400,10 +430,8 @@ function moveBackButtons() {
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", () => {
-    ensureSiteLogo();
     moveBackButtons();
   });
 } else {
-  ensureSiteLogo();
   moveBackButtons();
 }

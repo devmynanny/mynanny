@@ -15,6 +15,18 @@
     .btn{ padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer }
     .clickable-row{cursor:pointer}
     .clickable-row:hover{background:#f7f7f7}
+    .bookingSectionTitle{margin:20px 0 8px;font-size:18px}
+    .bookingEmpty{color:#666;padding:8px 0}
+    .bookingRow{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid #eee}
+    .bookingRow:last-child{border-bottom:0}
+    .bookingMeta{color:#666;font-size:14px}
+    .bookingReason{margin-top:6px;color:#7a2e2e}
+    .bookingOverdue{margin-top:6px;color:#b45309;font-weight:600}
+    .detailGrid{display:grid;gap:10px}
+    .detailSection{padding:10px 0;border-bottom:1px solid #eee}
+    .detailSection:last-child{border-bottom:0}
+    .detailRow{margin:4px 0}
+    .detailDay{border:1px solid #eee;border-radius:10px;padding:10px;margin-top:8px}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -29,7 +41,7 @@
   <div class="card">
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn" id="btnBookingRequests" type="button">Booking requests</button>
-      <button class="btn" id="btnPendingNannies" type="button">Pending nannies</button>
+      <button class="btn" id="btnPendingNannies" type="button">Nanny applications</button>
       <button class="btn" id="btnUsers" type="button">Users</button>
       <button class="btn" id="btnBilling" type="button">Billing</button>
       <button class="btn" id="ticketsBtn" type="button">View tickets / complaints</button>
@@ -75,12 +87,38 @@
     <div id="usersList" class="card"></div>
   </div>
   <div id="sectionPendingNannies" style="display:none;">
-    <h2>Pending nannies</h2>
+    <h2>Nanny applications</h2>
+    <div class="card" style="margin-bottom:10px;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <label>
+          Status
+          <select id="nannyApplicationStatusFilter">
+            <option value="pending">Pending</option>
+            <option value="hold">On hold</option>
+            <option value="approved">Approved</option>
+            <option value="declined">Declined</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <button class="btn" id="applyNannyApplicationFilter" type="button">Apply</button>
+      </div>
+    </div>
     <div id="pendingNanniesList" class="card"></div>
   </div>
   <div id="sectionBookingRequests" style="display:none;">
-    <h2>Booking requests</h2>
-    <div id="bookingRequestsList" class="card"></div>
+    <h2>Bookings</h2>
+    <div class="card">
+      <div class="bookingSectionTitle">Pending requests</div>
+      <div id="bookingRequestsList"></div>
+      <div class="bookingSectionTitle">Upcoming bookings</div>
+      <div id="upcomingBookingsList"></div>
+      <div class="bookingSectionTitle">Bookings in progress</div>
+      <div id="inProgressBookingsList"></div>
+      <div class="bookingSectionTitle">Past bookings</div>
+      <div id="pastBookingsList"></div>
+      <div class="bookingSectionTitle">Unsuccessful bookings</div>
+      <div id="unsuccessfulBookingsList"></div>
+    </div>
   </div>
   <div id="sectionBilling" style="display:none;">
     <h2>Billing</h2>
@@ -93,9 +131,25 @@
     <h2>Refund approvals</h2>
     <div id="refundsList" class="card"></div>
   </div>
+  <div id="bookingDetailCard" class="card" style="display:none;">
+    <div class="row">
+      <h2 style="margin:0;">Booking detail</h2>
+      <button class="btn" id="closeBookingDetailBtn" type="button">Close</button>
+    </div>
+    <div id="bookingDetailBody" class="muted" style="margin-top:12px;">Loading...</div>
+  </div>
 
   <script src="/static/app.js?v=2"></script>
   <script>
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     const logoutBtn = document.getElementById("logoutBtn");
     if (logoutBtn) {
       logoutBtn.addEventListener("click", () => {
@@ -158,16 +212,16 @@
     }
 
     async function refreshCounts() {
-      const [nannies, requests] = await Promise.all([
+      const [nannies, overview] = await Promise.all([
         fetchJson("/admin/nannies/pending"),
-        fetchJson("/admin/booking-requests/pending")
+        fetchJson("/admin/bookings/overview")
       ]);
       const nCount = (nannies?.results || nannies || []).length;
-      const rCount = (requests?.results || requests || []).length;
+      const rCount = (overview?.pending_requests || []).length;
       const btnNannies = document.getElementById("btnPendingNannies");
       const btnRequests = document.getElementById("btnBookingRequests");
-      if (btnNannies) btnNannies.textContent = `Pending nannies (${nCount})`;
-      if (btnRequests) btnRequests.textContent = `Booking requests (${rCount})`;
+      if (btnNannies) btnNannies.textContent = `Nanny applications (${nCount})`;
+      if (btnRequests) btnRequests.textContent = `Bookings (${rCount})`;
     }
 
     let usersCache = [];
@@ -240,10 +294,15 @@
     }
 
     async function loadPendingNannies() {
-      const data = await fetchJson("/admin/nannies/pending");
+      const status = document.getElementById("nannyApplicationStatusFilter")?.value || "pending";
+      const data = await fetchJson(`/admin/nannies/applications?status=${encodeURIComponent(status)}`);
       const list = data?.results || data || [];
       const container = document.getElementById("pendingNanniesList");
       container.innerHTML = "";
+      if (!list.length) {
+        container.innerHTML = "<div class=\"muted\">No nanny applications for this status.</div>";
+        return;
+      }
       list.forEach(n => {
         const row = document.createElement("div");
         row.style.display = "flex";
@@ -266,34 +325,127 @@
       });
     }
 
-    async function loadBookingRequests() {
-      const data = await fetchJson("/admin/booking-requests/pending");
-      const list = data?.results || data || [];
-      const container = document.getElementById("bookingRequestsList");
+    function renderBookingCollection(containerId, list, options = {}) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
       container.innerHTML = "";
-      list.forEach(r => {
+      const items = Array.isArray(list) ? list : [];
+      if (!items.length) {
+        container.innerHTML = `<div class="bookingEmpty">${options.emptyText || "No bookings in this section."}</div>`;
+        return;
+      }
+      items.forEach(r => {
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt ? new Date(r.start_dt).toLocaleString() : "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt ? new Date(r.end_dt).toLocaleString() : "-");
-        const parentLine = r.parent_email ? r.parent_email : (r.parent_name || "Parent");
+        const parentLine = escapeHtml(r.parent_email ? r.parent_email : (r.parent_name || "Parent"));
+        const nannyName = escapeHtml(r.nanny_name || "Nanny");
         const row = document.createElement("div");
-        row.style.display = "flex";
-        row.style.justifyContent = "space-between";
-        row.style.gap = "10px";
-        row.style.alignItems = "center";
-        row.style.padding = "8px 0";
-        row.style.borderBottom = "1px solid #eee";
+        row.className = "bookingRow";
+        const reasonLine = r.reason ? `<div class="bookingReason"><strong>Reason:</strong> ${escapeHtml(r.reason)}</div>` : "";
+        const locationLine = r.location_label ? `<div class="bookingMeta">Location: ${escapeHtml(r.location_label)}</div>` : "";
+        const overdueLine = r.is_overdue ? `<div class="bookingOverdue">Overdue: no acceptance after 6 hours</div>` : "";
+        const refLine = r.booking_id
+          ? `Booking #${escapeHtml(r.booking_id)}${r.request_id ? ` • Request #${escapeHtml(r.request_id)}` : ""}`
+          : `Request #${escapeHtml(r.request_id || r.id || "-")}`;
         row.innerHTML = `
           <div>
-            <div><strong>${parentLine}</strong> → <strong>${r.nanny_name || "Nanny"}</strong></div>
-            <div class="muted">${start} to ${end}</div>
+            <div><strong>${parentLine}</strong> → <strong>${nannyName}</strong></div>
+            <div class="bookingMeta">${refLine}</div>
+            <div class="bookingMeta">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+            <div class="bookingMeta">Status: ${escapeHtml(r.status || "-")}</div>
+            ${locationLine}
+            ${reasonLine}
+            ${overdueLine}
           </div>
           <div>
-            <button class="btn approveRequestBtn" data-id="${r.id}">Approve</button>
-            <button class="btn rejectRequestBtn" data-id="${r.id}">Reject</button>
+            <button class="btn viewBookingBtn" data-id="${r.request_id || r.id}">View</button>
+            ${options.showActions ? `<button class="btn approveRequestBtn" data-id="${r.request_id || r.id}">Approve</button>
+            <button class="btn rejectRequestBtn" data-id="${r.request_id || r.id}">Reject</button>
+            <button class="btn assignBookingBtn" data-id="${r.request_id || r.id}">Assign nanny</button>` : ""}
           </div>
         `;
         container.appendChild(row);
       });
+    }
+
+    function formatMinutes(totalMinutes) {
+      const minutes = Number(totalMinutes);
+      if (!Number.isFinite(minutes)) return "-";
+      const hrs = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      if (!hrs) return `${mins} min`;
+      if (!mins) return `${hrs} hr`;
+      return `${hrs} hr ${mins} min`;
+    }
+
+    async function loadBookingDetail(requestId) {
+      const card = document.getElementById("bookingDetailCard");
+      const body = document.getElementById("bookingDetailBody");
+      card.style.display = "block";
+      body.textContent = "Loading booking detail...";
+      const data = await fetchJson(`/admin/booking-requests/${requestId}/detail`);
+      const schedule = Array.isArray(data?.schedule) ? data.schedule : [];
+      const bookingFormItems = Array.isArray(data?.booking_form?.items) ? data.booking_form.items : [];
+      const fallback = data?.booking_form?.fallback_profile || {};
+      const days = Array.isArray(data?.booking_days) ? data.booking_days : [];
+      const formatDt = (value) => value ? (window.formatDateTimeZA ? window.formatDateTimeZA(value) : new Date(value).toLocaleString()) : "-";
+      const fallbackRows = [
+        ["Booking responsibilities", fallback.booking_responsibilities],
+        ["Adult present", fallback.booking_adult_present],
+        ["Reason for booking", fallback.booking_reason],
+        ["Children present during booking", fallback.booking_children_count],
+        ["Meal arrangement", fallback.booking_meal_option],
+        ["Foods not allowed", fallback.booking_food_restrictions],
+        ["Dogs at home", fallback.booking_dogs],
+        ["Notes for nanny", fallback.special_notes],
+      ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+
+      body.innerHTML = `
+        <div class="detailGrid">
+          <div class="detailSection">
+            <div class="detailRow"><strong>Request #:</strong> ${escapeHtml(data?.request_id || "-")}</div>
+            <div class="detailRow"><strong>Status:</strong> ${escapeHtml(data?.status || "-")}</div>
+            <div class="detailRow"><strong>Parent:</strong> ${escapeHtml(data?.parent?.name || "-")} (${escapeHtml(data?.parent?.email || "-")})</div>
+            <div class="detailRow"><strong>Nanny:</strong> ${escapeHtml(data?.nanny?.name || "-")} (${escapeHtml(data?.nanny?.email || "-")})</div>
+            <div class="detailRow"><strong>Location:</strong> ${escapeHtml(data?.location?.label || data?.location?.address || "-")}</div>
+            <div class="detailRow"><strong>Created:</strong> ${escapeHtml(formatDt(data?.created_at))}</div>
+            ${data?.is_overdue ? `<div class="bookingOverdue">Overdue: this request has been waiting more than 6 hours.</div>` : ""}
+          </div>
+          <div class="detailSection">
+            <strong>Booking schedule</strong>
+            ${schedule.length ? schedule.map((slot) => `<div class="detailRow">${escapeHtml(formatDt(slot.start_dt))} to ${escapeHtml(formatDt(slot.end_dt))}</div>`).join("") : `<div class="detailRow">No schedule saved.</div>`}
+          </div>
+          <div class="detailSection">
+            <strong>Booking form</strong>
+            ${bookingFormItems.length ? bookingFormItems.map((item) => `<div class="detailRow"><strong>${escapeHtml(item.label)}:</strong> ${escapeHtml(item.value)}</div>`).join("") : `<div class="detailRow">No booking form snapshot was saved for this request.</div>`}
+            ${!bookingFormItems.length && fallbackRows.length ? `<div class="detailRow" style="margin-top:8px;"><strong>Current parent profile answers</strong></div>${fallbackRows.map(([label, value]) => `<div class="detailRow"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</div>`).join("")}` : ""}
+          </div>
+          <div class="detailSection">
+            <strong>Timer by booking day</strong>
+            ${days.length ? days.map((day) => `
+              <div class="detailDay">
+                <div class="detailRow"><strong>Booking #${escapeHtml(day.booking_id)}</strong> • ${escapeHtml(day.status || "-")}</div>
+                <div class="detailRow">Scheduled: ${escapeHtml(formatDt(day.start_dt))} to ${escapeHtml(formatDt(day.end_dt))}</div>
+                <div class="detailRow">Arrived: ${escapeHtml(formatDt(day.check_in_at))}</div>
+                <div class="detailRow">Finished: ${escapeHtml(formatDt(day.check_out_at))}</div>
+                <div class="detailRow">Scheduled time: ${escapeHtml(formatMinutes(day.scheduled_minutes))}</div>
+                <div class="detailRow">Worked time: ${escapeHtml(formatMinutes(day.worked_minutes))}</div>
+                <div class="detailRow">Extra time: ${escapeHtml(formatMinutes(day.extra_minutes))}</div>
+              </div>
+            `).join("") : `<div class="detailRow">No accepted booking days yet.</div>`}
+          </div>
+        </div>
+      `;
+      card.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    async function loadBookingRequests() {
+      const data = await fetchJson("/admin/bookings/overview");
+      renderBookingCollection("bookingRequestsList", data?.pending_requests || [], { showActions: true, emptyText: "No pending booking requests." });
+      renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { emptyText: "No upcoming bookings." });
+      renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { emptyText: "No bookings currently in progress." });
+      renderBookingCollection("pastBookingsList", data?.past_bookings || [], { emptyText: "No past bookings yet." });
+      renderBookingCollection("unsuccessfulBookingsList", data?.unsuccessful_bookings || [], { emptyText: "No unsuccessful bookings yet." });
     }
 
     async function loadRefunds() {
@@ -334,6 +486,9 @@
     });
     document.getElementById("btnPendingNannies").addEventListener("click", () => {
       showSection("sectionPendingNannies");
+      loadPendingNannies().catch(e => { document.getElementById("authMsg").textContent = e.message; });
+    });
+    document.getElementById("applyNannyApplicationFilter").addEventListener("click", () => {
       loadPendingNannies().catch(e => { document.getElementById("authMsg").textContent = e.message; });
     });
     document.getElementById("btnBookingRequests").addEventListener("click", () => {
@@ -380,17 +535,68 @@
     });
 
     document.getElementById("bookingRequestsList").addEventListener("click", (e) => {
+      const view = e.target.closest(".viewBookingBtn");
       const approve = e.target.closest(".approveRequestBtn");
       const reject = e.target.closest(".rejectRequestBtn");
-      const btn = approve || reject;
+      const assign = e.target.closest(".assignBookingBtn");
+      if (view) {
+        loadBookingDetail(view.dataset.id).catch(err => { document.getElementById("authMsg").textContent = err.message; });
+        return;
+      }
+      const btn = approve || reject || assign;
       if (!btn) return;
       const requestId = btn.dataset.id;
+      if (assign) {
+        const nannyIdRaw = prompt("Enter the nanny ID to assign manually:");
+        if (!nannyIdRaw) return;
+        const nannyId = Number(nannyIdRaw);
+        if (!Number.isFinite(nannyId) || nannyId <= 0) {
+          document.getElementById("authMsg").textContent = "Enter a valid nanny ID.";
+          return;
+        }
+        const reason = (prompt("Reason for manual assignment?") || "").trim();
+        if (!reason) {
+          document.getElementById("authMsg").textContent = "A reason is required for manual assignment.";
+          return;
+        }
+        fetchJson(`/admin/booking-requests/${requestId}/reject`, {
+          method: "POST",
+          body: JSON.stringify({ reason, assign_nanny_id: nannyId })
+        })
+          .then(() => Promise.all([loadBookingRequests(), refreshCounts(), loadBookingDetail(requestId)]))
+          .catch(err => { document.getElementById("authMsg").textContent = err.message; });
+        return;
+      }
       const path = approve ? "approve" : "reject";
+      const payload = {};
+      if (reject) {
+        const reason = (prompt("Why are you rejecting this booking request?") || "").trim();
+        if (!reason) {
+          document.getElementById("authMsg").textContent = "A rejection reason is required.";
+          return;
+        }
+        payload.reason = reason;
+      }
       fetchJson(`/admin/booking-requests/${requestId}/${path}`, {
-        method: "POST"
+        method: "POST",
+        body: Object.keys(payload).length ? JSON.stringify(payload) : undefined
       })
         .then(() => Promise.all([loadBookingRequests(), refreshCounts()]))
         .catch(err => { document.getElementById("authMsg").textContent = err.message; });
+    });
+
+    ["upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("click", (e) => {
+        const view = e.target.closest(".viewBookingBtn");
+        if (!view) return;
+        loadBookingDetail(view.dataset.id).catch(err => { document.getElementById("authMsg").textContent = err.message; });
+      });
+    });
+
+    document.getElementById("closeBookingDetailBtn").addEventListener("click", () => {
+      document.getElementById("bookingDetailCard").style.display = "none";
     });
 
     document.getElementById("refundsList").addEventListener("click", async (e) => {

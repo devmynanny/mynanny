@@ -54,6 +54,9 @@
     .infoList { display:grid; gap:8px; }
     .pillRow { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
     .pill { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; border:1px solid #ddd; background:#f9fafb; font-size:13px; }
+    .docList { display:grid; gap:10px; }
+    .docRow { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid #eee; }
+    .docRow:last-child { border-bottom:0; }
     @media (max-width: 720px) {
       .profilePreview { grid-template-columns: 1fr; }
     }
@@ -87,6 +90,11 @@
     <div id="profileViewBody" class="muted">Loading...</div>
   </div>
 
+  <div class="card" id="nannyDocumentsCard" style="display:none;">
+    <h2>Nanny uploaded documents</h2>
+    <div id="nannyDocumentsBody" class="muted">Loading...</div>
+  </div>
+
   <div class="card" id="editProfile">
     <h2>Edit profile</h2>
     <div class="actionRow">
@@ -101,7 +109,7 @@
     <h2>Nanny application</h2>
     <div id="nannyApplicationBody" class="muted">Loading...</div>
     <div style="margin-top:12px;">
-      <label class="muted">Decision reason (optional)</label>
+      <label class="muted">Application review note (optional)</label>
       <textarea id="nannyDecisionReason" style="width:100%; min-height:70px;"></textarea>
     </div>
     <div class="row" style="margin-top:10px;">
@@ -185,8 +193,7 @@
         lines.push(`<div><strong>Nationality:</strong> ${escapeHtml(profile?.nationality || "-")}</div>`);
         if (profile?.profile_summary) {
           lines.push(`<div class="summary-block"><strong>Generated summary:</strong><br>${escapeHtml(profile.profile_summary)}</div>`);
-        }
-        if (profile?.bio) {
+        } else if (profile?.bio) {
           lines.push(`<div class="summary-block"><strong>Bio:</strong><br>${escapeHtml(profile.bio)}</div>`);
         }
       }
@@ -243,7 +250,7 @@
             <div><strong>Dogs at home:</strong> ${escapeHtml(profile?.booking_dogs || "-")}</div>
             <div><strong>Notes for nanny:</strong> ${escapeHtml(profile?.special_notes || "-")}</div>
             <div>
-              <strong>Home / access notes:</strong>
+              <strong>Arrival / access instructions:</strong>
               <div class="pillRow">${flags.length ? flags.map((flag) => `<span class="pill">${escapeHtml(flag)}</span>`).join("") : `<span class="muted">No access notes added.</span>`}</div>
             </div>
           </div>
@@ -297,7 +304,19 @@
       const quals = (profile?.qualifications || []).map(t => t.name).join(", ") || "-";
       const loc = [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
       const status = profile?.application_status || "pending";
-      const reason = profile?.admin_reason || "-";
+      const reason = profile?.admin_reason || "";
+      const gender = profile?.gender || "-";
+      const transport = [
+        profile?.has_drivers_license === true ? "Driver's license" : null,
+        profile?.has_own_car === true ? "Own car" : null,
+      ].filter(Boolean).join(" / ") || "-";
+      const ownKids = profile?.has_own_kids === true
+        ? `Yes${profile?.own_kids_details ? ` - ${profile.own_kids_details}` : ""}`
+        : (profile?.has_own_kids === false ? "No" : "-");
+      const medicalConditions = profile?.medical_conditions || "-";
+      const policeClearance = profile?.police_clearance_status || "-";
+      const dogPreference = profile?.dog_preference || "-";
+      const jobType = profile?.job_type || "-";
       const jobs = Array.isArray(profile?.previous_jobs) ? profile.previous_jobs.filter(Boolean) : [];
       const jobsHtml = jobs.length
         ? jobs.slice(0, 3).map((job) => {
@@ -310,18 +329,24 @@
       if (reasonInput) reasonInput.value = profile?.admin_reason || "";
       body.innerHTML = [
         `<div><strong>Status:</strong> ${escapeHtml(status)}</div>`,
-        `<div><strong>Reason:</strong> ${escapeHtml(reason)}</div>`,
+        reason ? `<div><strong>Application review note:</strong> ${escapeHtml(reason)}</div>` : "",
         `<div><strong>DOB:</strong> ${escapeHtml(profile?.date_of_birth || "-")}</div>`,
         `<div><strong>Age:</strong> ${escapeHtml(profile?.age ?? "-")}</div>`,
         `<div><strong>Nationality:</strong> ${escapeHtml(profile?.nationality || "-")}</div>`,
+        `<div><strong>Gender:</strong> ${escapeHtml(gender)}</div>`,
         `<div><strong>Ethnicity:</strong> ${escapeHtml(profile?.ethnicity || "-")}</div>`,
         `<div><strong>Areas of experience:</strong> ${escapeHtml(tags)}</div>`,
         `<div><strong>Languages:</strong> ${escapeHtml(langs)}</div>`,
         `<div><strong>Qualifications:</strong> ${escapeHtml(quals)}</div>`,
+        `<div><strong>Transport:</strong> ${escapeHtml(transport)}</div>`,
+        `<div><strong>Has children:</strong> ${escapeHtml(ownKids)}</div>`,
+        `<div><strong>Medical conditions:</strong> ${escapeHtml(medicalConditions)}</div>`,
+        `<div><strong>Police clearance:</strong> ${escapeHtml(policeClearance)}</div>`,
+        `<div><strong>Preference regarding dogs:</strong> ${escapeHtml(dogPreference)}</div>`,
+        `<div><strong>Job type:</strong> ${escapeHtml(jobType)}</div>`,
         `<div><strong>Location:</strong> ${escapeHtml(loc)}</div>`,
         `<div><strong>Generated summary:</strong> ${escapeHtml(profile?.profile_summary || "-")}</div>`,
-        `<div><strong>Previous jobs:</strong> ${jobsHtml}</div>`,
-        `<div><strong>Bio:</strong> ${escapeHtml(profile?.bio || "-")}</div>`
+        `<div><strong>Previous jobs:</strong> ${jobsHtml}</div>`
       ].join("");
     }
 
@@ -339,6 +364,62 @@
     function renderRevenue(data) {
       const total = data?.total_revenue ?? 0;
       document.getElementById("revenueBody").innerHTML = `Total revenue: R${total}`;
+    }
+
+    function normalizeDocUrl(url) {
+      const value = String(url || "").trim();
+      if (!value) return "";
+      if (value.startsWith("http://") || value.startsWith("https://")) return value;
+      if (value.startsWith("/")) return value;
+      return `/${value}`;
+    }
+
+    function renderNannyDocuments(user, profile) {
+      const card = document.getElementById("nannyDocumentsCard");
+      const body = document.getElementById("nannyDocumentsBody");
+      if (user.role !== "nanny") {
+        card.style.display = "none";
+        return;
+      }
+
+      const rows = [];
+      const pushDoc = (label, url) => {
+        const href = normalizeDocUrl(url);
+        if (!href) return;
+        rows.push({ label, href });
+      };
+
+      pushDoc("South African ID document", profile?.sa_id_document_url);
+      pushDoc("Passport document", profile?.passport_document_url);
+      pushDoc("Work permit document", profile?.work_permit_document_url);
+      pushDoc("Police clearance document", profile?.police_clearance_document_url);
+      pushDoc("Driver's license document", profile?.drivers_license_document_url);
+
+      const certificateUrls = Array.isArray(profile?.certificate_urls) ? profile.certificate_urls : [];
+      certificateUrls.forEach((url, index) => {
+        pushDoc(`Certificate ${index + 1}`, url);
+      });
+
+      const previousJobs = Array.isArray(profile?.previous_jobs) ? profile.previous_jobs : [];
+      previousJobs.forEach((job, index) => {
+        const refUrl = job?.reference_letter_url;
+        if (!refUrl) return;
+        const role = String(job?.role || "").trim() || `Previous job ${index + 1}`;
+        pushDoc(`Reference letter: ${role}`, refUrl);
+      });
+
+      card.style.display = "block";
+      if (!rows.length) {
+        body.innerHTML = "No uploaded documents yet.";
+        return;
+      }
+
+      body.innerHTML = `<div class="docList">${rows.map((row) => `
+        <div class="docRow">
+          <div>${escapeHtml(row.label)}</div>
+          <div><a href="${escapeHtml(row.href)}" target="_blank" rel="noopener noreferrer">View document</a></div>
+        </div>
+      `).join("")}</div>`;
     }
 
     async function init() {
@@ -360,6 +441,7 @@
       renderProfileSummary(user, profile || {});
       renderProfileView(user, profile || {});
       renderNannyApplication(user, profile || {});
+      renderNannyDocuments(user, profile || {});
       bindContactActions(user, profile || {});
 
       const stats = await loadBookingStats();
@@ -407,6 +489,11 @@
           }
         });
         document.getElementById("nannyHoldBtn").addEventListener("click", async () => {
+          if (!reasonEl.value.trim()) {
+            statusEl.textContent = "Please add a review note before placing this profile on hold.";
+            reasonEl.focus();
+            return;
+          }
           statusEl.textContent = "Saving...";
           try {
             const res = await fetchJson(`/admin/nannies/${profile.nanny_id}/application`, {

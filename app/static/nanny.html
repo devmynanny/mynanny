@@ -61,6 +61,19 @@
       .admin-only-section {
         display: none !important;
       }
+      .completion-prompt {
+        display: none;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1e3a8a;
+      }
+      .completion-prompt.show {
+        display: block;
+      }
+      .completion-prompt ul {
+        margin: 10px 0 0 18px;
+        padding: 0;
+      }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -72,6 +85,12 @@
     </div>
 
     <div class="card" id="approvalBanner"></div>
+
+    <div class="card completion-prompt" id="completionPrompt">
+      <div style="font-weight:700;">Finish your profile</div>
+      <div style="margin-top:6px;">Please review the remaining open fields below and complete them before moving on.</div>
+      <ul id="completionPromptList"></ul>
+    </div>
 
     <div class="card">
       <div class="row">
@@ -471,6 +490,44 @@
           const el = document.getElementById(id);
           if (el) el.disabled = !!isDisabled;
         });
+      }
+
+      function updateCompletionPrompt(profile) {
+        const promptCard = document.getElementById("completionPrompt");
+        const listEl = document.getElementById("completionPromptList");
+        if (!promptCard || !listEl) return;
+
+        const missing = [];
+        if (!profile?.full_name) missing.push("Full name");
+        if (!profile?.phone) missing.push("Phone number");
+        if (!profile?.dob) missing.push("Date of birth");
+        if (!profile?.nationality) missing.push("Nationality");
+        if (!profile?.ethnicity) missing.push("Race");
+        if (!profile?.job_type) missing.push("Job type");
+        if (!profile?.police_clearance_status) missing.push("Police clearance status");
+        if (!profile?.my_nanny_training_status) missing.push("My Nanny training status");
+        if (!profile?.profile_photo_url) missing.push("Profile photo");
+
+        const nat = String(profile?.nationality || "").trim().toLowerCase();
+        if (nat === "south african") {
+          if (!profile?.sa_id_number) missing.push("South African ID number");
+          if (!profile?.sa_id_document_url) missing.push("Copy of ID");
+        } else if (nat) {
+          if (!profile?.passport_number) missing.push("Passport number");
+          if (!profile?.passport_document_url) missing.push("Passport copy");
+          if (!profile?.work_permit_document_url && profile?.waiver !== true) {
+            missing.push("Permit, waiver, or receipt support");
+          }
+        }
+
+        if (!missing.length) {
+          promptCard.classList.remove("show");
+          listEl.innerHTML = "";
+          return;
+        }
+
+        listEl.innerHTML = missing.map((item) => `<li>${item}</li>`).join("");
+        promptCard.classList.add("show");
       }
 
       function updateDobHelpTip(isApproved) {
@@ -1075,6 +1132,12 @@
         const waiverSelect = document.getElementById("waiver");
         const waiverRow = waiverSelect?.parentElement;
         if (waiverRow) waiverRow.style.display = permitVal === "no" ? "flex" : "none";
+        const permitWarning = document.getElementById("permitWarning");
+        if (permitWarning) {
+          const waiverVal = waiverSelect?.value || "";
+          const needsPermit = hasNat && !isSa && permitVal !== "yes" && waiverVal !== "yes";
+          permitWarning.style.display = needsPermit ? "block" : "none";
+        }
       }
       document.getElementById("nationality").addEventListener("input", toggleNationalityFields);
       document.getElementById("workPermit").addEventListener("change", toggleNationalityFields);
@@ -1235,6 +1298,15 @@
           }
         }
 
+        const workPermitValue = document.getElementById("workPermit").value;
+        const waiverValue = document.getElementById("waiver").value;
+        let permitStatus = null;
+        if (natValue && natValue !== "south african") {
+          if (workPermitValue === "yes") permitStatus = "permit";
+          else if (waiverValue === "yes") permitStatus = "waiver";
+          else if (workPermitValue === "no" || waiverValue === "no") permitStatus = "none";
+        }
+
         saveBtn.disabled = true;
         status.textContent = "Saving...";
         try {
@@ -1251,10 +1323,11 @@
               passport_number: document.getElementById("passportNumber").value || null,
               passport_expiry: document.getElementById("passportExpiry").value || null,
               passport_document_url: document.getElementById("passportFile").dataset.url || null,
-              work_permit: document.getElementById("workPermit").value === "yes" ? true : (document.getElementById("workPermit").value === "no" ? false : null),
+              permit_status: permitStatus,
+              work_permit: workPermitValue === "yes" ? true : (workPermitValue === "no" ? false : null),
               work_permit_expiry: document.getElementById("workPermitExpiry").value || null,
               work_permit_document_url: document.getElementById("permitFile").dataset.url || null,
-              waiver: document.getElementById("waiver").value === "yes" ? true : (document.getElementById("waiver").value === "no" ? false : null),
+              waiver: waiverValue === "yes" ? true : (waiverValue === "no" ? false : null),
               sa_id_number: document.getElementById("saIdNumber").value || null,
               sa_id_document_url: document.getElementById("saIdFile").dataset.url || null,
               police_clearance_document_url: document.getElementById("policeClearanceFile").dataset.url || null,
@@ -1280,6 +1353,7 @@
         const params = new URLSearchParams(window.location.search);
         const fromOps = params.get("from") === "ops";
         const isAdminView = params.get("admin") === "1";
+        const isPostSignup = params.get("post_signup") === "1";
         const backBtn = document.getElementById("backToOpsBtn");
         if (fromOps && backBtn) {
           backBtn.style.display = "inline-block";
@@ -1287,7 +1361,7 @@
             window.location.href = "/static/nanny_home.html?v=2";
           });
         }
-        if (!fromOps && !isAdminView) {
+        if (!fromOps && !isAdminView && !isPostSignup) {
           window.location.href = "/static/nanny_home.html?v=2";
           return;
         }
@@ -1357,6 +1431,10 @@
           setPhotoMode(true);
         } else {
           setPhotoMode(false);
+        }
+        updateCompletionPrompt(profile);
+        if (isPostSignup) {
+          window.scrollTo({ top: 0, behavior: "smooth" });
         }
 
         document.getElementById("homeAddress").value = profile.formatted_address || profile.location_hint || "";

@@ -58,7 +58,7 @@
           window.location.href = "/static/admin_dashboard.html";
           return;
         }
-        routeByRole(u.role);
+        routeByRole(u.role, u);
       } catch {
         clearToken();
       }
@@ -86,7 +86,7 @@
           window.location.href = "/static/admin_dashboard.html";
           return;
         }
-        routeByRole(u.role);
+        routeByRole(u.role, u);
       } catch (e) {
         errEl.textContent = e.message;
       }

@@ -369,6 +369,30 @@ class BookingRequestReject(BaseModel):
     assign_nanny_id: Optional[int] = None
 
 
+class BookingCancellationRequest(BaseModel):
+    reason: str
+
+
+class NannyBookingRequestResponse(BaseModel):
+    response: Literal["accepted", "declined", "deciding"]
+    reason: Optional[str] = None
+
+
+class ParentBookingRequestUpdate(BaseModel):
+    notes: Optional[str] = None
+    responsibilities: Optional[str] = None
+    adult_present: Optional[str] = None
+    booking_reason: Optional[str] = None
+    kids_count: Optional[int] = 1
+    meal_option: Optional[str] = None
+    food_restrictions: Optional[str] = None
+    dogs_info: Optional[str] = None
+    disclaimer_basic_upkeep: Optional[bool] = None
+    disclaimer_medicine: Optional[bool] = None
+    disclaimer_extra_hours: Optional[bool] = None
+    disclaimer_transport: Optional[bool] = None
+
+
 class AdminNannyApplicationUpdateRequest(BaseModel):
     status: Literal["approved", "declined", "hold", "pending"]
     reason: Optional[str] = None
@@ -410,6 +434,8 @@ class AuthUserOut(BaseModel):
     nanny_id: Optional[int] = None
     is_admin: bool = False
     is_active: bool = True
+    nanny_application_status: Optional[str] = None
+    nanny_admin_reason: Optional[str] = None
 
 
 class LoginRequest(BaseModel):

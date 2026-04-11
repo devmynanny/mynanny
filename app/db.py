@@ -153,6 +153,15 @@ def ensure_booking_requests_schema() -> None:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN paystack_refund_reference TEXT"))
             if "cancelled_at" not in existing:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN cancelled_at DATETIME"))
+            if "unaccepted_admin_notified_at" not in existing:
+                conn.execute(text("ALTER TABLE booking_requests ADD COLUMN unaccepted_admin_notified_at DATETIME"))
+            if "nanny_response_status" not in existing:
+                conn.execute(text("ALTER TABLE booking_requests ADD COLUMN nanny_response_status TEXT"))
+                conn.execute(text("UPDATE booking_requests SET nanny_response_status = 'pending' WHERE nanny_response_status IS NULL"))
+            if "nanny_responded_at" not in existing:
+                conn.execute(text("ALTER TABLE booking_requests ADD COLUMN nanny_responded_at DATETIME"))
+            if "nanny_response_note" not in existing:
+                conn.execute(text("ALTER TABLE booking_requests ADD COLUMN nanny_response_note TEXT"))
             return
 
         conn.execute(text("ALTER TABLE booking_requests RENAME TO booking_requests_old"))
@@ -198,9 +207,14 @@ def ensure_booking_requests_schema() -> None:
               admin_user_id BIGINT,
               admin_decided_at DATETIME,
               admin_reason TEXT,
+              unaccepted_admin_notified_at DATETIME,
+              nanny_response_status TEXT,
+              nanny_responded_at DATETIME,
+              nanny_response_note TEXT,
               created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
               updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
               CONSTRAINT booking_requests_status_check CHECK (status IN ('tbc','pending_admin','approved','rejected','cancelled')),
+              CONSTRAINT booking_requests_nanny_response_status_check CHECK (nanny_response_status IS NULL OR nanny_response_status IN ('pending','accepted','declined','deciding')),
               CONSTRAINT booking_requests_payment_status_check CHECK (payment_status IN ('pending_payment','paid','cancelled')),
               FOREIGN KEY(parent_user_id) REFERENCES users (id) ON DELETE RESTRICT,
               FOREIGN KEY(nanny_id) REFERENCES nannies (id) ON DELETE RESTRICT,
@@ -221,7 +235,8 @@ def ensure_booking_requests_schema() -> None:
               cancelled_at,
               hold_expires_at, payment_status, admin_notes, client_notes,
               created_by_admin_user_id, requested_starts_at, requested_ends_at,
-              location_id, admin_user_id, admin_decided_at, admin_reason,
+              location_id, admin_user_id, admin_decided_at, admin_reason, unaccepted_admin_notified_at,
+              nanny_response_status, nanny_responded_at, nanny_response_note,
               created_at, updated_at
             )
             SELECT
@@ -264,6 +279,10 @@ def ensure_booking_requests_schema() -> None:
               admin_user_id,
               admin_decided_at,
               admin_reason,
+              NULL,
+              'pending',
+              NULL,
+              NULL,
               created_at,
               updated_at
             FROM booking_requests_old;
@@ -311,6 +330,11 @@ def ensure_bookings_schema() -> None:
         add_col("check_out_lat", "FLOAT")
         add_col("check_out_lng", "FLOAT")
         add_col("check_out_distance_m", "FLOAT")
+        add_col("booking_request_id", "BIGINT")
+        add_col("cancelled_at", "DATETIME")
+        add_col("cancellation_reason", "TEXT")
+        add_col("cancellation_actor_role", "TEXT")
+        add_col("cancellation_actor_user_id", "INTEGER")
 
 
 def ensure_nanny_profiles_schema() -> None:

@@ -11,10 +11,19 @@
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
     .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;cursor:pointer}
     .muted{color:#666}
-    .actions{display:flex;gap:8px;margin-top:10px}
+    .actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
     .card button{font-size:14px}
     .job-details{margin-top:10px;padding-top:10px;border-top:1px solid #eee;display:none}
     .pill{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px;margin-right:6px}
+    .detailSection{margin-top:12px;padding:12px;border:1px solid #e5e7eb;border-radius:12px;background:#f8fafc}
+    .detailSection h3{margin:0 0 10px 0;font-size:16px}
+    .detailGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+    .field{display:flex;flex-direction:column;gap:6px}
+    .field input,.field textarea,.field select{padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit}
+    .checkboxRow{display:flex;align-items:center;gap:8px}
+    .previewList{margin:8px 0 0 18px;padding:0}
+    .previewList li{margin:5px 0}
+    .lockNote{margin-top:10px;padding:10px;border:1px solid #f3d9a7;background:#fff8e6;border-radius:10px;color:#5f4a1a}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -42,6 +51,15 @@
   <script>
     let cancellationWindowHours = 12;
 
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     function mapStatus(status) {
       if (status === "approved") return "Accepted";
       if (status === "tbc" || status === "pending_admin") return "Requested";
@@ -54,6 +72,28 @@
       const first = parts[0];
       const lastInitial = parts[parts.length - 1][0] || "";
       return `${first} ${lastInitial}.`;
+    }
+
+    function yesNo(value) {
+      return value ? "Yes" : "No";
+    }
+
+    function renderFormPreview(form) {
+      const items = [
+        ["Additional notes", form?.notes || "-"],
+        ["Nanny responsibilities", form?.responsibilities || "-"],
+        ["Adult present at address", form?.adult_present || "-"],
+        ["Reason for booking", form?.booking_reason || "-"],
+        ["Children present", form?.kids_count ?? "-"],
+        ["Meal arrangement", form?.meal_option || "-"],
+        ["Foods not allowed in home", form?.food_restrictions || "-"],
+        ["Dogs at home", form?.dogs_info || "-"],
+        ["House upkeep disclaimer", yesNo(form?.disclaimer_basic_upkeep)],
+        ["Medicine disclaimer", yesNo(form?.disclaimer_medicine)],
+        ["Additional hours disclaimer", yesNo(form?.disclaimer_extra_hours)],
+        ["After-17:00 transport disclaimer", yesNo(form?.disclaimer_transport)],
+      ];
+      return `<ul class="previewList">${items.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join("")}</ul>`;
     }
 
     async function loadJobs() {
@@ -87,20 +127,49 @@
         const requestedNannies = Array.isArray(r.requested_nannies) && r.requested_nannies.length
           ? r.requested_nannies.map(n => `${formatName(n.name)} (ID ${n.id})`).join(", ")
           : "-";
+        const form = r.booking_form || {};
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
-          <div><strong>Job ID:</strong> ${r.job_id}</div>
-          <div class="muted">${start} to ${end}</div>
-          <div class="muted">Status: ${status}</div>
-          <div class="muted">${nannyLine}</div>
+          <div><strong>Job ID:</strong> ${escapeHtml(r.job_id)}</div>
+          <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+          <div class="muted">Status: ${escapeHtml(status)}</div>
+          <div class="muted">${escapeHtml(nannyLine)}</div>
           <div class="actions">
             ${r.status !== "cancelled" ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
           </div>
           <div class="job-details">
-            <div><strong>Requested times:</strong> ${start} to ${end}</div>
-            <div><strong>Requested nannies:</strong> ${requestedNannies}</div>
-            <div><strong>Job status:</strong> ${status}</div>
+            <div><strong>Requested times:</strong> ${escapeHtml(start)} to ${escapeHtml(end)}</div>
+            <div><strong>Requested nannies:</strong> ${escapeHtml(requestedNannies)}</div>
+            <div><strong>Job status:</strong> ${escapeHtml(status)}</div>
+            <div class="detailSection">
+              <h3>Booking form preview</h3>
+              ${renderFormPreview(form)}
+            </div>
+            <div class="detailSection">
+              <h3>Edit booking form</h3>
+              ${r.can_edit_form ? `
+                <div class="detailGrid">
+                  <label class="field">Additional notes<textarea rows="3" data-field="notes">${escapeHtml(form.notes || "")}</textarea></label>
+                  <label class="field">Nanny responsibilities<textarea rows="3" data-field="responsibilities">${escapeHtml(form.responsibilities || "")}</textarea></label>
+                  <label class="field">Adult present at address<input type="text" data-field="adult_present" value="${escapeHtml(form.adult_present || "")}" /></label>
+                  <label class="field">Reason for booking<input type="text" data-field="booking_reason" value="${escapeHtml(form.booking_reason || "")}" /></label>
+                  <label class="field">Children present<input type="number" min="1" max="10" data-field="kids_count" value="${escapeHtml(form.kids_count ?? 1)}" /></label>
+                  <label class="field">Meal arrangement<input type="text" data-field="meal_option" value="${escapeHtml(form.meal_option || "")}" /></label>
+                  <label class="field">Foods not allowed in home<input type="text" data-field="food_restrictions" value="${escapeHtml(form.food_restrictions || "")}" /></label>
+                  <label class="field">Dogs at home<input type="text" data-field="dogs_info" value="${escapeHtml(form.dogs_info || "")}" /></label>
+                </div>
+                <div class="detailGrid" style="margin-top:10px;">
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_basic_upkeep" ${form.disclaimer_basic_upkeep ? "checked" : ""} /> House upkeep disclaimer understood</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_medicine" ${form.disclaimer_medicine ? "checked" : ""} /> Medicine disclaimer understood</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_extra_hours" ${form.disclaimer_extra_hours ? "checked" : ""} /> Additional hours disclaimer understood</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_transport" ${form.disclaimer_transport ? "checked" : ""} /> After-17:00 transport disclaimer understood</label>
+                </div>
+                <div class="actions">
+                  <button class="btn saveFormBtn" data-id="${r.job_id}">Save form updates</button>
+                </div>
+              ` : `<div class="lockNote">${escapeHtml(r.edit_locked_reason || "This booking form can no longer be edited.")}</div>`}
+            </div>
           </div>
         `;
         list.appendChild(card);
@@ -117,13 +186,52 @@
       list.querySelectorAll(".cancelBtn").forEach(btn => {
         btn.addEventListener("click", async () => {
           if (!confirm(`Cancel this job? If within ${cancellationWindowHours} hours, a cancellation fee may apply.`)) return;
+          const reason = (prompt("Why are you cancelling this booking?") || "").trim();
+          if (!reason) {
+            alert("Please provide a cancellation reason.");
+            return;
+          }
           btn.disabled = true;
           try {
-            await fetchJson(`/parents/me/booking-requests/${btn.dataset.id}/cancel`, { method: "PATCH" });
+            await fetchJson(`/parents/me/booking-requests/${btn.dataset.id}/cancel`, {
+              method: "PATCH",
+              body: JSON.stringify({ reason })
+            });
             loadJobs().catch(() => {});
           } catch (e) {
             btn.disabled = false;
             alert(e.message || "Failed to cancel job");
+          }
+        });
+      });
+      list.querySelectorAll(".saveFormBtn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const card = btn.closest(".card");
+          const read = (field) => card.querySelector(`[data-field="${field}"]`);
+          const payload = {
+            notes: read("notes")?.value || "",
+            responsibilities: read("responsibilities")?.value || "",
+            adult_present: read("adult_present")?.value || "",
+            booking_reason: read("booking_reason")?.value || "",
+            kids_count: Number(read("kids_count")?.value || 1),
+            meal_option: read("meal_option")?.value || "",
+            food_restrictions: read("food_restrictions")?.value || "",
+            dogs_info: read("dogs_info")?.value || "",
+            disclaimer_basic_upkeep: !!read("disclaimer_basic_upkeep")?.checked,
+            disclaimer_medicine: !!read("disclaimer_medicine")?.checked,
+            disclaimer_extra_hours: !!read("disclaimer_extra_hours")?.checked,
+            disclaimer_transport: !!read("disclaimer_transport")?.checked,
+          };
+          btn.disabled = true;
+          try {
+            await fetchJson(`/parents/me/booking-requests/${btn.dataset.id}/form`, {
+              method: "PATCH",
+              body: JSON.stringify(payload)
+            });
+            loadJobs().catch(() => {});
+          } catch (e) {
+            btn.disabled = false;
+            alert(e.message || "Failed to update booking form");
           }
         });
       });

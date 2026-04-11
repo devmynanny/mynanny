@@ -1029,15 +1029,7 @@
       document.getElementById("previewMeta").textContent = parts.join(" • ");
       const bioEl = document.getElementById("previewBio");
       const summary = n.profile_summary || n.bio || "";
-      const rawBio = (n.bio || "").trim();
-      if (summary && rawBio && summary !== rawBio) {
-        bioEl.innerHTML = `
-          <div class="summaryText">${escapeHtml(summary)}</div>
-          <div class="summaryText secondary"><strong>Bio:</strong> ${escapeHtml(rawBio)}</div>
-        `;
-      } else {
-        bioEl.innerHTML = `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
-      }
+      bioEl.innerHTML = `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
 
       const fitEl = document.getElementById("previewFit");
       if (bookingState.slots && bookingState.slots.length) {

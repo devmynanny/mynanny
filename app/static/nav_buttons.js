@@ -74,4 +74,38 @@
 
   wrapper.append(backBtn, dashboardBtn);
   document.body.prepend(wrapper);
+
+  const duplicateSelectors = [
+    "#backBtn",
+    "#backBottomBtn",
+    "#backToOpsBtn",
+    ".back-btn",
+  ];
+
+  const duplicateLabels = new Set([
+    "Back to dashboard",
+    "Back to home",
+    "Back to operations",
+    "Back",
+  ]);
+
+  const seen = new Set();
+  duplicateSelectors.forEach((selector) => {
+    document.querySelectorAll(selector).forEach((el) => {
+      if (!el || el.closest(".global-nav-actions")) return;
+      seen.add(el);
+    });
+  });
+
+  document.querySelectorAll("button").forEach((btn) => {
+    if (!btn || btn.closest(".global-nav-actions")) return;
+    const label = (btn.textContent || "").trim();
+    if (duplicateLabels.has(label)) {
+      seen.add(btn);
+    }
+  });
+
+  seen.forEach((el) => {
+    el.remove();
+  });
 })();

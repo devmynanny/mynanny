@@ -86,6 +86,25 @@
       }
     }
 
+    async function cancelBooking(bookingId, btn) {
+      const reason = (prompt("Why are you cancelling this booking?") || "").trim();
+      if (!reason) {
+        alert("Please provide a cancellation reason.");
+        return;
+      }
+      btn.disabled = true;
+      try {
+        await fetchJson(`/nannies/me/bookings/${bookingId}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({ reason }),
+        });
+        await loadBookingHistory();
+      } catch (e) {
+        btn.disabled = false;
+        alert(e.message || "Failed to cancel booking.");
+      }
+    }
+
     async function loadBookingHistory() {
       const data = await fetchJson("/nannies/me/duty-bookings");
       const list = document.getElementById("bookingHistoryList");
@@ -122,6 +141,7 @@
           : "";
         const canCheckIn = !checkedIn && !isCompleted;
         const canCheckOut = checkedIn && !checkedOut && !isCompleted;
+        const canCancel = !checkedOut && !isCompleted && String(r.status || "").toLowerCase() !== "cancelled";
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
@@ -138,6 +158,7 @@
           <div class="actions">
             ${canCheckIn ? `<button class="btn dutyBtn" data-id="${r.booking_id}" data-action="check-in">Report for duty (Check in)</button>` : ""}
             ${canCheckOut ? `<button class="btn dutyBtn" data-id="${r.booking_id}" data-action="check-out">Check out and end shift</button>` : ""}
+            ${canCancel ? `<button class="btn cancelBookingBtn" data-id="${r.booking_id}">Cancel booking</button>` : ""}
           </div>
         `;
         list.appendChild(card);
@@ -145,6 +166,11 @@
       list.querySelectorAll(".dutyBtn").forEach(btn => {
         btn.addEventListener("click", () => {
           doDutyAction(btn.dataset.id, btn.dataset.action, btn);
+        });
+      });
+      list.querySelectorAll(".cancelBookingBtn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          cancelBooking(btn.dataset.id, btn);
         });
       });
       renderDutyElapsed();

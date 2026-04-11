@@ -9,25 +9,33 @@
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
-    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
+    .card{border:1px solid #ddd;border-radius:12px;padding:14px;margin:10px 0;}
     .muted{color:#666}
-    .actions{display:flex;gap:8px;margin-top:8px}
+    .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
     .mapWrap{margin-top:10px;border:1px solid #ddd;border-radius:10px;overflow:hidden;background:#fafafa}
     .mapFrame{width:100%;height:220px;border:0;display:block}
     .mapLinks{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
-    .mapLink{display:inline-block}
+    .mapLink{display:inline-flex;align-items:center;justify-content:center;min-width:180px;padding:12px 16px;border-radius:12px;border:1px solid #d1d5db;background:#fff;text-decoration:none;color:#1f2937;font-weight:600}
+    .mapLink:hover{background:#f8fafc}
     .commitNotice{margin-top:10px;padding:10px;border:1px solid #f3d9a7;background:#fff8e6;border-radius:10px;color:#5f4a1a;font-size:14px}
     .daysNotice{margin-top:10px;padding:10px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;color:#1e3a8a}
     .slotList{margin:8px 0 0 18px;padding:0}
     .slotList li{margin:2px 0}
+    .headerRow{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+    .statusPill{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid #d1d5db;font-size:12px;font-weight:600;background:#fff}
+    .statusAccepted{background:#ecfdf5;border-color:#86efac;color:#166534}
+    .statusDeciding{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+    .statusPending{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+    .statusDeclined{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}
+    .detailBlock{margin-top:10px;padding:12px;border-radius:12px;background:#f8fafc;border:1px solid #e5e7eb}
+    .detailList{margin:8px 0 0 18px;padding:0}
+    .detailList li{margin:6px 0;color:#334155}
+    .calendarBtn{background:#ecfdf5;border-color:#86efac;color:#166534;font-weight:600;text-decoration:none}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
 <body>
   <div id="topbar" class="topbar"></div>
-  <div class="topbar">
-    <button class="btn" id="backBtn" type="button">Back to home</button>
-  </div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
     <h1>Booking requests</h1>
   </div>
@@ -36,12 +44,51 @@
 
   <script src="/static/app.js?v=2"></script>
   <script>
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
     function formatName(fullName) {
       const parts = String(fullName || "").trim().split(/\s+/).filter(Boolean);
       if (parts.length <= 1) return parts[0] || "";
       const first = parts[0];
       const lastInitial = parts[parts.length - 1][0] || "";
       return `${first} ${lastInitial}.`;
+    }
+
+    function responseMeta(status) {
+      const key = String(status || "pending").toLowerCase();
+      if (key === "accepted") return { label: "Accepted by you", className: "statusAccepted" };
+      if (key === "declined") return { label: "Declined by you", className: "statusDeclined" };
+      if (key === "deciding") return { label: "Still deciding", className: "statusDeciding" };
+      return { label: "Awaiting your response", className: "statusPending" };
+    }
+
+    function buildCalendarUrl(item) {
+      const start = item.start_dt ? new Date(item.start_dt) : null;
+      const end = item.end_dt ? new Date(item.end_dt) : null;
+      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "";
+      const stamp = (value) => value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+      const title = `My Nanny booking #${item.group_id || item.id}`;
+      const details = [
+        item.parent_name ? `Client: ${item.parent_name}` : "",
+        item.location_address ? `Address: ${item.location_address}` : "",
+      ].filter(Boolean).join("\n");
+      return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${stamp(start)}/${stamp(end)}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(item.location_address || item.location_label || "")}`;
+    }
+
+    function buildDetailItems(notes) {
+      return String(notes || "")
+        .split(/\n+/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => `<li>${escapeHtml(line.replace(/^[-*]\s*/, "").trim())}</li>`)
+        .join("");
     }
 
     async function loadBookingRequests() {
@@ -92,18 +139,34 @@
         const boltFallbackUrl = hasCoords
           ? `https://bolt.eu/?destination=${encodeURIComponent(`${lat},${lng}`)}`
           : "";
+        const response = responseMeta(r.nanny_response_status);
+        const detailsHtml = buildDetailItems(r.notes);
+        const currentResponse = String(r.nanny_response_status || "pending").toLowerCase();
+        const canRespond = ["tbc", "pending_admin", "approved"].includes(String(r.status || "").toLowerCase()) && !["accepted", "declined"].includes(currentResponse);
+        const accepted = currentResponse === "accepted";
+        const calendarUrl = buildCalendarUrl(r);
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
-          <div><strong>${parentName || "Parent"}</strong> (${r.parent_email || "-"})</div>
-          <div class="muted">Job ID: ${jobId}</div>
-          <div class="muted">${start} to ${end}</div>
+          <div class="headerRow">
+            <div>
+              <div><strong>${escapeHtml(parentName || "Parent")}</strong> (${escapeHtml(r.parent_email || "-")})</div>
+              <div class="muted">Job ID: ${escapeHtml(jobId)}</div>
+              <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+              ${accepted && calendarUrl ? `<a class="btn calendarBtn" href="${calendarUrl}" target="_blank" rel="noopener noreferrer">Add to my calendar</a>` : ""}
+              <span class="statusPill ${response.className}">${escapeHtml(response.label)}</span>
+            </div>
+          </div>
           ${scheduleBlock}
-          <div class="muted">Location: ${loc}</div>
+          <div class="muted">Location: ${escapeHtml(loc)}</div>
           ${hasCoords ? `<div class="mapWrap"><iframe class="mapFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="${mapSrc}" title="Client location map for job ${jobId}"></iframe></div><div class="mapLinks"><a class="mapLink" href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a><a class="mapLink boltLink" href="${boltDeepLink}" data-bolt-fallback="${boltFallbackUrl}" rel="noopener noreferrer">Ride with Bolt</a></div>` : `<div class="muted" style="margin-top:6px;">Map unavailable for this request.</div>`}
-          ${r.notes ? `<div class="muted">Booking notes: ${r.notes}</div>` : ""}
-          <div class="muted">Status: ${r.status || "-"}</div>
-          ${r.status === "tbc" || r.status === "pending_admin" ? `<div class="commitNotice">By accepting this booking, you confirm that you will arrive at the listed location on time and complete the shift professionally. Repeated no-shows or missed arrivals can lead to poor ratings, temporary suspension, or removal from the platform.</div><div class="actions"><button class="btn acceptBtn" data-id="${r.id}">Accept booking</button></div>` : ""}
+          ${detailsHtml ? `<div class="detailBlock"><strong>Booking details</strong><ul class="detailList">${detailsHtml}</ul></div>` : ""}
+          <div class="muted" style="margin-top:10px;">Request status: ${escapeHtml(r.status || "-")}</div>
+          ${r.nanny_responded_at ? `<div class="muted">Last updated by you: ${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(r.nanny_responded_at) : r.nanny_responded_at)}</div>` : ""}
+          ${r.nanny_response_note ? `<div class="muted">Your note: ${escapeHtml(r.nanny_response_note)}</div>` : ""}
+          ${canRespond ? `<div class="commitNotice">Accept once you are ready to commit to this job. If you are not ready yet, you can mark it as still deciding, or decline it with a reason so admin can follow up quickly.</div><div class="actions"><button class="btn acceptBtn" data-id="${r.id}">Accept this booking</button><button class="btn decideBtn" data-id="${r.id}" data-response="deciding">Still deciding</button><button class="btn declineBtn" data-id="${r.id}" data-response="declined">Decline</button></div>` : ""}
         `;
         list.appendChild(card);
       });
@@ -136,11 +199,30 @@
           }
         });
       });
+      list.querySelectorAll(".decideBtn, .declineBtn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const response = btn.dataset.response;
+          const reason = response === "declined"
+            ? (prompt("Why are you declining this booking?") || "").trim()
+            : (prompt("Add an optional note for admin and the client, or leave blank.") || "").trim();
+          if (response === "declined" && !reason) {
+            alert("Please add a short reason so admin can follow up.");
+            return;
+          }
+          btn.disabled = true;
+          try {
+            await fetchJson(`/nannies/me/booking-requests/${btn.dataset.id}/respond`, {
+              method: "POST",
+              body: JSON.stringify({ response, reason: reason || null }),
+            });
+            loadBookingRequests().catch(() => {});
+          } catch (e) {
+            btn.disabled = false;
+            alert(e.message || "Failed to update booking request");
+          }
+        });
+      });
     }
-
-    document.getElementById("backBtn").addEventListener("click", () => {
-      location.href = "/static/nanny_home.html?v=2";
-    });
 
     (async () => {
       const me = await requireMe();

@@ -258,10 +258,7 @@
       document.getElementById("previewMeta").textContent = meta.join(" • ");
 
       const summary = n.profile_summary || n.bio || "";
-      const rawBio = (n.bio || "").trim();
-      document.getElementById("previewBio").innerHTML = summary && rawBio && summary !== rawBio
-        ? `<div class="summaryText">${escapeHtml(summary)}</div><div class="summaryText" style="color:#666;"><strong>Bio:</strong> ${escapeHtml(rawBio)}</div>`
-        : `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
+      document.getElementById("previewBio").innerHTML = `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
 
       const trustBits = [
         n.approved ? "Approved by My Nanny" : "Pending approval",

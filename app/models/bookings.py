@@ -51,10 +51,18 @@ class BookingRequest(Base):
 	admin_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
 	admin_decided_at = Column(DateTime(timezone=True), nullable=True)
 	admin_reason = Column(Text, nullable=True)
+	unaccepted_admin_notified_at = Column(DateTime(timezone=True), nullable=True)
+	nanny_response_status = Column(Text, nullable=True, default="pending")
+	nanny_responded_at = Column(DateTime(timezone=True), nullable=True)
+	nanny_response_note = Column(Text, nullable=True)
 	created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 	updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 	__table_args__ = (
 		CheckConstraint("status IN ('tbc','pending_admin','approved','rejected','cancelled')", name="booking_requests_status_check"),
+		CheckConstraint(
+			"nanny_response_status IS NULL OR nanny_response_status IN ('pending','accepted','declined','deciding')",
+			name="booking_requests_nanny_response_status_check",
+		),
 		CheckConstraint(
 			"payment_status IN ('pending_payment','paid','cancelled')",
 			name="booking_requests_payment_status_check",

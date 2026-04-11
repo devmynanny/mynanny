@@ -72,6 +72,7 @@ class Booking(Base):
     __tablename__ = "bookings"
 
     id = Column(Integer, primary_key=True)
+    booking_request_id = Column(BigInteger, ForeignKey("booking_requests.id"), nullable=True)
     nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
     client_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     day = Column(Date, nullable=False)
@@ -94,6 +95,10 @@ class Booking(Base):
     check_out_lat = Column(Float, nullable=True)
     check_out_lng = Column(Float, nullable=True)
     check_out_distance_m = Column(Float, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    cancellation_actor_role = Column(String, nullable=True)
+    cancellation_actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 
 class Review(Base):
