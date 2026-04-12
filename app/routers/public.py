@@ -11,7 +11,7 @@ from urllib.request import urlopen, Request as UrlRequest
 from urllib.parse import urlencode
 from pathlib import Path
 from typing import Optional, List, Union
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, time as dt_time
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, File, UploadFile, Response
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session, aliased
@@ -587,23 +587,47 @@ def _existing_availability_dates(
     nanny_id: int,
     start_date: date,
     end_date: date,
-    start_time,
-    end_time,
+    expected_windows: dict[date, tuple[datetime, datetime]],
     availability_type: str,
 ) -> set[date]:
     rows = (
-        db.query(models.NannyAvailability.date)
+        db.query(models.NannyAvailability)
         .filter(
             models.NannyAvailability.nanny_id == nanny_id,
             models.NannyAvailability.date >= start_date,
             models.NannyAvailability.date <= end_date,
-            models.NannyAvailability.start_time == start_time,
-            models.NannyAvailability.end_time == end_time,
             models.NannyAvailability.type == availability_type,
         )
         .all()
     )
-    return {row[0] for row in rows if row and row[0]}
+    existing: set[date] = set()
+    for row in rows:
+        row_date = getattr(row, "date", None)
+        expected = expected_windows.get(row_date)
+        if not row_date or not expected:
+            continue
+        window = _availability_window(row)
+        if not window:
+            continue
+        row_start, row_end = window
+        expected_start, expected_end = expected
+        if _naive_utc(row_start) == _naive_utc(expected_start) and _naive_utc(row_end) == _naive_utc(expected_end):
+            existing.add(row_date)
+    return existing
+
+
+def _build_availability_range(day: date, start_time_text: str, end_time_text: str) -> tuple[datetime, datetime]:
+    start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time_text}")
+    end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time_text}")
+    if end_dt <= start_dt:
+        end_dt = end_dt + timedelta(days=1)
+    return start_dt, end_dt
+
+
+def _availability_legacy_end_time(start_dt: datetime, end_dt: datetime):
+    if end_dt.date() > start_dt.date() or end_dt.time() <= start_dt.time():
+        return dt_time(23, 59, 59)
+    return end_dt.time()
 
 
 def _naive_utc(dt: datetime) -> datetime:
@@ -652,7 +676,7 @@ def _get_pricing_settings(db: Session) -> dict:
             "booking_fee_pct_1_5": 0.30,
             "booking_fee_pct_6_10": 0.27,
             "booking_fee_pct_10_plus": 0.25,
-            "cancellation_fee_window_hours": 12,
+            "cancellation_fee_window_hours": 15,
         }
     return {
         "weekday_half_day": row.weekday_half_day,
@@ -673,7 +697,7 @@ def _get_pricing_settings(db: Session) -> dict:
         "booking_fee_pct_1_5": float(row.booking_fee_pct_1_5),
         "booking_fee_pct_6_10": float(row.booking_fee_pct_6_10),
         "booking_fee_pct_10_plus": float(row.booking_fee_pct_10_plus),
-        "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 12) or 12),
+        "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 15) or 15),
     }
 
 
@@ -684,7 +708,7 @@ def get_cancellation_window_hours(
 ):
     _ = _require_user(authorization, db)
     settings = _get_pricing_settings(db)
-    return {"cancellation_fee_window_hours": int(settings.get("cancellation_fee_window_hours") or 12)}
+    return {"cancellation_fee_window_hours": max(15, int(settings.get("cancellation_fee_window_hours") or 15))}
 
 
 def _sa_public_holidays(year: int) -> set:
@@ -2067,6 +2091,69 @@ def upload_nanny_photo(
     return {"url": user.profile_photo_url}
 
 
+@router.post("/parents/me/family-photo")
+def upload_parent_family_photo(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    allowed = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    ext = allowed.get(file.content_type or "")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+
+    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "parents"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"family_{user.id}_{uuid.uuid4().hex}{ext}"
+    dest = upload_dir / filename
+
+    try:
+        data = file.file.read()
+        dest.write_bytes(data)
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+
+    prof = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user.id).first()
+    if not prof:
+        prof = models.ParentProfile(user_id=user.id)
+        db.add(prof)
+
+    before = _parent_profile_snapshot(prof)
+    prof.family_photo_url = f"/static/uploads/parents/{filename}"
+    db.add(prof)
+    db.commit()
+    db.refresh(prof)
+
+    after = _parent_profile_snapshot(prof)
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=user.id,
+        entity="parent_profiles",
+        entity_id=prof.id,
+        action="update",
+        before_obj=before,
+        after_obj=after,
+        changed_fields=["family_photo_url"],
+        request=request,
+    )
+
+    return {"url": prof.family_photo_url}
+
+
 @router.post("/nannies/me/id-document")
 def upload_nanny_id_document(
     request: Request,
@@ -2889,7 +2976,7 @@ def create_nanny_me_availability(
         nanny_id=nanny.id,
         date=start_dt.date(),
         start_time=start_dt.time(),
-        end_time=end_dt.time(),
+        end_time=_availability_legacy_end_time(start_dt, end_dt),
         is_available=True if payload.type == "available" else False,
         created_by="nanny",
         type=payload.type,
@@ -2927,17 +3014,19 @@ def create_nanny_me_availability_bulk(
     end_time = payload.end_time or "23:59"
 
     try:
-        sample_start_dt = _parse_iso_dt(f"{start_date.isoformat()}T{start_time}")
-        sample_end_dt = _parse_iso_dt(f"{start_date.isoformat()}T{end_time}")
+        sample_start_dt, sample_end_dt = _build_availability_range(start_date, start_time, end_time)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid start_time or end_time")
-    if sample_end_dt <= sample_start_dt:
-        raise HTTPException(status_code=400, detail="End time must be after start time")
 
     slot_start_time = sample_start_dt.time()
-    slot_end_time = sample_end_dt.time()
+    slot_end_time = _availability_legacy_end_time(sample_start_dt, sample_end_dt)
+    expected_windows = {}
+    day = start_date
+    while day <= end_date:
+        expected_windows[day] = _build_availability_range(day, start_time, end_time)
+        day = day + timedelta(days=1)
     existing_dates = _existing_availability_dates(
-        db, nanny.id, start_date, end_date, slot_start_time, slot_end_time, payload.type
+        db, nanny.id, start_date, end_date, expected_windows, payload.type
     )
 
     created = 0
@@ -2948,8 +3037,7 @@ def create_nanny_me_availability_bulk(
             skipped += 1
             day = day + timedelta(days=1)
             continue
-        start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time}")
-        end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time}")
+        start_dt, end_dt = expected_windows[day]
         row = models.NannyAvailability(
             nanny_id=nanny.id,
             date=start_dt.date(),
@@ -2996,17 +3084,20 @@ def create_nanny_me_availability_weekly(
 
     end_date = start_date + timedelta(days=(payload.weeks * 7) - 1)
     try:
-        sample_start_dt = _parse_iso_dt(f"{start_date.isoformat()}T{start_time}")
-        sample_end_dt = _parse_iso_dt(f"{start_date.isoformat()}T{end_time}")
+        sample_start_dt, sample_end_dt = _build_availability_range(start_date, start_time, end_time)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid start_time or end_time")
-    if sample_end_dt <= sample_start_dt:
-        raise HTTPException(status_code=400, detail="End time must be after start time")
 
     slot_start_time = sample_start_dt.time()
-    slot_end_time = sample_end_dt.time()
+    slot_end_time = _availability_legacy_end_time(sample_start_dt, sample_end_dt)
+    expected_windows: dict[date, tuple[datetime, datetime]] = {}
+    day = start_date
+    while day <= end_date:
+        if day.weekday() in weekdays:
+            expected_windows[day] = _build_availability_range(day, start_time, end_time)
+        day = day + timedelta(days=1)
     existing_dates = _existing_availability_dates(
-        db, nanny.id, start_date, end_date, slot_start_time, slot_end_time, payload.type
+        db, nanny.id, start_date, end_date, expected_windows, payload.type
     )
 
     created = 0
@@ -3017,8 +3108,7 @@ def create_nanny_me_availability_weekly(
             if day in existing_dates:
                 skipped += 1
             else:
-                start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time}")
-                end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time}")
+                start_dt, end_dt = expected_windows[day]
                 row = models.NannyAvailability(
                     nanny_id=nanny.id,
                     date=start_dt.date(),
@@ -3087,12 +3177,26 @@ def update_nanny_me_availability(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Availability not found")
+    next_start_dt = None
+    next_end_dt = None
     if "start_dt" in payload:
-        row.start_dt = payload["start_dt"]
+        next_start_dt = _parse_iso_dt(payload["start_dt"])
+        row.start_dt = _to_iso_z(next_start_dt)
     if "end_dt" in payload:
-        row.end_dt = payload["end_dt"]
+        next_end_dt = _parse_iso_dt(payload["end_dt"])
+        row.end_dt = _to_iso_z(next_end_dt)
     if "type" in payload:
         row.type = payload["type"]
+    if next_start_dt or next_end_dt:
+        if not next_start_dt:
+            next_start_dt = _parse_iso_dt(row.start_dt)
+        if not next_end_dt:
+            next_end_dt = _parse_iso_dt(row.end_dt)
+        if next_end_dt <= next_start_dt:
+            raise HTTPException(status_code=400, detail="end_dt must be after start_dt")
+        row.date = next_start_dt.date()
+        row.start_time = next_start_dt.time()
+        row.end_time = _availability_legacy_end_time(next_start_dt, next_end_dt)
     db.commit()
     return {"ok": True}
 
@@ -4391,15 +4495,30 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 starts_at_dt = _parse_iso_dt(start_dt or req.requested_starts_at)
             except Exception:
                 starts_at_dt = None
+            related_bookings = _find_related_bookings_for_request(db, req)
+            booking_category = "upcoming"
+            if related_bookings:
+                if any(getattr(b, "check_in_at", None) and not getattr(b, "check_out_at", None) for b in related_bookings):
+                    booking_category = "in_progress"
+                elif all(
+                    getattr(b, "status", None) in ("completed", "cancelled", "rejected")
+                    or (getattr(b, "ends_at", None) and getattr(b, "ends_at", None) < datetime.utcnow())
+                    for b in related_bookings
+                ):
+                    booking_category = "past"
+            elif status in ("cancelled", "rejected", "completed"):
+                booking_category = "past"
             grouped[gid] = {
                 "job_id": gid,
                 "status": status,
+                "booking_category": booking_category,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
                 "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
                 "can_edit_form": bool(starts_at_dt and (starts_at_dt - datetime.utcnow()) >= timedelta(hours=15) and status not in ("cancelled", "completed")),
                 "edit_locked_reason": None if starts_at_dt and (starts_at_dt - datetime.utcnow()) >= timedelta(hours=15) else "Booking form can only be edited more than 15 hours before the booking starts.",
                 "accepted_nanny_id": None,
+                "accepted_nanny_user_id": None,
                 "accepted_nanny_name": None,
                 "requested_nannies": [],
                 "booking_form": booking_form,
@@ -4408,7 +4527,9 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         entry["requested_nannies"].append({"id": req.nanny_id, "name": nanny_u.name})
         if status == "approved":
             entry["status"] = "approved"
+            entry["booking_category"] = entry.get("booking_category") or "upcoming"
             entry["accepted_nanny_id"] = req.nanny_id
+            entry["accepted_nanny_user_id"] = nanny_u.id
             entry["accepted_nanny_name"] = nanny_u.name
         elif entry["status"] != "approved" and status in ("tbc", "pending_admin"):
             entry["status"] = "tbc"
@@ -4418,6 +4539,35 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
     results = list(grouped.values())
     results.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"results": results}
+
+
+@router.get("/parents/me/nannies/{nanny_id}/profile")
+def get_parent_nanny_profile_preview(
+    nanny_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    results = _search_nannies_by_area(
+        db=db,
+        parent_area_id=None,
+        parent_lat=None,
+        parent_lng=None,
+        max_distance_km=None,
+        min_rating=None,
+        tag_ids=None,
+        qualification_ids=None,
+        language_ids=None,
+        min_age=None,
+        max_age=None,
+    )
+    match = next((item for item in results if int(item.get("nanny_id") or 0) == nanny_id), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="Nanny profile not found")
+    return match
 
 
 @router.patch("/parents/me/booking-requests/{job_id}/cancel")
@@ -4447,7 +4597,7 @@ def cancel_parent_booking_request(
         raise HTTPException(status_code=404, detail="Job not found")
 
     settings = _get_pricing_settings(db)
-    cancellation_window_hours = int(settings.get("cancellation_fee_window_hours") or 12)
+    cancellation_window_hours = max(15, int(settings.get("cancellation_fee_window_hours") or 15))
 
     # Fee window applies only after a nanny has accepted
     any_accepted = any(r.status == "approved" for r in rows)

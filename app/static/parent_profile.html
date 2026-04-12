@@ -78,6 +78,8 @@
     .loc-actions .pill{display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:12px;background:#fff;cursor:pointer}
     .default-indicator{color:#22c55e;font-weight:600;margin-left:6px}
     .readonly-field input{background:#f3f4f6;color:#6b7280;cursor:not-allowed}
+    .photo-upload-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:6px}
+    .photo-preview{width:140px;height:140px;border-radius:14px;border:1px solid #ddd;object-fit:cover;background:#f3f4f6;display:none}
     .loc-title{font-weight:700}
     .loc-sub{color:#555;font-size:14px;margin-top:4px}
     .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
@@ -151,8 +153,14 @@
     <label>Special notes</label>
     <textarea id="notes" rows="3"></textarea>
 
-    <label>Family photo URL</label>
-    <input id="photo" placeholder="https://..." />
+    <label>Family photo</label>
+    <input id="photo" type="hidden" />
+    <div class="photo-upload-row">
+      <input id="photoFile" type="file" accept="image/*" />
+      <button class="btn secondary" id="uploadPhotoBtn" type="button">Upload family photo</button>
+      <span id="photoStatus" class="muted"></span>
+    </div>
+    <img id="photoPreview" class="photo-preview" alt="Family photo preview" />
 
     <label>Type of residence</label>
     <select id="residenceType" class="input">
@@ -202,6 +210,18 @@
   <script src="/static/app.js?v=2"></script>
   <script>
     let editingLocationId = null;
+    function setFamilyPhotoPreview(url) {
+      const preview = document.getElementById("photoPreview");
+      if (!preview) return;
+      if (url) {
+        preview.src = url;
+        preview.style.display = "block";
+      } else {
+        preview.removeAttribute("src");
+        preview.style.display = "none";
+      }
+    }
+
     let locationState = {
       place_id: null,
       formatted_address: null,
@@ -481,6 +501,7 @@
       document.getElementById("residenceType").value = profile.residence_type || "";
       document.getElementById("notes").value = profile.special_notes || "";
       document.getElementById("photo").value = profile.family_photo_url || "";
+      setFamilyPhotoPreview(profile.family_photo_url || "");
       document.getElementById("accessFlags").value = Array.isArray(profile.access_flags)
         ? profile.access_flags.join(", ")
         : (profile.access_flags || "");
@@ -673,6 +694,43 @@
 
     document.getElementById("viewNanniesBtn").addEventListener("click", () => {
       location.href = "/static/parent_candidates.html";
+    });
+
+    document.getElementById("uploadPhotoBtn").addEventListener("click", async () => {
+      const input = document.getElementById("photoFile");
+      const status = document.getElementById("photoStatus");
+      if (!input.files || !input.files[0]) {
+        status.textContent = "Choose a file first.";
+        return;
+      }
+      status.textContent = "Uploading...";
+      const form = new FormData();
+      form.append("file", input.files[0]);
+      const uploadHeaders = {};
+      const impersonationToken = sessionStorage.getItem("impersonation_token");
+      const legacyToken = localStorage.getItem("token");
+      const authToken = impersonationToken || legacyToken;
+      if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+      if (window.getCsrfToken && window.getCsrfToken()) uploadHeaders["X-CSRF-Token"] = window.getCsrfToken();
+
+      try {
+        const res = await fetch("/parents/me/family-photo", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: uploadHeaders,
+          body: form,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          status.textContent = data.detail || "Upload failed";
+          return;
+        }
+        document.getElementById("photo").value = data.url || "";
+        setFamilyPhotoPreview(data.url || "");
+        status.textContent = "Uploaded";
+      } catch (e) {
+        status.textContent = e?.message || "Upload failed";
+      }
     });
 
     document.addEventListener("DOMContentLoaded", () => {

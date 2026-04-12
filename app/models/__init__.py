@@ -47,9 +47,6 @@ class User(Base):
     last_initial = Column(String, nullable=True)
     profile_photo_url = Column(String, nullable=True)
 
-    is_admin = Column(Boolean, nullable=False, default=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-
     admin_profile = relationship("AdminProfile", back_populates="user", uselist=False)
 
 
@@ -244,7 +241,7 @@ class PricingSettings(Base):
     booking_fee_pct_1_5 = Column(Numeric(5, 4), nullable=False, default=0.30)
     booking_fee_pct_6_10 = Column(Numeric(5, 4), nullable=False, default=0.27)
     booking_fee_pct_10_plus = Column(Numeric(5, 4), nullable=False, default=0.25)
-    cancellation_fee_window_hours = Column(Integer, nullable=False, default=12)
+    cancellation_fee_window_hours = Column(Integer, nullable=False, default=15)
 
 
 class AppSettings(Base):

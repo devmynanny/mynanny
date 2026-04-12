@@ -1,7 +1,7 @@
-
-from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, ConfigDict
+from datetime import datetime, date
+from typing import List, Optional, Literal
+from enum import Enum
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, conint, field_validator, model_validator
 
 class ReviewPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -19,13 +19,6 @@ class NannyReviewsResponse(BaseModel):
     average_rating_12m: Optional[float] = None
     review_count_12m: int = 0
     reviews: List['ReviewOut']
-
-
-from datetime import datetime, date
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, conint, field_validator, model_validator
-from pydantic import EmailStr
-from enum import Enum
 
 
 # Schema for /nannies/search result
@@ -410,6 +403,7 @@ class AdminInviteAcceptRequest(BaseModel):
 
 
 class BookingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     booking_id: int
     parent_user_id: int
     nanny_id: int
@@ -421,9 +415,6 @@ class BookingOut(BaseModel):
     formatted_address: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
-
-    class Config:
-        from_attributes = True
 
 
 class AuthUserOut(BaseModel):
@@ -507,6 +498,7 @@ class ReviewCreate(BaseModel):
 
 
 class ReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     booking_id: int
     parent_user_id: int
@@ -515,9 +507,6 @@ class ReviewOut(BaseModel):
     comment: Optional[str] = None
     approved: bool
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class ParentProfileDetailsRequest(BaseModel):
@@ -566,13 +555,11 @@ class ParentLocationUpdateRequest(ParentLocationBase):
 
 
 class ParentLocationOut(ParentLocationBase):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     parent_user_id: int
     is_default: bool
     created_at: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
     @field_validator("created_at", mode="before")
     @classmethod

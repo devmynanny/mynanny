@@ -91,6 +91,7 @@
     .slotEmpty{color:#666}
     .scheduleList{display:grid;gap:8px}
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+    .resultsActionBar{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:12px}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
       .modalBack{padding:12px}
@@ -110,7 +111,7 @@
     <button class="btn secondary" id="toggleAdvancedSearchBtn" type="button" aria-expanded="false" aria-controls="advancedSearchPanel">Advanced search</button>
     <div id="favoriteBroadcastBanner" class="muted" style="margin-top:8px; display:none;"></div>
     <div id="advancedSearchPanel" class="advancedSearchPanel">
-      <div class="muted" style="margin-top:4px;">Refine the search even more using the following filters for parents to choose attributes of nannies:</div>
+      <div class="muted" style="margin-top:4px;">Refine the search even more using the following filters:</div>
       <div class="filters">
         <div class="filter-group">
           <label>Favorites only</label>
@@ -131,10 +132,6 @@
         <div class="filter-group" style="min-width:280px;">
           <label>Language</label>
           <div id="filterLanguages" class="tag-filters"></div>
-        </div>
-        <div class="filter-group" style="min-width:280px;">
-          <label>Nationality</label>
-          <div id="filterNationality" class="tag-filters"></div>
         </div>
         <div class="filter-group">
           <label for="filterDogs">Should the nannies love dogs</label>
@@ -192,7 +189,17 @@
   </div>
 
   <div id="status" class="muted" style="margin-top:10px"></div>
+  <div class="resultsActionBar">
+    <button class="btn" data-broadcast-action="nearby" type="button">Broadcast to nearest 30km</button>
+    <button class="btn" data-broadcast-action="selection" type="button">Broadcast to my selection</button>
+    <button class="btn" data-broadcast-action="favorites" type="button">Broadcast to my favorites</button>
+  </div>
   <div id="list" class="grid"></div>
+  <div class="resultsActionBar" style="margin-bottom:10px;">
+    <button class="btn" data-broadcast-action="nearby" type="button">Broadcast to nearest 30km</button>
+    <button class="btn" data-broadcast-action="selection" type="button">Broadcast to my selection</button>
+    <button class="btn" data-broadcast-action="favorites" type="button">Broadcast to my favorites</button>
+  </div>
 
   <div id="bookingModal" class="modalBack">
     <div class="modal">
@@ -325,9 +332,7 @@
         <div id="previewProficiencies"></div>
       </div>
       <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
-        <button class="btn" id="selectPreviewBtn" type="button">Select nanny</button>
         <button class="btn" id="broadcastFavoritesBtn" type="button">Broadcast to my favorites</button>
-        <button class="btn" id="broadcastNearbyBtn" type="button">Notify nearby 30km</button>
         <button class="btn primary" id="bookPreviewBtn" type="button">Book now</button>
         <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
       </div>
@@ -379,6 +384,7 @@
     }
 
     let selectedNannies = new Set();
+    let currentFilteredResults = [];
     let favoriteBroadcastIds = new Set();
     let favoriteBroadcastActive = false;
     let searchCalendar = null;
@@ -436,7 +442,30 @@
       const endDateLabel = endDate ? formatShortDateLabel(formatDateValue(endDate)) : "the selected stop date";
       const arrivalTime = data?.startTime || "--:--";
       const finishingTime = data?.endTime || "--:--";
-      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}.`;
+      const overnightNote = isOvernightRange(arrivalTime, finishingTime) ? " the next day" : "";
+      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}${overnightNote}.`;
+    }
+
+    function addDaysToDate(dateStr, daysToAdd) {
+      const date = parseDateOnly(dateStr);
+      if (!date) return "";
+      date.setDate(date.getDate() + Number(daysToAdd || 0));
+      return formatDateValue(date);
+    }
+
+    function isOvernightRange(startTime, endTime) {
+      return !!startTime && !!endTime && endTime <= startTime;
+    }
+
+    function getSlotEndDate(dateStr, startTime, endTime) {
+      return isOvernightRange(startTime, endTime) ? addDaysToDate(dateStr, 1) : dateStr;
+    }
+
+    function formatSlotTimeRange(slot) {
+      if (!slot?.start_time || !slot?.end_time) return "";
+      return isOvernightRange(slot.start_time, slot.end_time)
+        ? `${slot.start_time} - next day ${slot.end_time}`
+        : `${slot.start_time} - ${slot.end_time}`;
     }
 
     function sortSlots(slots) {
@@ -456,7 +485,8 @@
         .map((slot) => {
           if (!slot?.date || !slot?.start_time || !slot?.end_time) return null;
           const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.end_time) : buildIso(slot.date, slot.end_time);
+          const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
           if (!startsAt || !endsAt) return null;
           if (new Date(endsAt) <= new Date(startsAt)) return null;
           return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, starts_at: startsAt, ends_at: endsAt };
@@ -479,7 +509,8 @@
           return "Every selected date needs both an arrival and finishing time.";
         }
         const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.end_time) : buildIso(slot.date, slot.end_time);
+        const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
         if (!startsAt || !endsAt || new Date(endsAt) <= new Date(startsAt)) {
           return `Finishing time must be after arrival time for ${formatDateLabel(slot.date)}.`;
         }
@@ -744,7 +775,7 @@
       return normalized.map((slot) => `
         <div class="scheduleItem">
           <strong>${escapeHtml(formatDateLabel(slot.date))}</strong><br>
-          ${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)}
+          ${escapeHtml(formatSlotTimeRange(slot))}
         </div>
       `).join("");
     }
@@ -1284,12 +1315,17 @@
       const [startHour, startMin] = String(data.startTime).split(":").map(v => Number(v));
       const [endHour, endMin] = String(data.endTime).split(":").map(v => Number(v));
       if (!Number.isFinite(startHour) || !Number.isFinite(startMin) || !Number.isFinite(endHour) || !Number.isFinite(endMin)) return;
+      const overnight = isOvernightRange(data.startTime, data.endTime);
       selectedCalendarDates = new Set();
       const slots = [];
 
       for (let day = new Date(startDate); day <= endDate; day.setDate(day.getDate() + 1)) {
         if (!wantedDays.has(day.getDay())) continue;
         const dateStr = formatDateValue(day);
+        if (overnight) {
+          const slotEndDate = parseDateOnly(addDaysToDate(dateStr, 1));
+          if (!slotEndDate || slotEndDate > endDate) continue;
+        }
         selectedCalendarDates.add(dateStr);
         slots.push({
           date: dateStr,
@@ -1356,7 +1392,6 @@
       const selectedTags = new Set(getSelectedTagNames());
       const selectedQualifications = new Set(getSelectedFilterValues("#filterQualifications"));
       const selectedLanguages = new Set(getSelectedFilterValues("#filterLanguages"));
-      const selectedNationalities = new Set(getSelectedFilterValues("#filterNationality"));
       const jobType = document.getElementById("filterJobType").value || "";
       const license = document.getElementById("filterLicense").value || "";
       const transport = document.getElementById("filterTransport").value || "";
@@ -1382,9 +1417,6 @@
       }
       if (selectedLanguages.size > 0) {
         filtered = filtered.filter(n => (n.languages || []).map(l => l.name).some(name => selectedLanguages.has(name)));
-      }
-      if (selectedNationalities.size > 0) {
-        filtered = filtered.filter(n => selectedNationalities.has(String(n.nationality || "")));
       }
       if (jobType) {
         filtered = filtered.filter(n => String(n.job_type || "") === jobType);
@@ -1443,29 +1475,84 @@
 
     function refreshFilters(profileComplete, canBook) {
       const filtered = applyFilters(lastResults);
+      currentFilteredResults = filtered;
       const label = favoriteBroadcastActive ? "selected favourite nannies available" : "nannies found";
       document.getElementById("status").textContent = `${filtered.length} ${label}`;
       renderResults(filtered, profileComplete, canBook);
     }
 
-    function renderNationalityFilters(results) {
-      const nationalityRoot = document.getElementById("filterNationality");
-      if (!nationalityRoot) return;
-      const names = Array.from(new Set((results || []).map((item) => String(item.nationality || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-      nationalityRoot.innerHTML = names.map((name) => `<label><input type="checkbox" value="${escapeHtml(name)}"> ${escapeHtml(name)}</label>`).join("");
-      nationalityRoot.querySelectorAll("input[type=\"checkbox\"]").forEach((el) => {
-        el.addEventListener("change", () => {
-          refreshFilters(lastProfileComplete, lastCanBook);
-        });
-      });
-    }
-
     function updateSelectedButton() {
       const btn = document.getElementById("requestSelectedBtn");
       if (!btn) return;
-      const count = selectedNannies.size;
+      const count = selectedNannies.size || currentFilteredResults.length;
       btn.disabled = count === 0;
       btn.textContent = count ? `Proceed with booking (${count})` : "Proceed with booking";
+    }
+
+    function broadcastToSelected() {
+      const ids = Array.from(selectedNannies.size ? selectedNannies : new Set(currentFilteredResults.map((item) => Number(item.nanny_id))));
+      if (!ids.length) {
+        document.getElementById("status").textContent = "Select at least one nanny first.";
+        return;
+      }
+      openBookingModal(null, "", ids);
+    }
+
+    function broadcastToFavorites(fromPreview = false) {
+      const favoriteIds = lastResults
+        .filter((item) => favorites.has(Number(item.nanny_id)))
+        .map((item) => Number(item.nanny_id));
+      if (!favoriteIds.length) {
+        if (fromPreview) {
+          const fit = document.getElementById("previewFit");
+          if (fit) fit.textContent = "No favorite nannies are available for this schedule.";
+        } else {
+          document.getElementById("status").textContent = "No favorite nannies are available for this schedule.";
+        }
+        return;
+      }
+      selectedNannies = new Set(favoriteIds);
+      renderResults(lastResults, lastProfileComplete, lastCanBook);
+      if (fromPreview) closePreview();
+      openBookingModal(null, "", favoriteIds);
+    }
+
+    function broadcastToNearby(fromPreview = false) {
+      const nearbyIds = lastResults
+        .filter((item) => item.distance_km != null && Number(item.distance_km) <= 30)
+        .map((item) => Number(item.nanny_id));
+      if (!nearbyIds.length) {
+        if (fromPreview) {
+          const fit = document.getElementById("previewFit");
+          if (fit) fit.textContent = "No available nannies were found within 30 km for this schedule.";
+        } else {
+          document.getElementById("status").textContent = "No available nannies were found within 30 km for this schedule.";
+        }
+        return;
+      }
+      selectedNannies = new Set(nearbyIds);
+      renderResults(lastResults, lastProfileComplete, lastCanBook);
+      if (fromPreview) closePreview();
+      openBookingModal(null, "", nearbyIds);
+    }
+
+    function bindBroadcastButtons() {
+      document.querySelectorAll("[data-broadcast-action]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const action = btn.getAttribute("data-broadcast-action");
+          if (action === "nearby") {
+            broadcastToNearby(false);
+            return;
+          }
+          if (action === "favorites") {
+            broadcastToFavorites(false);
+            return;
+          }
+          if (action === "selection") {
+            broadcastToSelected();
+          }
+        });
+      });
     }
 
     async function runSearch(){
@@ -1525,7 +1612,6 @@
 
       const results = data.results || [];
       lastResults = Array.isArray(results) ? results : [];
-      renderNationalityFilters(lastResults);
       if (favoriteBroadcastActive && favoriteBroadcastIds.size) {
         selectedNannies = new Set(
           lastResults
@@ -1587,43 +1673,9 @@
     document.getElementById("previewModal").addEventListener("click", (e) => {
       if (e.target.id === "previewModal") closePreview();
     });
-    document.getElementById("selectPreviewBtn").addEventListener("click", () => {
-      if (!previewNanny) return;
-      selectedNannies.add(previewNanny.nanny_id);
-      const requestBtn = document.getElementById("requestSelectedBtn");
-      if (requestBtn) requestBtn.disabled = selectedNannies.size === 0;
-      renderResults(lastResults, lastProfileComplete, lastCanBook);
-      closePreview();
-    });
     document.getElementById("broadcastFavoritesBtn").addEventListener("click", () => {
       if (!previewNanny) return;
-      const favoriteIds = lastResults
-        .filter((item) => favorites.has(Number(item.nanny_id)))
-        .map((item) => Number(item.nanny_id));
-      if (!favoriteIds.length) {
-        const fit = document.getElementById("previewFit");
-        if (fit) fit.textContent = "No favorite nannies are available for this schedule.";
-        return;
-      }
-      selectedNannies = new Set(favoriteIds);
-      renderResults(lastResults, lastProfileComplete, lastCanBook);
-      closePreview();
-      openBookingModal(null, "", favoriteIds);
-    });
-    document.getElementById("broadcastNearbyBtn").addEventListener("click", () => {
-      if (!previewNanny) return;
-      const nearbyIds = lastResults
-        .filter((item) => item.distance_km != null && Number(item.distance_km) <= 30)
-        .map((item) => Number(item.nanny_id));
-      if (!nearbyIds.length) {
-        const fit = document.getElementById("previewFit");
-        if (fit) fit.textContent = "No available nannies were found within 30 km for this schedule.";
-        return;
-      }
-      selectedNannies = new Set(nearbyIds);
-      renderResults(lastResults, lastProfileComplete, lastCanBook);
-      closePreview();
-      openBookingModal(null, "", nearbyIds);
+      broadcastToFavorites(true);
     });
     document.getElementById("bookPreviewBtn").addEventListener("click", () => {
       if (!previewNanny) return;
@@ -1651,7 +1703,7 @@
     });
 
     document.getElementById("requestSelectedBtn").addEventListener("click", () => {
-      const ids = Array.from(selectedNannies);
+      const ids = Array.from(selectedNannies.size ? selectedNannies : new Set(currentFilteredResults.map((item) => Number(item.nanny_id))));
       if (!ids.length) return;
       openBookingModal(null, "", ids);
     });
@@ -1693,6 +1745,7 @@
       }
 
       await loadFavorites();
+      bindBroadcastButtons();
       await loadParentLocations();
       await loadSavedBookingQuestionnaire();
       try {

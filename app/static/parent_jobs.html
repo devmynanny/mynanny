@@ -24,6 +24,9 @@
     .previewList{margin:8px 0 0 18px;padding:0}
     .previewList li{margin:5px 0}
     .lockNote{margin-top:10px;padding:10px;border:1px solid #f3d9a7;background:#fff8e6;border-radius:10px;color:#5f4a1a}
+    .sectionTitle{margin:20px 0 8px 0;font-size:24px}
+    .profilePanel{margin-top:10px;padding:12px;border:1px solid #dbeafe;border-radius:12px;background:#eff6ff}
+    .summaryText{margin-top:8px;color:#334155}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -38,10 +41,9 @@
     <label class="muted">Filter</label>
     <select id="statusFilter">
       <option value="all">All</option>
-      <option value="pending">Pending</option>
-      <option value="accepted">Accepted</option>
-      <option value="cancelled">Cancelled</option>
-      <option value="completed">Completed</option>
+      <option value="upcoming">Upcoming bookings</option>
+      <option value="in_progress">In progress</option>
+      <option value="past">Past bookings</option>
     </select>
   </div>
 
@@ -49,7 +51,7 @@
 
   <script src="/static/app.js?v=2"></script>
   <script>
-    let cancellationWindowHours = 12;
+    let cancellationWindowHours = 15;
 
     function escapeHtml(value) {
       return String(value == null ? "" : value)
@@ -96,6 +98,32 @@
       return `<ul class="previewList">${items.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join("")}</ul>`;
     }
 
+    function profileHtml(profile) {
+      const qualifications = Array.isArray(profile?.qualifications) && profile.qualifications.length
+        ? profile.qualifications.map((item) => item.name).join(", ")
+        : "-";
+      const tags = Array.isArray(profile?.tags) && profile.tags.length
+        ? profile.tags.map((item) => item.name).join(", ")
+        : "-";
+      const languages = Array.isArray(profile?.languages) && profile.languages.length
+        ? profile.languages.map((item) => item.name).join(", ")
+        : "-";
+      return `
+        <div class="profilePanel">
+          <div><strong>${escapeHtml(profile?.name || "Nanny profile")}</strong></div>
+          <div class="muted">Nationality: ${escapeHtml(profile?.nationality || "-")}</div>
+          <div class="muted">Location: ${escapeHtml(profile?.location_hint || "-")}</div>
+          <div class="muted">Job type: ${escapeHtml(profile?.job_type || "-")}</div>
+          <div class="muted">Qualifications: ${escapeHtml(qualifications)}</div>
+          <div class="muted">Experience areas: ${escapeHtml(tags)}</div>
+          <div class="muted">Languages: ${escapeHtml(languages)}</div>
+          <div class="muted">Driver's license: ${escapeHtml(yesNo(profile?.has_drivers_license))}</div>
+          <div class="muted">Own car: ${escapeHtml(yesNo(profile?.has_own_car))}</div>
+          <div class="summaryText">${escapeHtml(profile?.profile_summary || "No summary available yet.")}</div>
+        </div>
+      `;
+    }
+
     async function loadJobs() {
       const data = await fetchJson("/parents/me/booking-requests");
       const list = document.getElementById("jobsList");
@@ -105,13 +133,16 @@
         list.innerHTML = "<div class=\"muted\">No jobs yet.</div>";
         return;
       }
+      const filter = document.getElementById("statusFilter").value;
+      const sections = {
+        upcoming: [],
+        in_progress: [],
+        past: [],
+      };
       items.forEach(r => {
         const statusKey = (r.status || "").toLowerCase();
-        const filter = document.getElementById("statusFilter").value;
-        if (filter === "pending" && statusKey !== "tbc") return;
-        if (filter === "accepted" && statusKey !== "approved") return;
-        if (filter === "cancelled" && statusKey !== "cancelled") return;
-        if (filter === "completed" && statusKey !== "completed") return;
+        const category = String(r.booking_category || "upcoming").toLowerCase();
+        if (filter !== "all" && filter !== category) return;
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
         const status = mapStatus(r.status);
@@ -128,19 +159,20 @@
           ? r.requested_nannies.map(n => `${formatName(n.name)} (ID ${n.id})`).join(", ")
           : "-";
         const form = r.booking_form || {};
-        const card = document.createElement("div");
-        card.className = "card";
-        card.innerHTML = `
+        const cardHtml = `
+          <div class="card">
           <div><strong>Job ID:</strong> ${escapeHtml(r.job_id)}</div>
           <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
           <div class="muted">Status: ${escapeHtml(status)}</div>
           <div class="muted">${escapeHtml(nannyLine)}</div>
           <div class="actions">
             ${r.status !== "cancelled" ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
+            ${r.accepted_nanny_id ? `<button class="btn viewNannyProfileBtn" data-id="${r.accepted_nanny_id}">View nanny profile</button>` : ""}
           </div>
           <div class="job-details">
             <div><strong>Requested times:</strong> ${escapeHtml(start)} to ${escapeHtml(end)}</div>
             <div><strong>Requested nannies:</strong> ${escapeHtml(requestedNannies)}</div>
+            ${r.accepted_nanny_name ? `<div><strong>Confirmed nanny:</strong> ${escapeHtml(displayName)} (ID ${escapeHtml(r.accepted_nanny_id || "-")})</div>` : ""}
             <div><strong>Job status:</strong> ${escapeHtml(status)}</div>
             <div class="detailSection">
               <h3>Booking form preview</h3>
@@ -171,9 +203,23 @@
               ` : `<div class="lockNote">${escapeHtml(r.edit_locked_reason || "This booking form can no longer be edited.")}</div>`}
             </div>
           </div>
+          </div>
         `;
-        list.appendChild(card);
+        if (sections[category]) sections[category].push(cardHtml);
+        else sections.upcoming.push(cardHtml);
       });
+      const sectionOrder = [
+        { key: "upcoming", label: "Upcoming bookings" },
+        { key: "in_progress", label: "In progress" },
+        { key: "past", label: "Past bookings" },
+      ];
+      sectionOrder.forEach((section) => {
+        if (!sections[section.key].length) return;
+        list.innerHTML += `<h2 class="sectionTitle">${escapeHtml(section.label)}</h2>${sections[section.key].join("")}`;
+      });
+      if (!list.innerHTML.trim()) {
+        list.innerHTML = "<div class=\"muted\">No bookings match this filter.</div>";
+      }
       list.querySelectorAll(".card").forEach(card => {
         card.addEventListener("click", (e) => {
           if (e.target.closest("button")) return;
@@ -185,7 +231,7 @@
       });
       list.querySelectorAll(".cancelBtn").forEach(btn => {
         btn.addEventListener("click", async () => {
-          if (!confirm(`Cancel this job? If within ${cancellationWindowHours} hours, a cancellation fee may apply.`)) return;
+          if (!confirm(`Cancel this job? If within ${cancellationWindowHours} hours of the arrival time, a penalty will apply.`)) return;
           const reason = (prompt("Why are you cancelling this booking?") || "").trim();
           if (!reason) {
             alert("Please provide a cancellation reason.");
@@ -201,6 +247,31 @@
           } catch (e) {
             btn.disabled = false;
             alert(e.message || "Failed to cancel job");
+          }
+        });
+      });
+      list.querySelectorAll(".viewNannyProfileBtn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          btn.disabled = true;
+          try {
+            const profile = await fetchJson(`/parents/me/nannies/${btn.dataset.id}/profile`);
+            const card = btn.closest(".card");
+            let panel = card.querySelector(".profilePanel");
+            if (panel) {
+              panel.remove();
+            } else {
+              const wrapper = document.createElement("div");
+              wrapper.innerHTML = profileHtml(profile);
+              const details = card.querySelector(".job-details");
+              if (details) {
+                details.style.display = "block";
+                details.insertAdjacentElement("afterbegin", wrapper.firstElementChild);
+              }
+            }
+          } catch (e) {
+            alert(e.message || "Failed to load nanny profile");
+          } finally {
+            btn.disabled = false;
           }
         });
       });
@@ -250,7 +321,7 @@
       try {
         const cfg = await fetchJson("/settings/cancellation-window-hours");
         const hrs = Number(cfg?.cancellation_fee_window_hours);
-        if (Number.isFinite(hrs) && hrs >= 0) cancellationWindowHours = Math.floor(hrs);
+        if (Number.isFinite(hrs) && hrs >= 0) cancellationWindowHours = Math.max(15, Math.floor(hrs));
       } catch {}
       loadJobs().catch(() => {});
       document.getElementById("statusFilter").addEventListener("change", () => {

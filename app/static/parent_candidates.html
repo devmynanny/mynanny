@@ -457,7 +457,8 @@
       const endDateLabel = endDate ? formatShortDateLabel(formatDateValue(endDate)) : "the selected stop date";
       const arrivalTime = data?.startTime || "--:--";
       const finishingTime = data?.endTime || "--:--";
-      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}.`;
+      const overnightNote = isOvernightRange(arrivalTime, finishingTime) ? " the next day" : "";
+      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}${overnightNote}.`;
     }
 
     function addDaysToDate(dateStr, daysToAdd) {
@@ -465,6 +466,21 @@
       if (!date) return "";
       date.setDate(date.getDate() + Number(daysToAdd || 0));
       return formatDateValue(date);
+    }
+
+    function isOvernightRange(startTime, endTime) {
+      return !!startTime && !!endTime && endTime <= startTime;
+    }
+
+    function getSlotEndDate(dateStr, startTime, endTime) {
+      return isOvernightRange(startTime, endTime) ? addDaysToDate(dateStr, 1) : dateStr;
+    }
+
+    function formatSlotTimeRange(slot) {
+      if (!slot?.start_time || !slot?.end_time) return "";
+      return isOvernightRange(slot.start_time, slot.end_time)
+        ? `${slot.start_time} - next day ${slot.end_time}`
+        : `${slot.start_time} - ${slot.end_time}`;
     }
 
     function setMultiDayNotice(data) {
@@ -580,10 +596,6 @@
         multiDayStatus.textContent = "Select a finishing time.";
         return;
       }
-      if (endTime <= startTime) {
-        multiDayStatus.textContent = "Finishing time must be after arrival time.";
-        return;
-      }
 
       const payload = { startDate, endDate, days, startTime, endTime };
       localStorage.setItem(PARENT_MULTI_DAY_STORAGE_KEY, JSON.stringify(payload));
@@ -615,7 +627,8 @@
         .map((slot) => {
           if (!slot?.date || !slot?.start_time || !slot?.end_time) return null;
           const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.end_time) : buildIso(slot.date, slot.end_time);
+          const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
           if (!startsAt || !endsAt) return null;
           if (new Date(endsAt) <= new Date(startsAt)) return null;
           return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, starts_at: startsAt, ends_at: endsAt };
@@ -638,7 +651,8 @@
           return "Every selected date needs both an arrival and finishing time.";
         }
         const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.end_time) : buildIso(slot.date, slot.end_time);
+        const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
         if (!startsAt || !endsAt || new Date(endsAt) <= new Date(startsAt)) {
           return `Finishing time must be after arrival time for ${formatDateLabel(slot.date)}.`;
         }
@@ -900,7 +914,7 @@
       return normalized.map((slot) => `
         <div class="scheduleItem">
           <strong>${escapeHtml(formatDateLabel(slot.date))}</strong><br>
-          ${escapeHtml(slot.start_time)} - ${escapeHtml(slot.end_time)}
+          ${escapeHtml(formatSlotTimeRange(slot))}
         </div>
       `).join("");
     }
@@ -1300,12 +1314,17 @@
       const [startHour, startMin] = String(data.startTime).split(":").map(v => Number(v));
       const [endHour, endMin] = String(data.endTime).split(":").map(v => Number(v));
       if (!Number.isFinite(startHour) || !Number.isFinite(startMin) || !Number.isFinite(endHour) || !Number.isFinite(endMin)) return;
+      const overnight = isOvernightRange(data.startTime, data.endTime);
       selectedCalendarDates = new Set();
       const slots = [];
 
       for (let day = new Date(startDate); day <= endDate; day.setDate(day.getDate() + 1)) {
         if (!wantedDays.has(day.getDay())) continue;
         const dateStr = formatDateValue(day);
+        if (overnight) {
+          const slotEndDate = parseDateOnly(addDaysToDate(dateStr, 1));
+          if (!slotEndDate || slotEndDate > endDate) continue;
+        }
         selectedCalendarDates.add(dateStr);
         slots.push({
           date: dateStr,

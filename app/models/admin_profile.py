@@ -13,9 +13,6 @@ class AdminProfile(Base):
 
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
 
-    # for later: store hashed passwords, not plain text
-    password_hash = Column(String, nullable=True)
-
     is_superadmin = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
