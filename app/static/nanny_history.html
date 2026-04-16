@@ -22,7 +22,6 @@
 </head>
 <body>
   <div id="topbar" class="topbar"></div>
-  <div class="topbar"><button class="btn" id="backBtn" type="button">Back to home</button></div>
   <h1>Booking history</h1>
 
   <div id="bookingHistoryList"></div>
@@ -179,10 +178,6 @@
         dutyTimerId = setInterval(renderDutyElapsed, 1000);
       }
     }
-
-    document.getElementById("backBtn").addEventListener("click", () => {
-      location.href = "/static/nanny_home.html?v=2";
-    });
 
     (async () => {
       const me = await requireMe();

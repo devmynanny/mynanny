@@ -81,7 +81,6 @@
     <div id="topbar" class="topbar"></div>
     <div class="row">
       <h2 style="margin-right: auto;">Nanny onboarding and profile setup</h2>
-      <button class="btn secondary" id="backToOpsBtn" type="button" style="display:none;">Back to operations</button>
     </div>
 
     <div class="card" id="approvalBanner"></div>
@@ -690,11 +689,12 @@
               <input class="prev-ref-relationship" style="width:100%; padding:8px;" placeholder="e.g. Employer / Parent" />
             </div>
           </div>
-          <div class="row hidden-temporary prev-reference-letter-row" style="margin-top:8px;">
+          <div class="row prev-reference-letter-row" style="margin-top:8px;">
             <div style="flex:1;min-width:260px;">
-              <label class="small">Reference letter / photo</label>
+              <label class="small">Written reference document</label>
               <input class="prev-reference-letter" type="file" accept=".pdf,image/*" />
-              <div class="small">This will be shown once a booking is confirmed.</div>
+              <button class="prev-upload-reference-btn" type="button" style="margin-top:6px;">Upload reference document</button>
+              <div class="small prev-reference-status">Upload a written reference for this job.</div>
             </div>
           </div>
         `;
@@ -718,10 +718,53 @@
         card.querySelector(".prev-ref-name").value = item.reference_name || "";
         card.querySelector(".prev-ref-phone").value = item.reference_phone || "";
         card.querySelector(".prev-ref-relationship").value = item.reference_relationship || "";
+        card.dataset.referenceLetterUrl = item.reference_letter_url || "";
+        const referenceStatus = card.querySelector(".prev-reference-status");
+        if (referenceStatus && item.reference_letter_url) {
+          referenceStatus.innerHTML = `Uploaded. <a href="${item.reference_letter_url}" target="_blank" rel="noopener noreferrer">View document</a>`;
+        }
         card.querySelector(".prev-care-type").addEventListener("change", syncCareTypeFields);
         syncCareTypeFields();
         card.querySelector(".removePreviousJobBtn").addEventListener("click", () => {
           card.remove();
+        });
+        card.querySelector(".prev-upload-reference-btn").addEventListener("click", async () => {
+          const input = card.querySelector(".prev-reference-letter");
+          const status = card.querySelector(".prev-reference-status");
+          const file = input?.files?.[0];
+          if (!file) {
+            status.textContent = "Choose a file first.";
+            return;
+          }
+          const formData = new FormData();
+          formData.append("file", file);
+          status.textContent = "Uploading...";
+          try {
+            const uploadHeaders = {};
+            const impersonationToken = sessionStorage.getItem("impersonation_token");
+            const legacyToken = localStorage.getItem("token");
+            const authToken = impersonationToken || legacyToken;
+            if (authToken) uploadHeaders["Authorization"] = "Bearer " + authToken;
+            if (getCsrfToken && getCsrfToken()) uploadHeaders["X-CSRF-Token"] = getCsrfToken();
+            const res = await fetch("/nannies/me/reference-document", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: uploadHeaders,
+              body: formData,
+            });
+            if (!res.ok) {
+              const text = await res.text().catch(() => "");
+              throw new Error(text || "Upload failed");
+            }
+            const data = await res.json();
+            card.dataset.referenceLetterUrl = data.url || "";
+            input.value = "";
+            status.innerHTML = data.url
+              ? `Uploaded. <a href="${data.url}" target="_blank" rel="noopener noreferrer">View document</a>`
+              : "Uploaded.";
+          } catch (e) {
+            status.textContent = e.message || "Upload failed";
+          }
         });
         return card;
       }
@@ -746,7 +789,7 @@
           care_type: row.querySelector(".prev-care-type")?.value || null,
           kids_age_when_started: row.querySelector(".prev-kids-age-when-started")?.value?.trim() || null,
           disability_details: row.querySelector(".prev-disability-details")?.value?.trim() || null,
-          reference_letter_url: null,
+          reference_letter_url: row.dataset.referenceLetterUrl || null,
           reference_name: row.querySelector(".prev-ref-name")?.value?.trim() || null,
           reference_phone: row.querySelector(".prev-ref-phone")?.value?.trim() || null,
           reference_relationship: row.querySelector(".prev-ref-relationship")?.value?.trim() || null,
@@ -1354,13 +1397,6 @@
         const fromOps = params.get("from") === "ops";
         const isAdminView = params.get("admin") === "1";
         const isPostSignup = params.get("post_signup") === "1";
-        const backBtn = document.getElementById("backToOpsBtn");
-        if (fromOps && backBtn) {
-          backBtn.style.display = "inline-block";
-          backBtn.addEventListener("click", () => {
-            window.location.href = "/static/nanny_home.html?v=2";
-          });
-        }
         if (!fromOps && !isAdminView && !isPostSignup) {
           window.location.href = "/static/nanny_home.html?v=2";
           return;

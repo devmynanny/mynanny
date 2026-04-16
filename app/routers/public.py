@@ -2520,6 +2520,54 @@ def upload_nanny_certificate_document(
     )
 
 
+@router.post("/nannies/me/reference-document")
+def upload_nanny_reference_document(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    allowed = {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    ext = allowed.get(file.content_type or "")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"reference_{user.id}_{uuid.uuid4().hex}{ext}"
+    dest = upload_dir / filename
+    try:
+        dest.write_bytes(file.file.read())
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+
+    url = f"/static/uploads/nannies/{filename}"
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=user.id,
+        entity="nanny_profiles",
+        entity_id=None,
+        action="upload_reference_document",
+        before_obj={},
+        after_obj={"reference_letter_url": url},
+        changed_fields=None,
+        request=request,
+    )
+    return {"url": url}
+
+
 @router.get("/nannies/me/profile", response_model=NannyMeProfileResponse)
 def get_nanny_me_profile(
     authorization: Optional[str] = Header(default=None),
@@ -3237,6 +3285,9 @@ def list_nanny_me_booking_requests(
     db: Session = Depends(get_db),
 ):
     user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    nanny_profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+    nanny_lat = getattr(nanny_profile, "lat", None) if nanny_profile else None
+    nanny_lng = getattr(nanny_profile, "lng", None) if nanny_profile else None
     parent_user = aliased(models.User)
     location = aliased(models.ParentLocation)
     parent_profile = aliased(models.ParentProfile)
@@ -3273,6 +3324,14 @@ def list_nanny_me_booking_requests(
             for w in windows
         ]
         day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
+        location_lat = (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None)
+        location_lng = (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None)
+        distance_km = None
+        if nanny_lat is not None and nanny_lng is not None and location_lat is not None and location_lng is not None:
+            try:
+                distance_km = round(haversine_km(float(nanny_lat), float(nanny_lng), float(location_lat), float(location_lng)), 1)
+            except Exception:
+                distance_km = None
         results.append({
             "id": req.id,
             "group_id": req.group_id or req.id,
@@ -3287,8 +3346,9 @@ def list_nanny_me_booking_requests(
             "notes": req.client_notes,
             "location_label": loc.label if loc else None,
             "location_address": (getattr(loc, "formatted_address", None) if loc else None) or getattr(prof, "formatted_address", None),
-            "location_lat": (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None),
-            "location_lng": (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None),
+            "location_lat": location_lat,
+            "location_lng": location_lng,
+            "distance_km": distance_km,
             "slots": slots,
             "days_required": day_count,
             "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,

@@ -83,10 +83,10 @@
   ];
 
   const duplicateLabels = new Set([
-    "Back to dashboard",
-    "Back to home",
-    "Back to operations",
-    "Back",
+    "back to dashboard",
+    "back to home",
+    "back to operations",
+    "back",
   ]);
 
   const seen = new Set();
@@ -99,7 +99,7 @@
 
   document.querySelectorAll("button").forEach((btn) => {
     if (!btn || btn.closest(".global-nav-actions")) return;
-    const label = (btn.textContent || "").trim();
+    const label = (btn.textContent || "").trim().toLowerCase();
     if (duplicateLabels.has(label)) {
       seen.add(btn);
     }

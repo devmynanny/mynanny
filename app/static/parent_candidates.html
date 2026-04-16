@@ -78,10 +78,11 @@
     .selectedDateChips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
     .dateChip{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#eef2ff;border:1px solid #c7d2fe;font-size:13px;color:#1f2937}
     .slotRows{display:grid;gap:10px;margin-top:12px}
-    .slotRow{display:grid;grid-template-columns:minmax(160px,1.5fr) minmax(120px,1fr) minmax(120px,1fr) auto;gap:10px;align-items:end}
+    .slotRow{display:grid;grid-template-columns:minmax(160px,1.5fr) minmax(120px,1fr) minmax(120px,1fr) auto auto;gap:10px;align-items:end}
     .slotField{display:flex;flex-direction:column;gap:6px}
     .slotField label{font-size:12px;color:#666}
     .slotField input{padding:10px;border-radius:10px;border:1px solid #ccc}
+    .slotSleepoverBtn[aria-pressed="true"]{background:#d9b15f;color:#111;border-color:#d9b15f}
     .slotDateLabel{font-weight:600;color:#1f2937;padding-bottom:10px}
     .slotEmpty{color:#666}
     .scheduleList{display:grid;gap:8px}
@@ -258,6 +259,13 @@
           <input id="multiEndTime" type="time" />
         </div>
       </div>
+      <label class="muted" style="margin-top:10px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
+        <input id="multiSleepover" type="checkbox" style="margin:0;" />
+        Request a sleepover for these recurring bookings
+      </label>
+      <div class="muted" style="font-size:13px; margin-top:4px;">
+        For example, 07:00 to 07:00 is treated as finishing the next day.
+      </div>
       <div id="multiDayStatus" class="inlineStatus"></div>
       <div class="row">
         <button class="btn secondary" id="multiCancel" type="button">Cancel</button>
@@ -403,6 +411,7 @@
     const multiEndDateInput = document.getElementById("multiEndDate");
     const multiStartTimeInput = document.getElementById("multiStartTime");
     const multiEndTimeInput = document.getElementById("multiEndTime");
+    const multiSleepoverInput = document.getElementById("multiSleepover");
     const multiDayStatus = document.getElementById("multiDayStatus");
 
     function formatDateLabel(dateStr) {
@@ -458,7 +467,8 @@
       const arrivalTime = data?.startTime || "--:--";
       const finishingTime = data?.endTime || "--:--";
       const overnightNote = isOvernightRange(arrivalTime, finishingTime) ? " the next day" : "";
-      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}${overnightNote}.`;
+      const sleepoverNote = data?.sleepover ? " Sleepover requested." : "";
+      return `Multiple days: repeat booking on ${days} until ${endDateLabel}. Arrival time ${arrivalTime}, finishing time ${finishingTime}${overnightNote}.${sleepoverNote}`;
     }
 
     function addDaysToDate(dateStr, daysToAdd) {
@@ -550,6 +560,7 @@
       multiEndDateInput.value = stored?.endDate || multiEndDateInput.value || addDaysToDate(defaultStartDate, 6);
       multiStartTimeInput.value = stored?.startTime || firstSlot?.start_time || "08:00";
       multiEndTimeInput.value = stored?.endTime || firstSlot?.end_time || "17:00";
+      if (multiSleepoverInput) multiSleepoverInput.checked = !!stored?.sleepover;
       setRecurringWeekdays(stored?.days?.length ? stored.days : ["Mon", "Tue", "Wed", "Thu", "Fri"]);
       resetMultiDayStatus();
     }
@@ -571,6 +582,7 @@
       const days = getRecurringWeekdays();
       const startTime = multiStartTimeInput.value || null;
       const endTime = multiEndTimeInput.value || null;
+      const sleepover = !!multiSleepoverInput?.checked;
 
       if (!startDate) {
         multiDayStatus.textContent = "Select a start date.";
@@ -597,7 +609,7 @@
         return;
       }
 
-      const payload = { startDate, endDate, days, startTime, endTime };
+      const payload = { startDate, endDate, days, startTime, endTime, sleepover };
       localStorage.setItem(PARENT_MULTI_DAY_STORAGE_KEY, JSON.stringify(payload));
       updateCandidateSearchSource("multi");
       setMultiDayNotice(payload);
@@ -631,7 +643,7 @@
           const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
           if (!startsAt || !endsAt) return null;
           if (new Date(endsAt) <= new Date(startsAt)) return null;
-          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, starts_at: startsAt, ends_at: endsAt };
+          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, sleepover: !!slot.sleepover, starts_at: startsAt, ends_at: endsAt };
         })
         .filter(Boolean);
       const first = isoSlots[0] || null;
@@ -678,6 +690,7 @@
                 date: String(slot?.date || "").trim(),
                 start_time: String(slot?.start_time || "").trim(),
                 end_time: String(slot?.end_time || "").trim(),
+                sleepover: !!slot?.sleepover,
               }))
               .filter((slot) => slot.date && slot.start_time && slot.end_time)
           : [];
@@ -698,6 +711,7 @@
           date: slot.date,
           start_time: slot.start_time,
           end_time: slot.end_time,
+          sleepover: !!slot.sleepover,
         })),
       }));
     }
@@ -793,6 +807,7 @@
             <label>Finishing time</label>
             <input type="time" class="slotEndTime" value="${escapeHtml(slot.end_time || "17:00")}" />
           </div>
+          <button class="btn secondary slotSleepoverBtn" type="button" aria-pressed="${slot.sleepover ? "true" : "false"}">Sleep over</button>
           <button class="btn secondary removeSlotBtn" type="button">Remove</button>
         </div>
       `).join("");
@@ -815,6 +830,18 @@
           if (!slot) return;
           slot.end_time = event.target.value;
           setBookingSlots(bookingState.slots);
+          refreshBookingEstimate().catch(() => {});
+        });
+      });
+
+      rowsEl.querySelectorAll(".slotSleepoverBtn").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          const row = event.target.closest(".slotRow");
+          const slot = bookingState.slots.find((item) => item.date === row?.dataset.date);
+          if (!slot) return;
+          slot.sleepover = !slot.sleepover;
+          setBookingSlots(bookingState.slots);
+          renderSelectedSlotRows();
           refreshBookingEstimate().catch(() => {});
         });
       });
@@ -847,6 +874,7 @@
           date,
           start_time: current?.start_time || defaults.start_time,
           end_time: current?.end_time || defaults.end_time,
+          sleepover: !!current?.sleepover,
         };
       });
       setBookingSlots(nextSlots);
@@ -915,6 +943,7 @@
         <div class="scheduleItem">
           <strong>${escapeHtml(formatDateLabel(slot.date))}</strong><br>
           ${escapeHtml(formatSlotTimeRange(slot))}
+          ${slot.sleepover ? `<br><span class="muted">Sleepover requested</span>` : ""}
         </div>
       `).join("");
     }
@@ -980,10 +1009,15 @@
         if (preferredLoc) locSelect.value = String(preferredLoc.id);
       }
       if (sleepoverEl) {
-        sleepoverEl.checked = false;
-        const firstSlot = sortSlots(bookingState.slots)[0];
+        const sortedSlots = sortSlots(bookingState.slots);
+        const firstSlot = sortedSlots[0];
         const startTime = firstSlot?.start_time || "";
-        const showSleepover = startTime >= "14:00";
+        const storedRecurring = candidateSearchSource === "multi" ? readStoredRecurringBooking() : null;
+        const recurringSleepover = !!storedRecurring?.sleepover;
+        const selectedSleepover = sortedSlots.some((slot) => !!slot.sleepover);
+        const hasOvernightSlot = sortedSlots.some((slot) => isOvernightRange(slot.start_time, slot.end_time));
+        sleepoverEl.checked = recurringSleepover || selectedSleepover;
+        const showSleepover = recurringSleepover || selectedSleepover || hasOvernightSlot || startTime >= "14:00";
         sleepoverEl.parentElement.style.display = showSleepover ? "flex" : "none";
       }
       document.getElementById("bookingStatus").textContent = "";
@@ -1330,6 +1364,7 @@
           date: dateStr,
           start_time: data.startTime,
           end_time: data.endTime,
+          sleepover: !!data.sleepover,
         });
       }
 
@@ -1697,7 +1732,8 @@
         closeRecurringBookingModal();
       }
     });
-    [multiStartDateInput, multiEndDateInput, multiStartTimeInput, multiEndTimeInput].forEach((input) => {
+    [multiStartDateInput, multiEndDateInput, multiStartTimeInput, multiEndTimeInput, multiSleepoverInput].forEach((input) => {
+      if (!input) return;
       input.addEventListener("input", () => {
         resetMultiDayStatus();
       });

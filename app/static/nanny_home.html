@@ -21,6 +21,19 @@
     .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:10px 0;}
     .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
     .muted{color:#666}
+    .listingCard{margin-top:28px;min-height:260px}
+    .sectionHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
+    .sectionHead h2{margin:0;font-size:22px}
+    .listingList{display:grid;gap:10px}
+    .listingRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid #eee}
+    .listingRow:last-child{border-bottom:0}
+    .listingTitle{font-weight:700}
+    .listingMeta{color:#666;font-size:14px;margin-top:4px}
+    .distancePill{display:inline-flex;align-items:center;border:1px solid #d1d5db;border-radius:999px;padding:4px 10px;background:#f9fafb;color:#374151;font-size:13px;margin-top:6px}
+    @media (max-width:640px){
+      .listingRow{grid-template-columns:1fr}
+      .listingRow .btn{width:100%}
+    }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -39,6 +52,19 @@
     </div>
   </div>
 
+  <div class="card listingCard">
+    <div class="sectionHead">
+      <div>
+        <h2>New listings near me</h2>
+        <div class="muted">Bookings submitted by clients that need your response.</div>
+      </div>
+      <button class="btn secondary" id="refreshListingsBtn" type="button">Refresh</button>
+    </div>
+    <div id="nearbyListings" class="listingList">
+      <div class="muted">Loading listings...</div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
   <script>
     document.getElementById("goAvailabilityBtn").addEventListener("click", () => {
@@ -51,13 +77,88 @@
         const data = await fetchJson("/nannies/me/booking-requests");
         const count = (data?.results || []).length;
         btn.textContent = count ? `View booking requests (${count})` : "View booking requests";
+        renderNearbyListings(data?.results || []);
       } catch {
         btn.textContent = "View booking requests";
+        renderNearbyListings([]);
       }
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatListingDate(value) {
+      if (!value) return "-";
+      if (window.formatDateTimeZA) return window.formatDateTimeZA(value);
+      const dt = new Date(value);
+      return Number.isNaN(dt.getTime()) ? value : dt.toLocaleString();
+    }
+
+    function listingDistance(item) {
+      const distance = Number(item?.distance_km);
+      if (!Number.isFinite(distance)) return "Distance unavailable";
+      if (distance < 1) return `${Math.round(distance * 1000)} m away`;
+      return `${distance.toFixed(distance >= 10 ? 0 : 1)} km away`;
+    }
+
+    function renderNearbyListings(items) {
+      const container = document.getElementById("nearbyListings");
+      if (!container) return;
+      const list = (Array.isArray(items) ? items : []).filter((item) => {
+        const response = String(item?.nanny_response_status || "pending").toLowerCase();
+        return !["accepted", "declined"].includes(response);
+      });
+      list.sort((a, b) => {
+        const ad = Number.isFinite(Number(a.distance_km)) ? Number(a.distance_km) : Number.POSITIVE_INFINITY;
+        const bd = Number.isFinite(Number(b.distance_km)) ? Number(b.distance_km) : Number.POSITIVE_INFINITY;
+        if (ad !== bd) return ad - bd;
+        return String(a.start_dt || "").localeCompare(String(b.start_dt || ""));
+      });
+      const visible = list.slice(0, 6);
+      if (!visible.length) {
+        container.innerHTML = "<div class=\"muted\">No new listings yet.</div>";
+        return;
+      }
+      container.innerHTML = visible.map((item) => {
+        const start = formatListingDate(item.start_dt);
+        const end = formatListingDate(item.end_dt);
+        const slots = Array.isArray(item.slots) ? item.slots : [];
+        const dates = slots.length
+          ? slots.map((slot) => formatListingDate(slot.start_dt)).join(" | ")
+          : start;
+        return `
+          <div class="listingRow">
+            <div>
+              <div class="listingTitle">Booking #${escapeHtml(item.group_id || item.id || "-")}</div>
+              <div class="listingMeta">${escapeHtml(dates)}</div>
+              <div class="listingMeta">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+              <span class="distancePill">${escapeHtml(listingDistance(item))}</span>
+            </div>
+            <button class="btn viewListingBtn" type="button" data-id="${escapeHtml(item.id || "")}">View booking</button>
+          </div>
+        `;
+      }).join("");
+      container.querySelectorAll(".viewListingBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.id || "";
+          location.href = id ? `/static/nanny_requests.html?request_id=${encodeURIComponent(id)}` : "/static/nanny_requests.html";
+        });
+      });
     }
 
     document.getElementById("goRequestsBtn").addEventListener("click", () => {
       location.href = "/static/nanny_requests.html";
+    });
+    document.getElementById("refreshListingsBtn").addEventListener("click", () => {
+      const container = document.getElementById("nearbyListings");
+      if (container) container.innerHTML = "<div class=\"muted\">Refreshing listings...</div>";
+      updateRequestCount();
     });
     document.getElementById("goHistoryBtn").addEventListener("click", () => {
       location.href = "/static/nanny_history.html";
