@@ -80,6 +80,21 @@
       return value ? "Yes" : "No";
     }
 
+    function toDateTimeInputValue(value) {
+      if (!value) return "";
+      let raw = value;
+      if (typeof raw === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) raw = raw.replace(" ", "T") + "+02:00";
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return "";
+      return new Date(date.getTime() + (2 * 60 * 60 * 1000)).toISOString().slice(0, 16);
+    }
+
+    function toIsoFromDateTimeInput(value) {
+      if (!value || !value.includes("T")) return null;
+      const [date, time] = value.split("T");
+      return window.toIsoFromZA ? window.toIsoFromZA(date, time) : new Date(`${value}:00+02:00`).toISOString();
+    }
+
     function renderFormPreview(form) {
       const items = [
         ["Additional notes", form?.notes || "-"],
@@ -96,6 +111,36 @@
         ["After-17:00 transport disclaimer", yesNo(form?.disclaimer_transport)],
       ];
       return `<ul class="previewList">${items.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join("")}</ul>`;
+    }
+
+    function renderScheduleEditor(job) {
+      const slots = Array.isArray(job.slots) && job.slots.length
+        ? job.slots
+        : [{ start_dt: job.start_dt, end_dt: job.end_dt }];
+      if (!job.can_edit_details) {
+        return `<div class="lockNote">${escapeHtml(job.edit_locked_reason || "This booking can no longer be edited.")}</div>`;
+      }
+      return `
+        <div class="detailGrid">
+          ${slots.map((slot, index) => `
+            <div class="field scheduleSlotRow" data-index="${index}">
+              <label>Start date and time</label>
+              <input type="datetime-local" data-schedule-field="start" value="${escapeHtml(toDateTimeInputValue(slot.start_dt))}" />
+            </div>
+            <div class="field scheduleSlotRowEnd" data-index="${index}">
+              <label>Finish date and time</label>
+              <input type="datetime-local" data-schedule-field="end" value="${escapeHtml(toDateTimeInputValue(slot.end_dt))}" />
+            </div>
+          `).join("")}
+        </div>
+        <label class="checkboxRow" style="margin-top:10px;">
+          <input type="checkbox" data-schedule-field="sleepover" ${job.sleepover ? "checked" : ""} />
+          Sleepover required
+        </label>
+        <div class="actions">
+          <button class="btn saveScheduleBtn" data-id="${job.job_id}">Save date/time updates</button>
+        </div>
+      `;
     }
 
     function profileHtml(profile) {
@@ -177,6 +222,10 @@
             <div class="detailSection">
               <h3>Booking form preview</h3>
               ${renderFormPreview(form)}
+            </div>
+            <div class="detailSection">
+              <h3>Edit booking dates and times</h3>
+              ${renderScheduleEditor(r)}
             </div>
             <div class="detailSection">
               <h3>Edit booking form</h3>
@@ -272,6 +321,37 @@
             alert(e.message || "Failed to load nanny profile");
           } finally {
             btn.disabled = false;
+          }
+        });
+      });
+      list.querySelectorAll(".saveScheduleBtn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const card = btn.closest(".card");
+          const startRows = Array.from(card.querySelectorAll(".scheduleSlotRow"));
+          const endRows = Array.from(card.querySelectorAll(".scheduleSlotRowEnd"));
+          const slots = startRows.map((row, index) => {
+            const startsAt = toIsoFromDateTimeInput(row.querySelector('[data-schedule-field="start"]')?.value || "");
+            const endsAt = toIsoFromDateTimeInput(endRows[index]?.querySelector('[data-schedule-field="end"]')?.value || "");
+            return { starts_at: startsAt, ends_at: endsAt };
+          });
+          if (slots.some((slot) => !slot.starts_at || !slot.ends_at)) {
+            alert("Please enter a start and finish date/time for each booking slot.");
+            return;
+          }
+          const payload = {
+            slots,
+            sleepover: !!card.querySelector('[data-schedule-field="sleepover"]')?.checked,
+          };
+          btn.disabled = true;
+          try {
+            await fetchJson(`/parents/me/booking-requests/${btn.dataset.id}/schedule`, {
+              method: "PATCH",
+              body: JSON.stringify(payload)
+            });
+            loadJobs().catch(() => {});
+          } catch (e) {
+            btn.disabled = false;
+            alert(e.message || "Failed to update booking dates and times");
           }
         });
       });

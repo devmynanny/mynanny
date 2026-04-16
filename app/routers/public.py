@@ -4569,10 +4569,6 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         end_dt = req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None)
         if not entry:
             booking_form = _booking_questionnaire_from_notes(req.client_notes)
-            try:
-                starts_at_dt = _parse_iso_dt(start_dt or req.requested_starts_at)
-            except Exception:
-                starts_at_dt = None
             related_bookings = _find_related_bookings_for_request(db, req)
             booking_category = "upcoming"
             if related_bookings:
@@ -4586,15 +4582,33 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                     booking_category = "past"
             elif status in ("cancelled", "rejected", "completed"):
                 booking_category = "past"
+            windows = _booking_request_windows(db, req)
+            any_accepted = any(
+                (candidate.status == "approved" or (getattr(candidate, "nanny_response_status", None) or "").lower() == "accepted")
+                for candidate, _ in rows
+                if (candidate.group_id or candidate.id) == gid
+            )
+            any_editable = any(
+                candidate.status in ("tbc", "pending_admin")
+                for candidate, _ in rows
+                if (candidate.group_id or candidate.id) == gid
+            )
+            can_edit_details = bool(not any_accepted and any_editable)
             grouped[gid] = {
                 "job_id": gid,
                 "status": status,
                 "booking_category": booking_category,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
+                "slots": [
+                    {"start_dt": _to_iso_z(slot_start), "end_dt": _to_iso_z(slot_end)}
+                    for slot_start, slot_end in windows
+                ],
+                "sleepover": bool(getattr(req, "sleepover", False)),
                 "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
-                "can_edit_form": bool(starts_at_dt and (starts_at_dt - datetime.utcnow()) >= timedelta(hours=15) and status not in ("cancelled", "completed")),
-                "edit_locked_reason": None if starts_at_dt and (starts_at_dt - datetime.utcnow()) >= timedelta(hours=15) else "Booking form can only be edited more than 15 hours before the booking starts.",
+                "can_edit_details": can_edit_details,
+                "can_edit_form": can_edit_details,
+                "edit_locked_reason": None if can_edit_details else "Booking details can no longer be edited once a nanny has accepted, or after the job is cancelled.",
                 "accepted_nanny_id": None,
                 "accepted_nanny_user_id": None,
                 "accepted_nanny_name": None,
@@ -4747,6 +4761,101 @@ def cancel_parent_booking_request(
     return {"ok": True, "job_id": job_id, "reason": reason}
 
 
+@router.patch("/parents/me/booking-requests/{job_id}/schedule")
+def update_parent_booking_request_schedule(
+    job_id: int,
+    payload: schemas.ParentBookingRequestScheduleUpdate,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.parent_user_id == user.id,
+            or_(models.BookingRequest.group_id == job_id, models.BookingRequest.id == job_id),
+        )
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if any(r.status == "approved" or (getattr(r, "nanny_response_status", None) or "").lower() == "accepted" for r in rows):
+        raise HTTPException(status_code=409, detail="Booking details can no longer be edited after a nanny has accepted")
+    editable_rows = [r for r in rows if r.status in ("tbc", "pending_admin")]
+    if not editable_rows:
+        raise HTTPException(status_code=400, detail="This booking can no longer be edited")
+
+    windows = _normalize_booking_slots(
+        start_dt_value=payload.start_dt,
+        end_dt_value=payload.end_dt,
+        slot_items=payload.slots,
+    )
+    settings = _get_pricing_settings(db)
+    questionnaire = _booking_questionnaire_from_notes(editable_rows[0].client_notes)
+    pricing = _compute_booking_slots_pricing(
+        windows,
+        bool(payload.sleepover),
+        settings,
+        kids_count=_sanitize_booking_kids_count(questionnaire.get("kids_count")),
+    )
+    start_dt = min(w[0] for w in windows)
+    end_dt = max(w[1] for w in windows)
+
+    for req in editable_rows:
+        for slot_start, slot_end in windows:
+            if not _is_nanny_available(db, req.nanny_id, slot_start, slot_end):
+                raise HTTPException(status_code=409, detail="One or more requested nannies are not available for the new time")
+
+    before_obj = {
+        "start_dt": editable_rows[0].start_dt,
+        "end_dt": editable_rows[0].end_dt,
+        "sleepover": editable_rows[0].sleepover,
+    }
+    for req in editable_rows:
+        req.start_dt = _to_iso_z(start_dt)
+        req.end_dt = _to_iso_z(end_dt)
+        req.requested_starts_at = start_dt
+        req.requested_ends_at = end_dt
+        req.sleepover = bool(payload.sleepover) if payload.sleepover is not None else None
+        req.wage_cents = pricing["wage_cents"]
+        req.booking_fee_pct = pricing["booking_fee_pct"]
+        req.booking_fee_cents = pricing["booking_fee_cents"]
+        req.total_cents = pricing["total_cents"]
+        db.query(models.BookingRequestSlot).filter(models.BookingRequestSlot.booking_request_id == req.id).delete()
+        db.flush()
+        _attach_booking_request_slots(db, req.id, windows)
+
+    db.commit()
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=user.id,
+        entity="booking_requests",
+        entity_id=job_id,
+        action="update_schedule",
+        before_obj=before_obj,
+        after_obj={
+            "start_dt": _to_iso_z(start_dt),
+            "end_dt": _to_iso_z(end_dt),
+            "sleepover": bool(payload.sleepover),
+            "slots": [{"start_dt": _to_iso_z(s), "end_dt": _to_iso_z(e)} for s, e in windows],
+        },
+        changed_fields=["start_dt", "end_dt", "sleepover", "slots"],
+        request=request,
+    )
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "start_dt": _to_iso_z(start_dt),
+        "end_dt": _to_iso_z(end_dt),
+        "sleepover": bool(payload.sleepover),
+    }
+
+
 @router.patch("/parents/me/booking-requests/{job_id}/form")
 def update_parent_booking_request_form(
     job_id: int,
@@ -4769,28 +4878,18 @@ def update_parent_booking_request_form(
     )
     if not rows:
         raise HTTPException(status_code=404, detail="Job not found")
-
-    earliest_start = None
-    for req in rows:
-        try:
-            candidate = _parse_iso_dt(req.start_dt or req.requested_starts_at)
-        except Exception:
-            continue
-        if earliest_start is None or candidate < earliest_start:
-            earliest_start = candidate
-    if earliest_start is None:
-        raise HTTPException(status_code=400, detail="Booking start time is missing")
-    if (earliest_start - datetime.utcnow()) < timedelta(hours=15):
-        raise HTTPException(status_code=400, detail="This booking form can no longer be edited within 15 hours of the booking start time")
+    if any(r.status == "approved" or (getattr(r, "nanny_response_status", None) or "").lower() == "accepted" for r in rows):
+        raise HTTPException(status_code=409, detail="Booking details can no longer be edited after a nanny has accepted")
+    editable_rows = [r for r in rows if r.status in ("tbc", "pending_admin")]
+    if not editable_rows:
+        raise HTTPException(status_code=400, detail="This booking can no longer be edited")
 
     questionnaire = _sanitize_booking_questionnaire_payload(payload)
     _validate_booking_questionnaire(questionnaire)
     notes = redact_contact_info((payload.notes or "").strip() or "")
     rebuilt_notes = _build_booking_questionnaire_notes(notes or None, questionnaire)
 
-    for req in rows:
-        if req.status in ("cancelled", "completed"):
-            continue
+    for req in editable_rows:
         req.client_notes = rebuilt_notes
 
     db.commit()

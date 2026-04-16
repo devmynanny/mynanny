@@ -68,7 +68,7 @@
   <div id="status" class="muted" style="margin-top:12px;"></div>
   <div id="favoritesList" class="grid"></div>
   <div id="selectionActions" style="margin-top:16px; display:none;">
-    <button class="btn" id="selectDateBtn" type="button" disabled>Select date</button>
+    <button class="btn" id="selectDateBtn" type="button" disabled>Proceed with selected favourites</button>
   </div>
 
   <div id="previewModal" class="modalBack">
@@ -188,6 +188,9 @@
       }
       if (selectDateBtn) {
         selectDateBtn.disabled = count === 0;
+        selectDateBtn.textContent = count
+          ? `Proceed with selected favourites (${count})`
+          : "Proceed with selected favourites";
       }
     }
 
@@ -269,7 +272,6 @@
       const details = [
         ["Completed jobs", n.completed_jobs_count ?? 0],
         ["Age", n.age ?? "Not provided"],
-        ["Nationality", n.nationality || "Not provided"],
         ["Languages", (n.languages || []).map((l) => l.name).join(", ") || "Not provided"],
         ["Qualifications", (n.qualifications || []).map((q) => q.name).join(", ") || "Not provided"],
       ];

@@ -91,6 +91,7 @@
     .weekdays label{display:flex;align-items:center;gap:6px;font-size:13px;color:#555}
     .weekdays input{width:auto;margin:0;padding:0}
     .inlineStatus{min-height:18px;color:#b91c1c;font-size:13px;margin-top:10px}
+    .bookingToast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:3000;max-width:min(520px,calc(100vw - 32px));padding:14px 18px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;text-align:center}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
       .recurringBookingCta{align-items:flex-start}
@@ -1029,6 +1030,16 @@
       document.getElementById("bookingModal").style.display = "none";
     }
 
+    function showBookingToast(message) {
+      document.querySelectorAll(".bookingToast").forEach((toast) => toast.remove());
+      const toast = document.createElement("div");
+      toast.className = "bookingToast";
+      toast.setAttribute("role", "status");
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
     let favorites = new Set();
     let previewNanny = null;
     let lastResults = [];
@@ -1168,7 +1179,6 @@
       const details = [
         ["Completed jobs", n.completed_jobs_count ?? 0],
         ["Age", n.age ?? "Not provided"],
-        ["Nationality", n.nationality || "Not provided"],
         ["Languages", (n.languages || []).map(l => l.name).join(", ") || "Not provided"],
         ["Qualifications", (n.qualifications || []).map(q => q.name).join(", ") || "Not provided"],
       ];
@@ -1266,7 +1276,8 @@
           })
         });
         const displayId = res?.group_id ?? "—";
-        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+        status.textContent = "";
+        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
       } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
         const res = await fetchJson("/booking-requests/bulk", {
           method: "POST",
@@ -1282,7 +1293,8 @@
           })
         });
         const displayId = res?.group_id ?? "—";
-        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+        status.textContent = "";
+        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
       } else {
         const res = await fetchJson("/booking-requests", {
           method: "POST",
@@ -1298,10 +1310,11 @@
           })
         });
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
-        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+        status.textContent = "";
+        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
       }
       document.getElementById("submitBookingBtn").disabled = true;
-      setTimeout(closeBookingModal, 2200);
+      setTimeout(closeBookingModal, 300);
     }
 
     function buildIso(dateStr, timeStr) {

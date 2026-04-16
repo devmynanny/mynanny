@@ -93,6 +93,8 @@
     .scheduleList{display:grid;gap:8px}
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
     .resultsActionBar{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .resultsActionBar.hidden{display:none}
+    .bookingToast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:3000;max-width:min(520px,calc(100vw - 32px));padding:14px 18px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;text-align:center}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
       .modalBack{padding:12px}
@@ -591,8 +593,18 @@
       banner.textContent = "";
       if (!favoriteBroadcastActive || !favoriteBroadcastIds.size) return;
       const count = favoriteBroadcastIds.size;
-      banner.textContent = `Showing the ${count} selected favourite ${count === 1 ? "nanny" : "nannies"} for this broadcast.`;
+      banner.textContent = `Showing only the ${count} selected favourite ${count === 1 ? "nanny" : "nannies"} for this booking request.`;
       banner.style.display = "block";
+    }
+
+    function syncFavoriteBroadcastModeUi() {
+      document.querySelectorAll(".resultsActionBar").forEach((bar) => {
+        bar.classList.toggle("hidden", favoriteBroadcastActive);
+      });
+      const previewFavoritesBtn = document.getElementById("broadcastFavoritesBtn");
+      if (previewFavoritesBtn) {
+        previewFavoritesBtn.style.display = favoriteBroadcastActive ? "none" : "";
+      }
     }
 
     function renderResultsSchedule() {
@@ -898,6 +910,16 @@
       document.getElementById("bookingModal").style.display = "none";
     }
 
+    function showBookingToast(message) {
+      document.querySelectorAll(".bookingToast").forEach((toast) => toast.remove());
+      const toast = document.createElement("div");
+      toast.className = "bookingToast";
+      toast.setAttribute("role", "status");
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
     let favorites = new Set();
     let previewNanny = null;
     let lastResults = [];
@@ -1127,7 +1149,6 @@
       const details = [
         ["Completed jobs", n.completed_jobs_count ?? 0],
         ["Age", n.age ?? "Not provided"],
-        ["Nationality", n.nationality || "Not provided"],
         ["Languages", (n.languages || []).map(l => l.name).join(", ") || "Not provided"],
         ["Qualifications", (n.qualifications || []).map(q => q.name).join(", ") || "Not provided"],
       ];
@@ -1243,7 +1264,8 @@
           })
         });
         const displayId = res?.group_id ?? "—";
-        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+        status.textContent = "";
+        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
       } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
         const res = await fetchJson("/booking-requests/bulk", {
           method: "POST",
@@ -1270,7 +1292,8 @@
           })
         });
         const displayId = res?.group_id ?? "—";
-        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+        status.textContent = "";
+        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
       } else {
         const res = await fetchJson("/booking-requests", {
           method: "POST",
@@ -1297,13 +1320,14 @@
           })
         });
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
-        status.textContent = `Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`;
+        status.textContent = "";
+        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
       }
       document.getElementById("submitBookingBtn").disabled = true;
       if (favoriteBroadcastActive) {
         localStorage.removeItem(FAVORITE_BROADCAST_SELECTION_KEY);
       }
-      setTimeout(closeBookingModal, 2200);
+      setTimeout(closeBookingModal, 300);
     }
 
     function buildIso(dateStr, timeStr) {
@@ -1522,7 +1546,8 @@
       if (!btn) return;
       const count = selectedNannies.size || currentFilteredResults.length;
       btn.disabled = count === 0;
-      btn.textContent = count ? `Proceed with booking (${count})` : "Proceed with booking";
+      const label = favoriteBroadcastActive ? "Proceed with selected favourites" : "Proceed with booking";
+      btn.textContent = count ? `${label} (${count})` : label;
     }
 
     function broadcastToSelected() {
@@ -1760,6 +1785,7 @@
       const params = new URLSearchParams(window.location.search);
       favoriteBroadcastIds = new Set(readFavoriteBroadcastSelection());
       favoriteBroadcastActive = params.get("favorite_broadcast") === "1" && favoriteBroadcastIds.size > 0;
+      syncFavoriteBroadcastModeUi();
 
       setBookingSlots(searchState.slots);
       renderResultsSchedule();

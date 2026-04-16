@@ -386,6 +386,13 @@ class ParentBookingRequestUpdate(BaseModel):
     disclaimer_transport: Optional[bool] = None
 
 
+class ParentBookingRequestScheduleUpdate(BaseModel):
+    start_dt: Optional[str] = None
+    end_dt: Optional[str] = None
+    slots: Optional[List[BookingSlot]] = None
+    sleepover: Optional[bool] = None
+
+
 class AdminNannyApplicationUpdateRequest(BaseModel):
     status: Literal["approved", "declined", "hold", "pending"]
     reason: Optional[str] = None
