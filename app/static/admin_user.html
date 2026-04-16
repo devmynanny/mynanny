@@ -54,11 +54,15 @@
     .infoList { display:grid; gap:8px; }
     .pillRow { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
     .pill { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; border:1px solid #ddd; background:#f9fafb; font-size:13px; }
+    .sectionTitle { margin:14px 0 6px; font-weight:700; }
+    .fieldGrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; }
+    .fieldGrid .wide { grid-column:1 / -1; }
     .docList { display:grid; gap:10px; }
     .docRow { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid #eee; }
     .docRow:last-child { border-bottom:0; }
     @media (max-width: 720px) {
       .profilePreview { grid-template-columns: 1fr; }
+      .fieldGrid { grid-template-columns:1fr; }
     }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -217,12 +221,17 @@
       const body = document.getElementById("profileViewBody");
       if (!card || !body) return;
 
-      if (user.role !== "parent") {
+      if (user.role !== "parent" && user.role !== "nanny") {
         card.style.display = "none";
         return;
       }
 
       card.style.display = "block";
+      if (user.role === "nanny") {
+        body.innerHTML = renderNannyRegistrationProfile(profile);
+        return;
+      }
+
       const kidsAges = Array.isArray(profile?.kids_ages) && profile.kids_ages.length
         ? profile.kids_ages.join(", ")
         : "-";
@@ -254,6 +263,141 @@
               <div class="pillRow">${flags.length ? flags.map((flag) => `<span class="pill">${escapeHtml(flag)}</span>`).join("") : `<span class="muted">No access notes added.</span>`}</div>
             </div>
           </div>
+        </div>
+      `;
+    }
+
+    function boolLabel(value) {
+      if (value === true) return "Yes";
+      if (value === false) return "No";
+      return "-";
+    }
+
+    function optionLabel(value) {
+      const map = {
+        stay_in: "Stay in",
+        stay_out: "Stay out",
+        both: "Stay in or stay out",
+        permit: "Valid permit",
+        waiver: "Waiver",
+        receipt: "Receipt",
+        no_permit: "No permit",
+        none: "No permit",
+        yes: "Yes",
+        not_yet: "Not yet",
+      };
+      return map[value] || value || "-";
+    }
+
+    function documentLink(url) {
+      const href = normalizeDocUrl(url);
+      if (!href) return "-";
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">View document</a>`;
+    }
+
+    function renderField(label, value, options = {}) {
+      const className = options.wide ? " class=\"wide\"" : "";
+      const rendered = options.html ? (value || "-") : escapeHtml(value ?? "-");
+      return `<div${className}><strong>${escapeHtml(label)}:</strong> ${rendered}</div>`;
+    }
+
+    function renderNannyRegistrationProfile(profile) {
+      const tags = (profile?.tags || []).map(t => t.name).filter(Boolean).join(", ") || "-";
+      const langs = (profile?.languages || []).map(t => t.name).filter(Boolean).join(", ") || "-";
+      const quals = (profile?.qualifications || []).map(t => t.name).filter(Boolean).join(", ") || "-";
+      const location = profile?.formatted_address || [profile?.suburb, profile?.city, profile?.province, profile?.postal_code, profile?.country].filter(Boolean).join(", ") || "-";
+      const coords = (profile?.lat != null && profile?.lng != null) ? `${profile.lat}, ${profile.lng}` : "-";
+      const ownKids = profile?.has_own_kids === true
+        ? `Yes${profile?.own_kids_details ? ` - ${profile.own_kids_details}` : ""}`
+        : boolLabel(profile?.has_own_kids);
+      const jobs = Array.isArray(profile?.previous_jobs) ? profile.previous_jobs.filter(Boolean) : [];
+      const jobsHtml = jobs.length
+        ? `<div class="infoList">${jobs.map((job, index) => {
+            const parts = [
+              job.role || `Previous job ${index + 1}`,
+              job.employer,
+              job.period,
+              job.care_type,
+              job.kids_age_when_started ? `Kids age when started: ${job.kids_age_when_started}` : null,
+              job.disability_details ? `Disability care: ${job.disability_details}` : null,
+              job.reference_name ? `Reference: ${job.reference_name}` : null,
+              job.reference_phone ? `Reference phone: ${job.reference_phone}` : null,
+              job.reference_relationship ? `Relationship: ${job.reference_relationship}` : null,
+            ].filter(Boolean).join(" | ");
+            const ref = job.reference_letter_url ? ` ${documentLink(job.reference_letter_url)}` : "";
+            return `<div>${escapeHtml(parts)}${ref}</div>`;
+          }).join("")}</div>`
+        : "-";
+      const certificates = Array.isArray(profile?.certificate_urls) && profile.certificate_urls.length
+        ? profile.certificate_urls.map((url, index) => `<div>Certificate ${index + 1}: ${documentLink(url)}</div>`).join("")
+        : "-";
+
+      return `
+        <div class="sectionTitle">Personal details</div>
+        <div class="fieldGrid">
+          ${renderField("Name", profile?.name)}
+          ${renderField("Phone", profile?.phone)}
+          ${renderField("Alternative phone", profile?.phone_alt)}
+          ${renderField("Date of birth", profile?.date_of_birth)}
+          ${renderField("Age", profile?.age)}
+          ${renderField("Gender", profile?.gender)}
+          ${renderField("Nationality", profile?.nationality)}
+          ${renderField("Race", profile?.ethnicity)}
+        </div>
+
+        <div class="sectionTitle">Identity and permit</div>
+        <div class="fieldGrid">
+          ${renderField("South African ID number", profile?.sa_id_number)}
+          ${renderField("Copy of ID", documentLink(profile?.sa_id_document_url), { html: true })}
+          ${renderField("Passport number", profile?.passport_number)}
+          ${renderField("Passport expiry", profile?.passport_expiry)}
+          ${renderField("Passport copy", documentLink(profile?.passport_document_url), { html: true })}
+          ${renderField("Permit status", optionLabel(profile?.permit_status))}
+          ${renderField("Has work permit", boolLabel(profile?.work_permit))}
+          ${renderField("Work permit expiry", profile?.work_permit_expiry)}
+          ${renderField("Work permit copy", documentLink(profile?.work_permit_document_url), { html: true })}
+          ${renderField("Has waiver", boolLabel(profile?.waiver))}
+        </div>
+
+        <div class="sectionTitle">Work preferences</div>
+        <div class="fieldGrid">
+          ${renderField("Own car", boolLabel(profile?.has_own_car))}
+          ${renderField("Driver's license", boolLabel(profile?.has_drivers_license))}
+          ${renderField("Driver's license document", documentLink(profile?.drivers_license_document_url), { html: true })}
+          ${renderField("Job type", optionLabel(profile?.job_type))}
+          ${renderField("Police clearance", optionLabel(profile?.police_clearance_status))}
+          ${renderField("Police clearance document", documentLink(profile?.police_clearance_document_url), { html: true })}
+          ${renderField("Dog preference", profile?.dog_preference)}
+        </div>
+
+        <div class="sectionTitle">Family, health and training</div>
+        <div class="fieldGrid">
+          ${renderField("Own kids", ownKids, { wide: true })}
+          ${renderField("Medical conditions / chronic medication", profile?.medical_conditions, { wide: true })}
+          ${renderField("My Nanny training", optionLabel(profile?.my_nanny_training_status))}
+          ${renderField("Studying details", profile?.studying_details)}
+        </div>
+
+        <div class="sectionTitle">Experience and skills</div>
+        <div class="fieldGrid">
+          ${renderField("Areas of experience", tags, { wide: true })}
+          ${renderField("Languages", langs, { wide: true })}
+          ${renderField("Qualifications", quals, { wide: true })}
+          ${renderField("Certificates", certificates, { html: true, wide: true })}
+          ${renderField("Previous jobs", jobsHtml, { html: true, wide: true })}
+          ${renderField("Bio", profile?.bio, { wide: true })}
+          ${renderField("Generated summary", profile?.profile_summary, { wide: true })}
+        </div>
+
+        <div class="sectionTitle">Location</div>
+        <div class="fieldGrid">
+          ${renderField("Address", location, { wide: true })}
+          ${renderField("Suburb", profile?.suburb)}
+          ${renderField("City", profile?.city)}
+          ${renderField("Province", profile?.province)}
+          ${renderField("Postal code", profile?.postal_code)}
+          ${renderField("Country", profile?.country)}
+          ${renderField("Coordinates", coords)}
         </div>
       `;
     }

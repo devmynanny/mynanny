@@ -10,31 +10,36 @@
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px;width:min(900px,100%)}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
-    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
+    .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;overflow:hidden}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .muted{color:#666}
     .statusBadge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;color:#fff;}
     .statusActive{background:#16a34a;}
     .statusInactive{background:#dc2626;}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
-    input, select{padding:10px;border-radius:10px;border:1px solid #ccc}
+    input, select{padding:10px;border-radius:10px;border:1px solid #ccc;max-width:100%;box-sizing:border-box}
     #calendar { max-width: 100%; margin-top: 12px; }
-    .weeklyPatternGrid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:18px;align-items:start}
-    .weeklyColumn{display:grid;gap:16px}
-    .weeklyPanel{border:1px solid #e5e7eb;border-radius:14px;padding:16px;background:#fafafa}
+    .weeklyPatternGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+    .weeklyColumn{display:grid;gap:14px;min-width:0}
+    .weeklyPanel{border:1px solid #e5e7eb;border-radius:14px;padding:14px;background:#fafafa;min-width:0}
     .weeklyPanelTitle{font-weight:700;color:#1f2937;margin-bottom:12px}
-    .weeklyField input,.weeklyField select{width:100%;box-sizing:border-box}
-    .weeklyDateRow{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(110px,.8fr);gap:12px}
-    .weekdayGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 14px}
-    .weekdayItem{display:flex;align-items:center;gap:8px;font-weight:500;color:#374151}
+    .weeklyField{min-width:0}
+    .weeklyField input,.weeklyField select{width:100%;min-width:0}
+    .weeklyDateRow{display:grid;grid-template-columns:minmax(0,1fr) minmax(82px,110px);gap:10px}
+    .weekdayGrid{display:grid;grid-template-columns:repeat(4,minmax(54px,1fr));gap:10px}
+    .weekdayItem{display:flex;align-items:center;gap:8px;font-weight:500;color:#374151;min-width:0}
     .weekdayItem input{width:18px;height:18px;margin:0}
-    .timeGroup{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .timeGroup{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
     .weeklyActions{display:flex;gap:12px;align-items:center;margin-top:14px}
     .weeklyActions .btn{min-width:140px}
     #weeklyStatus{min-height:20px}
     .weeklyHint{margin-top:8px}
     @media (max-width: 820px) {
       .weeklyPatternGrid{grid-template-columns:1fr}
+    }
+    @media (min-width: 821px) and (max-width: 980px) {
+      .weeklyPatternGrid{grid-template-columns:minmax(0,1fr) minmax(0,.9fr)}
+      .weekdayGrid{grid-template-columns:repeat(3,minmax(54px,1fr))}
     }
     @media (max-width: 560px) {
       .weeklyDateRow{grid-template-columns:1fr}
@@ -525,10 +530,6 @@
       } finally {
         clearCalendarBtn.disabled = inactiveToggle.checked;
       }
-    });
-
-    document.getElementById("backBtn").addEventListener("click", () => {
-      location.href = "/static/nanny_home.html?v=2";
     });
 
     (async () => {
