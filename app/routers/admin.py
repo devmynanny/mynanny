@@ -26,6 +26,7 @@ class RefundDecision(BaseModel):
 
 class GoogleMapsSettingsPayload(BaseModel):
     google_maps_api_key: Optional[str] = None
+    google_calendar_id: Optional[str] = None
 
 
 class NannyTagPayload(BaseModel):
@@ -53,6 +54,11 @@ def get_google_maps_settings(db: Session = Depends(get_db)):
         "configured": bool(db_key),
         "source": "database" if db_key else None,
         "server_env_configured": bool(env_key),
+        "google_calendar_id": (getattr(row, "google_calendar_id", None) or os.getenv("GOOGLE_CALENDAR_ID") or "sayhi@mynanny.co.za") if row else (os.getenv("GOOGLE_CALENDAR_ID") or "sayhi@mynanny.co.za"),
+        "google_calendar_configured": bool(
+            (os.getenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON") or "").strip()
+            or (os.getenv("GOOGLE_CALENDAR_SERVICE_ACCOUNT_FILE") or "").strip()
+        ),
     }
 
 
@@ -67,11 +73,15 @@ def update_google_maps_settings(payload: GoogleMapsSettingsPayload, db: Session 
 
     key = (payload.google_maps_api_key or "").strip()
     row.google_maps_api_key = key or None
+    if "google_calendar_id" in payload.model_fields_set:
+        calendar_id = (payload.google_calendar_id or "").strip()
+        row.google_calendar_id = calendar_id or None
     db.commit()
     return {
         "ok": True,
         "configured": bool(row.google_maps_api_key),
         "source": "database" if row.google_maps_api_key else None,
+        "google_calendar_id": row.google_calendar_id or os.getenv("GOOGLE_CALENDAR_ID") or "sayhi@mynanny.co.za",
     }
 
 

@@ -31,8 +31,13 @@
     <div id="mapsMeta" class="muted" style="margin-bottom:12px;">Loading...</div>
     <label for="googleMapsApiKey">Google Maps browser API key</label>
     <input id="googleMapsApiKey" type="text" placeholder="AIza..." autocomplete="off" />
+    <div style="height:12px;"></div>
+    <label for="googleCalendarId">Google Calendar ID for confirmed bookings</label>
+    <input id="googleCalendarId" type="email" placeholder="sayhi@mynanny.co.za" autocomplete="off" />
+    <div id="calendarMeta" class="muted" style="margin-top:8px;"></div>
     <div class="actions">
       <button class="btn" id="clearBtn" type="button">Clear saved key</button>
+      <button class="btn" id="syncCalendarBtn" type="button">Sync confirmed bookings</button>
       <button class="btn" id="saveBtn" type="button">Save</button>
     </div>
     <div id="status" class="muted"></div>
@@ -43,17 +48,19 @@
     async function loadGoogleMapsSettings() {
       const data = await fetchJson("/admin/integrations/google-maps");
       document.getElementById("googleMapsApiKey").value = data.google_maps_api_key || "";
+      document.getElementById("googleCalendarId").value = data.google_calendar_id || "sayhi@mynanny.co.za";
       const parts = [];
       parts.push(`Browser key saved: ${data.configured ? "Yes" : "No"}`);
       parts.push(`Server env key: ${data.server_env_configured ? "Yes" : "No"}`);
       document.getElementById("mapsMeta").textContent = parts.join(" | ");
+      document.getElementById("calendarMeta").textContent = `Calendar sync credentials: ${data.google_calendar_configured ? "Configured" : "Not configured"}`;
     }
 
-    async function saveGoogleMapsSettings(value) {
+    async function saveGoogleMapsSettings(value, calendarId) {
       await fetchJson("/admin/integrations/google-maps", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ google_maps_api_key: value })
+        body: JSON.stringify({ google_maps_api_key: value, google_calendar_id: calendarId })
       });
       document.getElementById("status").textContent = "Saved.";
       await loadGoogleMapsSettings();
@@ -61,17 +68,30 @@
 
     document.getElementById("saveBtn").addEventListener("click", () => {
       const value = document.getElementById("googleMapsApiKey").value || "";
-      saveGoogleMapsSettings(value).catch(e => {
+      const calendarId = document.getElementById("googleCalendarId").value || "";
+      saveGoogleMapsSettings(value, calendarId).catch(e => {
         document.getElementById("status").textContent = e.message || "Error";
         document.getElementById("status").className = "err";
       });
     });
 
     document.getElementById("clearBtn").addEventListener("click", () => {
-      saveGoogleMapsSettings("").catch(e => {
+      saveGoogleMapsSettings("", document.getElementById("googleCalendarId").value || "").catch(e => {
         document.getElementById("status").textContent = e.message || "Error";
         document.getElementById("status").className = "err";
       });
+    });
+
+    document.getElementById("syncCalendarBtn").addEventListener("click", async () => {
+      document.getElementById("status").className = "muted";
+      document.getElementById("status").textContent = "Syncing confirmed bookings...";
+      try {
+        const data = await fetchJson("/admin/bookings/sync-google-calendar", { method: "POST" });
+        document.getElementById("status").textContent = `Checked ${data.checked_requests || 0} confirmed requests. Newly synced: ${data.newly_synced || 0}. Errors: ${data.error_total || 0}.`;
+      } catch (e) {
+        document.getElementById("status").textContent = e.message || "Sync failed";
+        document.getElementById("status").className = "err";
+      }
     });
 
     document.getElementById("backBtn").addEventListener("click", () => {

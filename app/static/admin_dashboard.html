@@ -22,6 +22,16 @@
     .bookingMeta{color:#666;font-size:14px}
     .bookingReason{margin-top:6px;color:#7a2e2e}
     .bookingOverdue{margin-top:6px;color:#b45309;font-weight:600}
+    .bookingGlance{display:grid;grid-template-columns:minmax(240px,1fr) minmax(320px,1.4fr);gap:16px;align-items:start}
+    .monthCalendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+    .calendarHead{font-size:12px;color:#666;font-weight:600;text-align:center}
+    .calendarDay{min-height:76px;border:1px solid #e5e5e5;border-radius:8px;padding:6px;background:#fff;overflow:hidden}
+    .calendarDayNumber{font-size:12px;color:#555;margin-bottom:4px}
+    .calendarBooking{font-size:12px;line-height:1.25;border-left:3px solid #1f7a4d;padding-left:5px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
+    .calendarMore{font-size:12px;color:#666;margin-top:4px}
+    .syncOk{color:#166534}
+    .syncWarn{color:#b45309}
+    @media (max-width:760px){.bookingGlance{grid-template-columns:1fr}.monthCalendar{gap:4px}.calendarDay{min-height:64px;padding:5px}.calendarBooking{font-size:11px}}
     .detailGrid{display:grid;gap:10px}
     .detailSection{padding:10px 0;border-bottom:1px solid #eee}
     .detailSection:last-child{border-bottom:0}
@@ -108,12 +118,22 @@
   <div id="sectionBookingRequests" style="display:none;">
     <h2>Bookings</h2>
     <div class="card">
+      <div class="bookingGlance">
+        <div>
+          <div class="bookingSectionTitle">Bookings tomorrow</div>
+          <div id="tomorrowBookingsList"></div>
+          <div class="bookingSectionTitle">Bookings in progress</div>
+          <div id="inProgressBookingsList"></div>
+        </div>
+        <div>
+          <div class="bookingSectionTitle" id="monthCalendarTitle">Bookings this month</div>
+          <div id="monthBookingsCalendar"></div>
+        </div>
+      </div>
       <div class="bookingSectionTitle">Pending requests</div>
       <div id="bookingRequestsList"></div>
       <div class="bookingSectionTitle">Upcoming bookings</div>
       <div id="upcomingBookingsList"></div>
-      <div class="bookingSectionTitle">Bookings in progress</div>
-      <div id="inProgressBookingsList"></div>
       <div class="bookingSectionTitle">Past bookings</div>
       <div id="pastBookingsList"></div>
       <div class="bookingSectionTitle">Unsuccessful bookings</div>
@@ -344,6 +364,9 @@
         const reasonLine = r.reason ? `<div class="bookingReason"><strong>Reason:</strong> ${escapeHtml(r.reason)}</div>` : "";
         const locationLine = r.location_label ? `<div class="bookingMeta">Location: ${escapeHtml(r.location_label)}</div>` : "";
         const overdueLine = r.is_overdue ? `<div class="bookingOverdue">Overdue: no acceptance after 6 hours</div>` : "";
+        const calendarLine = r.google_calendar_event_id
+          ? `<div class="bookingMeta syncOk">Google Calendar: synced</div>`
+          : (r.google_calendar_sync_error ? `<div class="bookingMeta syncWarn">Google Calendar: ${escapeHtml(r.google_calendar_sync_error)}</div>` : "");
         const refLine = r.booking_id
           ? `Booking #${escapeHtml(r.booking_id)}${r.request_id ? ` • Request #${escapeHtml(r.request_id)}` : ""}`
           : `Request #${escapeHtml(r.request_id || r.id || "-")}`;
@@ -356,6 +379,7 @@
             ${locationLine}
             ${reasonLine}
             ${overdueLine}
+            ${calendarLine}
           </div>
           <div>
             <button class="btn viewBookingBtn" data-id="${r.request_id || r.id}">View</button>
@@ -366,6 +390,32 @@
         `;
         container.appendChild(row);
       });
+    }
+
+    function renderMonthCalendar(calendar) {
+      const title = document.getElementById("monthCalendarTitle");
+      const container = document.getElementById("monthBookingsCalendar");
+      if (!container) return;
+      if (title) title.textContent = calendar?.month_label ? `Bookings for ${calendar.month_label}` : "Bookings this month";
+      const days = Array.isArray(calendar?.days) ? calendar.days : [];
+      if (!days.length) {
+        container.innerHTML = "<div class=\"bookingEmpty\">No calendar days to show.</div>";
+        return;
+      }
+      const first = new Date(`${days[0].date}T00:00:00`);
+      const offset = Number.isNaN(first.getTime()) ? 0 : first.getDay();
+      const heads = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => `<div class="calendarHead">${d}</div>`).join("");
+      const blanks = Array.from({ length: offset }, () => `<div></div>`).join("");
+      const cells = days.map((day) => {
+        const bookings = Array.isArray(day.bookings) ? day.bookings : [];
+        const shown = bookings.slice(0, 2).map((b) => {
+          const time = b.start_dt ? new Date(b.start_dt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+          return `<div class="calendarBooking" title="${escapeHtml((b.parent_name || b.parent_email || "Client") + " with " + (b.nanny_name || "Nanny"))}">${escapeHtml(time)} ${escapeHtml(b.nanny_name || "Nanny")} / ${escapeHtml(b.parent_name || b.parent_email || "Client")}</div>`;
+        }).join("");
+        const more = bookings.length > 2 ? `<div class="calendarMore">+${bookings.length - 2} more</div>` : "";
+        return `<div class="calendarDay"><div class="calendarDayNumber">${escapeHtml(day.day || "")}</div>${shown || ""}${more}</div>`;
+      }).join("");
+      container.innerHTML = `<div class="monthCalendar">${heads}${blanks}${cells}</div>`;
     }
 
     function formatMinutes(totalMinutes) {
@@ -441,11 +491,13 @@
 
     async function loadBookingRequests() {
       const data = await fetchJson("/admin/bookings/overview");
+      renderBookingCollection("tomorrowBookingsList", data?.bookings_tomorrow || [], { emptyText: "No confirmed bookings tomorrow." });
       renderBookingCollection("bookingRequestsList", data?.pending_requests || [], { showActions: true, emptyText: "No pending booking requests." });
       renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { emptyText: "No upcoming bookings." });
       renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { emptyText: "No bookings currently in progress." });
       renderBookingCollection("pastBookingsList", data?.past_bookings || [], { emptyText: "No past bookings yet." });
       renderBookingCollection("unsuccessfulBookingsList", data?.unsuccessful_bookings || [], { emptyText: "No unsuccessful bookings yet." });
+      renderMonthCalendar(data?.month_calendar);
     }
 
     async function loadRefunds() {
@@ -585,7 +637,7 @@
         .catch(err => { document.getElementById("authMsg").textContent = err.message; });
     });
 
-    ["upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
+    ["tomorrowBookingsList", "upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener("click", (e) => {
@@ -646,7 +698,13 @@
         }, 1000);
         return;
       }
-      await refreshCounts();
+      try {
+        await refreshCounts();
+        showSection("sectionBookingRequests");
+        await loadBookingRequests();
+      } catch (e) {
+        document.getElementById("authMsg").textContent = e.message || "Failed to load admin dashboard";
+      }
     })();
   </script>
 </body>

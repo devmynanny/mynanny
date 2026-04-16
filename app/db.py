@@ -335,6 +335,9 @@ def ensure_bookings_schema() -> None:
         add_col("cancellation_reason", "TEXT")
         add_col("cancellation_actor_role", "TEXT")
         add_col("cancellation_actor_user_id", "INTEGER")
+        add_col("google_calendar_event_id", "TEXT")
+        add_col("google_calendar_synced_at", "DATETIME")
+        add_col("google_calendar_sync_error", "TEXT")
 
 
 def ensure_nanny_profiles_schema() -> None:
@@ -633,7 +636,8 @@ def ensure_app_settings_schema() -> None:
             conn.execute(text("""
                 CREATE TABLE app_settings (
                   id INTEGER NOT NULL PRIMARY KEY,
-                  google_maps_api_key TEXT
+                  google_maps_api_key TEXT,
+                  google_calendar_id TEXT
                 )
             """))
             return
@@ -642,6 +646,8 @@ def ensure_app_settings_schema() -> None:
         existing = {row[1] for row in cols.fetchall()}
         if "google_maps_api_key" not in existing:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN google_maps_api_key TEXT"))
+        if "google_calendar_id" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN google_calendar_id TEXT"))
 
 
 def ensure_pricing_settings_schema() -> None:

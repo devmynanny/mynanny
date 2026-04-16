@@ -5,6 +5,7 @@ from app.db import Base
 
 from sqlalchemy import (
     Column,
+    BigInteger,
     Integer,
     String,
     Boolean,
@@ -96,6 +97,9 @@ class Booking(Base):
     cancellation_reason = Column(Text, nullable=True)
     cancellation_actor_role = Column(String, nullable=True)
     cancellation_actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    google_calendar_event_id = Column(String, nullable=True)
+    google_calendar_synced_at = Column(DateTime, nullable=True)
+    google_calendar_sync_error = Column(Text, nullable=True)
 
 
 class Review(Base):
@@ -249,6 +253,7 @@ class AppSettings(Base):
 
     id = Column(Integer, primary_key=True)
     google_maps_api_key = Column(Text, nullable=True)
+    google_calendar_id = Column(Text, nullable=True)
 
 
 class ParentLocation(Base):

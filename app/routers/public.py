@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from pathlib import Path
 from typing import Optional, List, Union
 from datetime import date, datetime, timedelta, timezone, time as dt_time
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, File, UploadFile, Response
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session, aliased
@@ -24,6 +25,7 @@ from app.schemas import NannyReviewsResponse, SetParentAreaRequest, SetParentDef
 from app.utils.email import EmailMessage, admin_emails, app_base_url, get_email_client
 from app import security
 from app.services.audit import log_audit, log_profile_update, log_booking_request_status_change, log_booking_status_change
+from app.services.google_calendar import sync_booking_to_google_calendar
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
@@ -1443,6 +1445,21 @@ def _find_related_bookings_for_request(db: Session, req: models.BookingRequest) 
         .order_by(models.Booking.starts_at.asc(), models.Booking.id.asc())
         .all()
     )
+
+
+def _sync_confirmed_booking_request_to_google_calendar(db: Session, req: models.BookingRequest) -> None:
+    if req.status != "approved" or (getattr(req, "nanny_response_status", None) or "") != "accepted":
+        return
+    bookings = [
+        b for b in _find_related_bookings_for_request(db, req)
+        if b.status in ("approved", "accepted") and not getattr(b, "google_calendar_event_id", None)
+    ]
+    for booking in bookings:
+        try:
+            sync_booking_to_google_calendar(db, booking)
+        except Exception as exc:
+            booking.google_calendar_sync_error = str(exc)[:500]
+            db.commit()
 
 
 def _cancel_related_bookings_for_request(
@@ -3700,6 +3717,7 @@ def accept_nanny_booking_request(
             db.add(block_row)
 
     db.commit()
+    _sync_confirmed_booking_request_to_google_calendar(db, req)
     log_booking_request_status_change(
         db,
         actor_user=user,
@@ -6085,6 +6103,7 @@ def approve_booking_request(
         )
         db.add(block_row)
     db.commit()
+    _sync_confirmed_booking_request_to_google_calendar(db, req)
     log_booking_request_status_change(
         db,
         actor_user=admin,
@@ -6508,6 +6527,12 @@ def list_admin_bookings_overview(
     require_admin(authorization, db)
 
     now = datetime.utcnow()
+    local_tz = ZoneInfo("Africa/Johannesburg")
+    local_today = datetime.now(local_tz).date()
+    tomorrow = local_today + timedelta(days=1)
+    month_start = local_today.replace(day=1)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    month_end = next_month - timedelta(days=1)
     parent_user = aliased(models.User)
     nanny_user = aliased(models.User)
 
@@ -6528,6 +6553,7 @@ def list_admin_bookings_overview(
         .order_by(models.Booking.starts_at.desc(), models.Booking.id.desc())
         .all()
     )
+    request_by_id = {req.id: req for req, _, _ in request_rows}
     booking_request_ids = {
         getattr(booking, "booking_request_id", None)
         for booking, _, _ in booking_rows
@@ -6539,6 +6565,8 @@ def list_admin_bookings_overview(
     upcoming_bookings = []
     bookings_in_progress = []
     past_bookings = []
+    bookings_tomorrow = []
+    month_confirmed_bookings = []
 
     for req, parent, nanny in request_rows:
         item = {
@@ -6565,11 +6593,16 @@ def list_admin_bookings_overview(
     for booking, parent, nanny in booking_rows:
         start_dt = booking.starts_at
         end_dt = booking.ends_at
+        related_request = request_by_id.get(getattr(booking, "booking_request_id", None))
+        nanny_response_status = (getattr(related_request, "nanny_response_status", None) or "").lower() if related_request else ""
+        is_confirmed = booking.status in ("approved", "accepted") and nanny_response_status == "accepted"
         item = {
             "source": "booking",
             "request_id": getattr(booking, "booking_request_id", None),
             "booking_id": booking.id,
             "status": booking.status,
+            "nanny_response_status": nanny_response_status or None,
+            "confirmed": bool(is_confirmed),
             "parent_name": parent.name,
             "parent_email": parent.email,
             "nanny_name": nanny.name,
@@ -6581,7 +6614,16 @@ def list_admin_bookings_overview(
             "updated_at": getattr(booking, "cancelled_at", None).isoformat() if getattr(booking, "cancelled_at", None) else None,
             "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
             "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+            "google_calendar_event_id": getattr(booking, "google_calendar_event_id", None),
+            "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
+            "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),
         }
+        if is_confirmed and start_dt:
+            local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
+            if local_start.date() == tomorrow:
+                bookings_tomorrow.append(item)
+            if month_start <= local_start.date() <= month_end:
+                month_confirmed_bookings.append(item)
         if booking.status in ("cancelled", "rejected"):
             unsuccessful_bookings.append(item)
             continue
@@ -6599,12 +6641,86 @@ def list_admin_bookings_overview(
     def _sort_desc(items: List[dict]) -> List[dict]:
         return sorted(items, key=lambda row: row.get("start_dt") or row.get("created_at") or "", reverse=True)
 
+    def _sort_asc(items: List[dict]) -> List[dict]:
+        return sorted(items, key=lambda row: row.get("start_dt") or row.get("created_at") or "")
+
+    month_days = []
+    day_cursor = month_start
+    while day_cursor <= month_end:
+        iso_day = day_cursor.isoformat()
+        day_bookings = []
+        for item in month_confirmed_bookings:
+            item_start = item.get("start_dt")
+            if not item_start:
+                continue
+            try:
+                parsed_start = _parse_iso_dt(item_start)
+                local_start = parsed_start.replace(tzinfo=timezone.utc).astimezone(local_tz) if parsed_start.tzinfo is None else parsed_start.astimezone(local_tz)
+            except Exception:
+                continue
+            if local_start.date().isoformat() == iso_day:
+                day_bookings.append(item)
+        month_days.append({
+            "date": iso_day,
+            "day": day_cursor.day,
+            "bookings": _sort_asc(day_bookings),
+        })
+        day_cursor += timedelta(days=1)
+
     return {
         "pending_requests": _sort_desc(pending_requests),
+        "bookings_tomorrow": _sort_asc(bookings_tomorrow),
         "upcoming_bookings": _sort_desc(upcoming_bookings),
         "bookings_in_progress": _sort_desc(bookings_in_progress),
         "past_bookings": _sort_desc(past_bookings),
         "unsuccessful_bookings": _sort_desc(unsuccessful_bookings),
+        "month_calendar": {
+            "year": month_start.year,
+            "month": month_start.month,
+            "month_label": month_start.strftime("%B %Y"),
+            "days": month_days,
+        },
+    }
+
+
+@router.post("/admin/bookings/sync-google-calendar")
+def sync_admin_confirmed_bookings_to_google_calendar(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_admin(authorization, db)
+    confirmed_requests = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.status == "approved",
+            models.BookingRequest.nanny_response_status == "accepted",
+        )
+        .order_by(models.BookingRequest.id.asc())
+        .all()
+    )
+    before_synced = (
+        db.query(models.Booking)
+        .filter(models.Booking.google_calendar_event_id.isnot(None))
+        .count()
+    )
+    for req in confirmed_requests:
+        _sync_confirmed_booking_request_to_google_calendar(db, req)
+    after_synced = (
+        db.query(models.Booking)
+        .filter(models.Booking.google_calendar_event_id.isnot(None))
+        .count()
+    )
+    errors = (
+        db.query(models.Booking)
+        .filter(models.Booking.google_calendar_sync_error.isnot(None))
+        .count()
+    )
+    return {
+        "ok": True,
+        "checked_requests": len(confirmed_requests),
+        "newly_synced": max(after_synced - before_synced, 0),
+        "synced_total": after_synced,
+        "error_total": errors,
     }
 
 
