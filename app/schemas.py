@@ -134,6 +134,7 @@ class NannyMeProfileUpdate(BaseModel):
     has_own_car: Optional[bool] = None
     has_drivers_license: Optional[bool] = None
     job_type: Optional[str] = None
+    current_job_availability: Optional[str] = None
     police_clearance_status: Optional[str] = None
     has_own_kids: Optional[bool] = None
     own_kids_details: Optional[str] = None
@@ -174,6 +175,7 @@ class NannyMeProfileResponse(BaseModel):
     has_own_car: Optional[bool] = None
     has_drivers_license: Optional[bool] = None
     job_type: Optional[str] = None
+    current_job_availability: Optional[str] = None
     police_clearance_status: Optional[str] = None
     has_own_kids: Optional[bool] = None
     own_kids_details: Optional[str] = None

@@ -61,6 +61,14 @@
       .admin-only-section {
         display: none !important;
       }
+      .admin-only-section.visible {
+        display: block !important;
+      }
+      .admin-locked-note {
+        margin-top: 8px;
+        color: #666;
+        font-size: 13px;
+      }
       .completion-prompt {
         display: none;
         border: 1px solid #bfdbfe;
@@ -73,6 +81,22 @@
       .completion-prompt ul {
         margin: 10px 0 0 18px;
         padding: 0;
+      }
+      .approval-banner-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .approval-banner-status {
+        font-weight: 600;
+      }
+      .approval-banner-select {
+        min-width: 280px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -111,6 +135,15 @@
           <input id="phone" style="width:100%; padding:8px;" placeholder="Phone number" />
           <input id="phoneAlt" style="width:100%; padding:8px;" placeholder="Alternative phone number" />
         </div>
+        <div style="min-width:220px;">
+          <label class="small">Gender</label>
+          <select id="gender" style="width:100%; padding:8px;">
+            <option value="">Select gender</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
         <div style="min-width:200px;">
           <label class="small">Date of birth <span id="dobHelpTip" class="help-tip" title="">?</span></label>
           <input id="dob" type="hidden" />
@@ -128,6 +161,71 @@
       <div id="bioSection" class="hidden-temporary" style="margin-top:10px;">
         <label class="small">Bio (optional)</label>
         <textarea id="bio" style="width:100%; min-height:80px; padding:8px;" placeholder="Short bio"></textarea>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Work preferences</div>
+      <div class="row">
+        <div style="min-width:220px; flex:1;">
+          <label class="small">Do you have your own car?</label>
+          <select id="ownCar" style="width:100%; padding:8px;">
+            <option value="">Select</option>
+            <option value="yes">Yes I do</option>
+            <option value="no">No, I use public transport</option>
+          </select>
+        </div>
+        <div id="driversLicenseRow" style="min-width:220px; flex:1;">
+          <label class="small">Do you have a driver's license?</label>
+          <select id="driversLicense" style="width:100%; padding:8px;">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div style="min-width:220px; flex:1;">
+          <label class="small">Job type</label>
+          <select id="jobType" style="width:100%; padding:8px;">
+            <option value="">Select job type</option>
+            <option value="stay_in">Stay in</option>
+            <option value="stay_out">Stay out</option>
+            <option value="both">I can do both</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Family and health</div>
+      <div class="row">
+        <div style="min-width:220px; flex:1;">
+          <label class="small">Do you have your own kids?</label>
+          <select id="ownKids" style="width:100%; padding:8px;">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="no">No, I don't</option>
+          </select>
+        </div>
+        <div id="ownKidsDetailsRow" style="min-width:260px; flex:2;">
+          <label class="small">How old are they and where do they stay?</label>
+          <textarea id="ownKidsDetails" style="width:100%; min-height:76px; padding:8px;" placeholder="Example: 8 and 12 years old, staying with my mother in Soweto."></textarea>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label class="small">Do you have any medical conditions or chronic medications?</label>
+        <textarea id="medicalConditions" style="width:100%; min-height:76px; padding:8px;" placeholder="Share anything important here, or write 'None'."></textarea>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:600; margin-bottom:8px;">Training</div>
+      <div style="min-width:220px; max-width:360px;">
+        <label class="small">Have you done training with My Nanny?</label>
+        <select id="myNannyTrainingStatus" style="width:100%; padding:8px;">
+          <option value="">Select</option>
+          <option value="yes">Yes</option>
+          <option value="not_yet">Not yet</option>
+        </select>
       </div>
     </div>
 
@@ -267,6 +365,7 @@
         <option value="not_pitbulls_or_rotweilers">Not pitbulls or rotweilers</option>
         <option value="no_dogs">No dogs</option>
       </select>
+      <div class="admin-locked-note">This field is completed by admin and is visible here for reference.</div>
     </div>
 
     <div class="card admin-only-section" id="qualificationsSection">
@@ -276,11 +375,13 @@
         <label class="small">What are you studying?</label>
         <input id="studyingDetails" style="width:100%; padding:8px;" placeholder="Tell us what you are studying" />
       </div>
+      <div class="admin-locked-note">Qualifications are completed by admin and shown here for reference.</div>
     </div>
 
     <div class="card admin-only-section" id="areasExperienceSection">
       <div style="font-weight:600; margin-bottom:8px;">Areas of experience</div>
       <div id="tagsList" class="row"></div>
+      <div class="admin-locked-note">Areas of experience are completed by admin and shown here for reference.</div>
     </div>
 
     <div class="card">
@@ -293,33 +394,39 @@
       <div class="small" style="margin-bottom:10px;">
         You can upload what you have now and finish your profile. The only mandatory documents right now are your ID/passport and one permit document: permit, waiver, or receipt.
       </div>
-      <div class="row" style="margin-top:8px;">
+      <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; margin-top:8px;">
         <div class="doc-upload">
-          <label class="small">Police clearance / criminal check</label>
-          <div class="row">
+          <label class="small">Police clearance/Criminal check</label>
+          <div style="margin-top:6px;">
             <input id="policeClearanceFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadPoliceClearanceBtn" type="button">Upload police clearance</button>
+          </div>
+          <div style="margin-top:8px;">
+            <button id="uploadPoliceClearanceBtn" type="button">Save</button>
           </div>
           <div class="small" id="policeClearanceStatus"></div>
         </div>
         <div class="doc-upload">
-          <label class="small">Driver's license</label>
-          <div class="row">
+          <label class="small">Drivers license (optional):</label>
+          <div style="margin-top:6px;">
             <input id="driversLicenseFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadDriversLicenseBtn" type="button">Upload driver's license</button>
+          </div>
+          <div style="margin-top:8px;">
+            <button id="uploadDriversLicenseBtn" type="button">Save</button>
           </div>
           <div class="small" id="driversLicenseStatus"></div>
         </div>
-      </div>
-      <div class="doc-upload" style="margin-top:10px;">
-        <label class="small">Certificates</label>
-        <div class="row">
+        <div class="doc-upload">
+          <label class="small">Certificates:</label>
+          <div style="margin-top:6px;">
           <input id="certificateFile" type="file" accept=".pdf,image/*" />
-          <button id="uploadCertificateBtn" type="button">Upload certificate</button>
-          <button id="addCertificateBtn" type="button">+ Add another</button>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <button id="uploadCertificateBtn" type="button">Save</button>
+            <button id="addCertificateBtn" type="button">+ Add another</button>
+          </div>
+          <div class="small" id="certificateStatus"></div>
+          <div class="small" id="certificateList" style="margin-top:6px;"></div>
         </div>
-        <div class="small" id="certificateStatus"></div>
-        <div class="small" id="certificateList" style="margin-top:6px;"></div>
       </div>
     </div>
 
@@ -342,6 +449,7 @@
 
     <script src="/static/app.js?v=2"></script>
     <script>
+      let profileIsAdminView = false;
       const locationState = {
         place_id: null,
         formatted_address: null,
@@ -377,9 +485,22 @@
 
       function renderBanner(isApproved) {
         const banner = document.getElementById("approvalBanner");
-        banner.textContent = isApproved
-          ? "Approved"
-          : "Profile submitted, waiting for admin approval";
+        if (!banner) return;
+        banner.innerHTML = `
+          <div class="approval-banner-row">
+            <div class="approval-banner-status">${isApproved ? "Approved" : "Profile submitted, waiting for admin approval"}</div>
+            <label class="approval-banner-select">
+              <span class="small">Are you currently available for jobs?</span>
+              <select id="currentJobAvailability" style="width:100%; padding:8px;">
+                <option value="">Select one</option>
+                <option value="piece_and_permanent">Yes for piece jobs and permanent</option>
+                <option value="unavailable">No, I am unavailable for now</option>
+                <option value="piece_only">Only for piece jobs</option>
+                <option value="permanent_only">Only for permanent jobs</option>
+              </select>
+            </label>
+          </div>
+        `;
       }
 
       function daysInMonth(year, month) {
@@ -547,6 +668,31 @@
         updateDobHelpTip(isApproved);
       }
 
+      function toggleOwnKidsDetails() {
+        const ownKidsValue = document.getElementById("ownKids")?.value || "";
+        const row = document.getElementById("ownKidsDetailsRow");
+        if (row) row.style.display = ownKidsValue === "yes" ? "block" : "none";
+      }
+
+      function toggleDriversLicenseField() {
+        const ownCarValue = document.getElementById("ownCar")?.value || "";
+        const row = document.getElementById("driversLicenseRow");
+        if (row) row.style.display = ownCarValue === "yes" ? "block" : "none";
+      }
+
+      function setAdminOnlyFieldAccess(isAdminView) {
+        document.querySelectorAll(".admin-only-section").forEach((section) => {
+          section.classList.add("visible");
+        });
+        const dogPref = document.getElementById("dogPreference");
+        if (dogPref) dogPref.disabled = !isAdminView;
+        document.querySelectorAll("input[name='qualifications'], input[name='tags']").forEach((el) => {
+          el.disabled = !isAdminView;
+        });
+        const studyingEl = document.getElementById("studyingDetails");
+        if (studyingEl) studyingEl.disabled = !isAdminView;
+      }
+
       function renderTags(tags, selectedIds) {
         const root = document.getElementById("tagsList");
         root.innerHTML = "";
@@ -564,6 +710,7 @@
           const cb = document.getElementById(`tag_${id}`);
           if (cb) cb.checked = true;
         });
+        setAdminOnlyFieldAccess(profileIsAdminView);
       }
 
       function renderLanguages(langs, selectedIds) {
@@ -606,6 +753,7 @@
           el.addEventListener("change", syncStudyingDetails);
         });
         syncStudyingDetails();
+        setAdminOnlyFieldAccess(profileIsAdminView);
       }
 
       function getSelectedIds(name) {
@@ -687,10 +835,12 @@
           </div>
           <div class="row prev-reference-letter-row" style="margin-top:8px;">
             <div style="flex:1;min-width:260px;">
-              <label class="small">Written reference document</label>
-              <input class="prev-reference-letter" type="file" accept=".pdf,image/*" />
-              <button class="prev-upload-reference-btn" type="button" style="margin-top:6px;">Upload reference document</button>
-              <div class="small prev-reference-status">Upload a written reference for this job.</div>
+              <div style="font-weight:600; margin-bottom:6px;">Upload a written reference for this job</div>
+              <div class="row" style="align-items:center; gap:8px;">
+                <input class="prev-reference-letter" type="file" accept=".pdf,image/*" />
+                <button class="prev-upload-reference-btn" type="button">Save</button>
+              </div>
+              <div class="small prev-reference-status"></div>
             </div>
           </div>
         `;
@@ -1241,6 +1391,7 @@
 
         const fullName = document.getElementById("fullName").value.trim();
         const dob = document.getElementById("dob").value;
+        const qualificationIds = getSelectedIds("qualifications");
         const tagIds = getSelectedIds("tags");
         const languageIds = getSelectedIds("languages");
 
@@ -1357,6 +1508,7 @@
               phone: document.getElementById("phone").value || null,
               phone_alt: document.getElementById("phoneAlt").value || null,
               dob: dob,
+              gender: document.getElementById("gender").value || null,
               nationality: document.getElementById("nationality").value || null,
               ethnicity: document.getElementById("race").value || null,
               passport_number: document.getElementById("passportNumber").value || null,
@@ -1367,12 +1519,23 @@
               work_permit_expiry: null,
               work_permit_document_url: document.getElementById("permitFile").dataset.url || null,
               waiver: waiverValue === "yes" ? true : (waiverValue === "no" ? false : null),
+              current_job_availability: document.getElementById("currentJobAvailability")?.value || null,
               sa_id_number: document.getElementById("saIdNumber").value || null,
               sa_id_document_url: document.getElementById("saIdFile").dataset.url || null,
+              has_own_car: document.getElementById("ownCar").value === "yes" ? true : (document.getElementById("ownCar").value === "no" ? false : null),
+              has_drivers_license: document.getElementById("driversLicense").value === "yes" ? true : (document.getElementById("driversLicense").value === "no" ? false : null),
+              job_type: document.getElementById("jobType").value || null,
+              has_own_kids: document.getElementById("ownKids").value === "yes" ? true : (document.getElementById("ownKids").value === "no" ? false : null),
+              own_kids_details: document.getElementById("ownKidsDetails").value || null,
+              medical_conditions: document.getElementById("medicalConditions").value || null,
+              my_nanny_training_status: document.getElementById("myNannyTrainingStatus").value || null,
+              dog_preference: profileIsAdminView ? (document.getElementById("dogPreference").value || null) : undefined,
               police_clearance_document_url: document.getElementById("policeClearanceFile").dataset.url || null,
               drivers_license_document_url: document.getElementById("driversLicenseFile").dataset.url || null,
               certificate_urls: JSON.parse(document.getElementById("certificateFile").dataset.urls || "[]"),
               previous_jobs: collectPreviousJobs(),
+              qualification_ids: profileIsAdminView ? qualificationIds : undefined,
+              tag_ids: profileIsAdminView ? tagIds : undefined,
               language_ids: languageIds,
             })
           });
@@ -1392,6 +1555,7 @@
         const params = new URLSearchParams(window.location.search);
         const fromOps = params.get("from") === "ops";
         const isAdminView = params.get("admin") === "1";
+        profileIsAdminView = isAdminView;
         const isPostSignup = params.get("post_signup") === "1";
         if (!fromOps && !isAdminView && !isPostSignup) {
           window.location.href = "/static/nanny_home.html?v=2";
@@ -1407,10 +1571,15 @@
         const isApproved = !!profile.is_approved;
         renderBanner(isApproved);
         applyApprovedFieldPolicy(isApproved);
+        const currentJobAvailabilityEl = document.getElementById("currentJobAvailability");
+        if (currentJobAvailabilityEl) {
+          currentJobAvailabilityEl.value = profile.current_job_availability || "";
+        }
 
         document.getElementById("fullName").value = profile.full_name || "";
         document.getElementById("phone").value = profile.phone || "";
         document.getElementById("phoneAlt").value = profile.phone_alt || "";
+        document.getElementById("gender").value = profile.gender || "";
         setDobValue(profile.dob || "");
         document.getElementById("dogPreference").value = profile.dog_preference || "";
         document.getElementById("studyingDetails").value = profile.studying_details || "";
@@ -1428,6 +1597,13 @@
           document.getElementById("permitStatus").textContent = "Permit uploaded.";
         }
         document.getElementById("waiver").value = profile.waiver === true ? "yes" : (profile.waiver === false ? "no" : "");
+        document.getElementById("ownCar").value = profile.has_own_car === true ? "yes" : (profile.has_own_car === false ? "no" : "");
+        document.getElementById("driversLicense").value = profile.has_drivers_license === true ? "yes" : (profile.has_drivers_license === false ? "no" : "");
+        document.getElementById("jobType").value = profile.job_type || "";
+        document.getElementById("ownKids").value = profile.has_own_kids === true ? "yes" : (profile.has_own_kids === false ? "no" : "");
+        document.getElementById("ownKidsDetails").value = profile.own_kids_details || "";
+        document.getElementById("medicalConditions").value = profile.medical_conditions || "";
+        document.getElementById("myNannyTrainingStatus").value = profile.my_nanny_training_status || "";
         document.getElementById("saIdNumber").value = profile.sa_id_number || "";
         document.getElementById("saIdFile").dataset.url = profile.sa_id_document_url || "";
         if (profile.sa_id_document_url) {
@@ -1444,6 +1620,8 @@
         document.getElementById("certificateFile").dataset.urls = JSON.stringify(profile.certificate_urls || []);
         renderCertificateList();
         renderPreviousJobs(profile.previous_jobs || []);
+        toggleOwnKidsDetails();
+        toggleDriversLicenseField();
 
         toggleNationalityFields();
         updateDobHelpTip(isApproved);
@@ -1478,6 +1656,9 @@
         renderQualifications(quals, profile.qualification_ids || []);
         renderTags(tags, profile.tag_ids || []);
         renderLanguages(langs, profile.language_ids || []);
+        setAdminOnlyFieldAccess(profileIsAdminView);
+        document.getElementById("ownKids")?.addEventListener("change", toggleOwnKidsDetails);
+        document.getElementById("ownCar")?.addEventListener("change", toggleDriversLicenseField);
         const addPreviousJobBtn = document.getElementById("addPreviousJobBtn");
         if (addPreviousJobBtn) {
           addPreviousJobBtn.addEventListener("click", () => {

@@ -329,6 +329,7 @@ class NannyProfile(Base):
     has_own_car = Column(Boolean, nullable=True)
     has_drivers_license = Column(Boolean, nullable=True)
     job_type = Column(String, nullable=True)
+    current_job_availability = Column(String, nullable=True)
     police_clearance_status = Column(String, nullable=True)
     has_own_kids = Column(Boolean, nullable=True)
     own_kids_details = Column(Text, nullable=True)

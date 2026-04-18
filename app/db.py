@@ -370,6 +370,7 @@ def ensure_nanny_profiles_schema() -> None:
         add_col("has_own_car", "BOOLEAN")
         add_col("has_drivers_license", "BOOLEAN")
         add_col("job_type", "TEXT")
+        add_col("current_job_availability", "TEXT")
         add_col("police_clearance_status", "TEXT")
         add_col("has_own_kids", "BOOLEAN")
         add_col("own_kids_details", "TEXT")

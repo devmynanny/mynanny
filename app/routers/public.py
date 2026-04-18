@@ -1966,6 +1966,7 @@ def _nanny_profile_snapshot(user: models.User, profile: models.NannyProfile) -> 
         "has_own_car": getattr(profile, "has_own_car", None),
         "has_drivers_license": getattr(profile, "has_drivers_license", None),
         "job_type": getattr(profile, "job_type", None),
+        "current_job_availability": getattr(profile, "current_job_availability", None),
         "police_clearance_status": getattr(profile, "police_clearance_status", None),
         "has_own_kids": getattr(profile, "has_own_kids", None),
         "own_kids_details": getattr(profile, "own_kids_details", None),
@@ -2640,6 +2641,7 @@ def get_nanny_me_profile(
         "has_own_car": getattr(profile, "has_own_car", None),
         "has_drivers_license": getattr(profile, "has_drivers_license", None),
         "job_type": getattr(profile, "job_type", None),
+        "current_job_availability": getattr(profile, "current_job_availability", None),
         "police_clearance_status": getattr(profile, "police_clearance_status", None),
         "has_own_kids": getattr(profile, "has_own_kids", None),
         "own_kids_details": getattr(profile, "own_kids_details", None),
@@ -2777,6 +2779,8 @@ def update_nanny_me_profile(
         profile.has_drivers_license = bool(payload.has_drivers_license)
     if payload.job_type is not None:
         profile.job_type = _norm_text(payload.job_type)
+    if payload.current_job_availability is not None:
+        profile.current_job_availability = _norm_text(payload.current_job_availability)
     if payload.police_clearance_status is not None:
         profile.police_clearance_status = _norm_text(payload.police_clearance_status)
     if payload.has_own_kids is not None:
@@ -7031,6 +7035,7 @@ def admin_get_nanny_profile(
         "certificate_urls": certificate_urls,
         "dog_preference": getattr(profile, "dog_preference", None) if profile else None,
         "job_type": getattr(profile, "job_type", None) if profile else None,
+        "current_job_availability": getattr(profile, "current_job_availability", None) if profile else None,
         "has_drivers_license": getattr(profile, "has_drivers_license", None) if profile else None,
         "has_own_car": getattr(profile, "has_own_car", None) if profile else None,
         "has_own_kids": getattr(profile, "has_own_kids", None) if profile else None,
