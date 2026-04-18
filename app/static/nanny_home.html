@@ -210,8 +210,85 @@
       return `${startText}-${endText}`;
     }
 
+    function formatCompactTimeRange(startValue, endValue) {
+      const start = startValue ? new Date(startValue) : null;
+      const end = endValue ? new Date(endValue) : null;
+      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "-";
+      const fmt = new Intl.DateTimeFormat("en-ZA", {
+        hour: "numeric",
+        hour12: true,
+        timeZone: "Africa/Johannesburg",
+      });
+      const normalize = (value) => fmt.format(value).replace(/\s/g, "").toLowerCase().replace(":00", "");
+      return `${normalize(start)}-${normalize(end)}`;
+    }
+
     function bookingStatusKey(item) {
       return String(item?.status || "").toLowerCase();
+    }
+
+    function bookingGroupKey(item) {
+      return String(item?.booking_request_id || item?.booking_id || item?.request_id || "");
+    }
+
+    function groupDutyBookings(items) {
+      const groups = new Map();
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const key = bookingGroupKey(item) || `${item?.start_dt || ""}-${item?.parent_name || ""}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            group_key: key,
+            booking_request_id: item?.booking_request_id || item?.request_id || null,
+            booking_ids: [],
+            parent_name: item?.parent_name || "Client",
+            parent_email: item?.parent_email || "",
+            location_label: item?.location_label || null,
+            location_address: item?.location_address || null,
+            status: item?.status || "",
+            check_in_at: item?.check_in_at || null,
+            check_out_at: item?.check_out_at || null,
+            start_dt: item?.start_dt || null,
+            end_dt: item?.end_dt || null,
+            slots: [],
+          });
+        }
+        const group = groups.get(key);
+        if (item?.booking_id != null) group.booking_ids.push(item.booking_id);
+        group.slots.push({
+          booking_id: item?.booking_id || null,
+          start_dt: item?.start_dt || null,
+          end_dt: item?.end_dt || null,
+          status: item?.status || "",
+          check_in_at: item?.check_in_at || null,
+          check_out_at: item?.check_out_at || null,
+        });
+        if (!group.start_dt || String(item?.start_dt || "") < String(group.start_dt || "")) group.start_dt = item?.start_dt || group.start_dt;
+        if (!group.end_dt || String(item?.end_dt || "") > String(group.end_dt || "")) group.end_dt = item?.end_dt || group.end_dt;
+        if (item?.check_in_at && (!group.check_in_at || String(item.check_in_at) < String(group.check_in_at))) group.check_in_at = item.check_in_at;
+        if (!group.check_out_at || (item?.check_out_at && String(item.check_out_at) > String(group.check_out_at))) group.check_out_at = item?.check_out_at || group.check_out_at;
+        if (bookingStatusKey(item) === "active") group.status = "active";
+      });
+      return Array.from(groups.values()).map((group) => {
+        group.slots.sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
+        return group;
+      });
+    }
+
+    function bookingColorForGroup(key) {
+      const palette = [
+        { border: "#f4a261", background: "#fff1e6" },
+        { border: "#7db7ff", background: "#eaf3ff" },
+        { border: "#8ecf97", background: "#edf9ef" },
+        { border: "#c89df2", background: "#f5edff" },
+        { border: "#f6c85f", background: "#fff8e1" },
+        { border: "#73c6c6", background: "#e8f8f8" },
+      ];
+      const raw = String(key || "");
+      let hash = 0;
+      for (let i = 0; i < raw.length; i += 1) {
+        hash = (hash * 31 + raw.charCodeAt(i)) >>> 0;
+      }
+      return palette[hash % palette.length];
     }
 
     function isInProgressBooking(item) {
@@ -228,20 +305,23 @@
     function renderBookingPanel(containerId, items, emptyText) {
       const container = document.getElementById(containerId);
       if (!container) return;
-      const list = Array.isArray(items) ? items : [];
+      const list = groupDutyBookings(items);
       if (!list.length) {
         container.innerHTML = `<div class="muted">${escapeHtml(emptyText)}</div>`;
         return;
       }
       container.innerHTML = list.map((item) => {
+        const totalDays = item.slots.length || 1;
+        const dayLabel = totalDays === 1 ? "1 day" : `${totalDays} days`;
         return `
           <div class="bookingItem">
             <div class="bookingItemTitle">${escapeHtml(item.parent_name || "Client")}</div>
-            <div class="bookingItemMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}</div>
+            <div class="bookingItemMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}${item.end_dt && item.end_dt !== item.start_dt ? ` to ${escapeHtml(formatDayDateLabel(item.end_dt))}` : ""}</div>
+            <div class="bookingItemMeta">${escapeHtml(dayLabel)} • ${escapeHtml(formatCompactTimeRange(item.start_dt, item.end_dt))}</div>
             <div class="bookingItemMeta">${escapeHtml(formatListingDate(item.start_dt))} to ${escapeHtml(formatListingDate(item.end_dt))}</div>
             <div class="bookingItemMeta">${escapeHtml(item.location_address || item.location_label || "-")}</div>
             <div class="acceptedActions">
-              <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || item.request_id || "")}">View details</button>
+              <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || "")}">View details</button>
             </div>
           </div>
         `;
@@ -301,7 +381,11 @@
         if (parts.year !== year || (parts.month - 1) !== month) return;
         const key = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
         if (!byDate.has(key)) byDate.set(key, []);
-        byDate.get(key).push(item);
+        byDate.get(key).push({
+          ...item,
+          _group_key: bookingGroupKey(item),
+          _calendar_color: bookingColorForGroup(bookingGroupKey(item)),
+        });
       });
       const heads = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<div class="calendarHead">${day}</div>`).join("");
       const blanks = Array.from({ length: offset }, () => `<div></div>`).join("");
@@ -311,7 +395,8 @@
         const bookings = (byDate.get(key) || []).sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
         const shown = bookings.slice(0, 3).map((booking) => {
           const label = `${booking.parent_name || "Client"} ${formatCalendarTimeRange(booking.start_dt, booking.end_dt)}`;
-          return `<div class="calendarBooking">${escapeHtml(label)}</div>`;
+          const color = booking._calendar_color || bookingColorForGroup(booking._group_key);
+          return `<div class="calendarBooking" style="border-left-color:${escapeHtml(color.border)};background:${escapeHtml(color.background)};">${escapeHtml(label)}</div>`;
         }).join("");
         const more = bookings.length > 3 ? `<div class="calendarMore">+${bookings.length - 3} more</div>` : "";
         return `<div class="calendarDay"><div class="calendarDayNumber">${day}</div>${shown}${more}</div>`;
