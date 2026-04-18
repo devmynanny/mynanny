@@ -3341,6 +3341,11 @@ def list_nanny_me_booking_requests(
             "nanny_response_note": getattr(req, "nanny_response_note", None),
             "parent_name": parent.name,
             "parent_email": parent.email,
+            "parent_phone": (
+                (getattr(prof, "phone", None) or getattr(parent, "phone", None))
+                if (req.status == "approved" or (getattr(req, "nanny_response_status", None) or "").lower() == "accepted")
+                else None
+            ),
             "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
             "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
             "notes": req.client_notes,

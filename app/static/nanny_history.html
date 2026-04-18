@@ -11,12 +11,8 @@
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
     .card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:10px 0;}
     .muted{color:#666}
-    .actions{display:flex;gap:8px;margin-top:8px}
+    .actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
     .statusLine{margin-top:8px}
-    .dutyBadge{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid #ddd;font-size:12px}
-    .dutyOn{background:#ecfdf5;border-color:#86efac;color:#166534}
-    .dutyDone{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
-    .warn{margin-top:8px;padding:8px;border:1px solid #f3d9a7;background:#fff8e6;border-radius:10px;color:#5f4a1a;font-size:13px}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -36,79 +32,33 @@
       return `${first} ${lastInitial}.`;
     }
 
-    let dutyTimerId = null;
-
-    function formatDuration(ms) {
-      const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-      const h = Math.floor(totalSeconds / 3600);
-      const m = Math.floor((totalSeconds % 3600) / 60);
-      const s = totalSeconds % 60;
-      return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
-    function renderDutyElapsed() {
-      document.querySelectorAll("[data-check-in-at]").forEach(el => {
-        const start = el.dataset.checkInAt;
-        if (!start) return;
-        const startMs = new Date(start).getTime();
-        if (Number.isNaN(startMs)) return;
-        el.textContent = formatDuration(Date.now() - startMs);
-      });
-    }
-
-    async function currentCoords() {
-      return await new Promise((resolve, reject) => {
-        if (!navigator.geolocation) {
-          reject(new Error("Geolocation is not available on this device."));
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-          err => reject(new Error(err?.message || "Unable to get your location.")),
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
-        );
-      });
-    }
-
-    async function doDutyAction(bookingId, action, btn) {
-      btn.disabled = true;
-      try {
-        const coords = await currentCoords();
-        await fetchJson(`/nannies/me/bookings/${bookingId}/${action}`, {
-          method: "POST",
-          body: JSON.stringify(coords),
-        });
-        await loadBookingHistory();
-      } catch (e) {
-        btn.disabled = false;
-        alert(e.message || "Failed to update duty status.");
-      }
-    }
-
-    async function cancelBooking(bookingId, btn) {
-      const reason = (prompt("Why are you cancelling this booking?") || "").trim();
-      if (!reason) {
-        alert("Please provide a cancellation reason.");
-        return;
-      }
-      btn.disabled = true;
-      try {
-        await fetchJson(`/nannies/me/bookings/${bookingId}/cancel`, {
-          method: "POST",
-          body: JSON.stringify({ reason }),
-        });
-        await loadBookingHistory();
-      } catch (e) {
-        btn.disabled = false;
-        alert(e.message || "Failed to cancel booking.");
-      }
+    function responseMeta(status) {
+      const key = String(status || "pending").toLowerCase();
+      if (key === "accepted") return "Accepted";
+      if (key === "declined") return "Declined";
+      if (key === "deciding") return "Still deciding";
+      return "Awaiting response";
     }
 
     async function loadBookingHistory() {
-      const data = await fetchJson("/nannies/me/duty-bookings");
+      const data = await fetchJson("/nannies/me/booking-requests");
       const list = document.getElementById("bookingHistoryList");
       list.innerHTML = "";
-      const items = data.results || [];
+      const now = Date.now();
+      const items = (data.results || []).filter((r) => {
+        const response = String(r.nanny_response_status || "").toLowerCase();
+        const endMs = r.end_dt ? new Date(r.end_dt).getTime() : NaN;
+        return ["accepted", "declined", "deciding"].includes(response) && Number.isFinite(endMs) && endMs < now;
+      }).sort((a, b) => String(b.end_dt || "").localeCompare(String(a.end_dt || "")));
       if (!items.length) {
         list.innerHTML = "<div class=\"muted\">No historical bookings yet.</div>";
         return;
@@ -116,67 +66,28 @@
       items.forEach(r => {
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
-        const loc = (r.location_label && r.location_address)
-          ? `${r.location_label} - ${r.location_address}`
-          : (r.location_label || r.location_address || "-");
         const parentName = formatName(r.parent_name || "Parent");
-        const jobId = r.booking_id;
-        const isCompleted = String(r.status || "").toLowerCase() === "completed";
-        const checkedIn = !!r.check_in_at;
-        const checkedOut = !!r.check_out_at;
-        const dutyBadge = checkedOut
-          ? `<span class="dutyBadge dutyDone">Checked out</span>`
-          : checkedIn
-            ? `<span class="dutyBadge dutyOn">On duty</span>`
-            : "";
-        const checkInLine = checkedIn
-          ? `<div class="muted">Check in: ${window.formatDateTimeZA ? window.formatDateTimeZA(r.check_in_at) : r.check_in_at}${r.check_in_distance_m != null ? ` (${Number(r.check_in_distance_m).toFixed(1)}m from location)` : ""}</div>`
-          : "";
-        const checkOutLine = checkedOut
-          ? `<div class="muted">Check out: ${window.formatDateTimeZA ? window.formatDateTimeZA(r.check_out_at) : r.check_out_at}${r.check_out_distance_m != null ? ` (${Number(r.check_out_distance_m).toFixed(1)}m from location)` : ""}</div>`
-          : "";
-        const timerLine = checkedIn && !checkedOut
-          ? `<div class="muted">On-duty timer: <strong data-check-in-at="${r.check_in_at}">00:00:00</strong></div>`
-          : "";
-        const canCheckIn = !checkedIn && !isCompleted;
-        const canCheckOut = checkedIn && !checkedOut && !isCompleted;
-        const canCancel = !checkedOut && !isCompleted && String(r.status || "").toLowerCase() !== "cancelled";
+        const jobId = r.group_id || r.id;
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
-          <div><strong>${parentName || "Parent"}</strong> (${r.parent_email || "-"})</div>
-          <div class="muted">Job ID: ${jobId}</div>
-          <div class="muted">${start} to ${end}</div>
-          <div class="muted">Location: ${loc}</div>
-          <div class="muted statusLine">Status: ${r.status || "-"}</div>
-          ${dutyBadge}
-          ${checkInLine}
-          ${checkOutLine}
-          ${timerLine}
-          <div class="warn">Check in and check out are allowed only when you are within 100m of the booking location.</div>
+          <div><strong>${escapeHtml(parentName || "Parent")}</strong></div>
+          <div class="muted">Job ID: ${escapeHtml(jobId)}</div>
+          <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+          <div class="muted statusLine">Your response: ${escapeHtml(responseMeta(r.nanny_response_status))}</div>
+          <div class="muted">Booking status: ${escapeHtml(r.status || "-")}</div>
           <div class="actions">
-            ${canCheckIn ? `<button class="btn dutyBtn" data-id="${r.booking_id}" data-action="check-in">Report for duty (Check in)</button>` : ""}
-            ${canCheckOut ? `<button class="btn dutyBtn" data-id="${r.booking_id}" data-action="check-out">Check out and end shift</button>` : ""}
-            ${canCancel ? `<button class="btn cancelBookingBtn" data-id="${r.booking_id}">Cancel booking</button>` : ""}
+            <button class="btn viewHistoryBookingBtn" data-id="${escapeHtml(r.id || "")}" type="button">View details</button>
           </div>
         `;
         list.appendChild(card);
       });
-      list.querySelectorAll(".dutyBtn").forEach(btn => {
+      list.querySelectorAll(".viewHistoryBookingBtn").forEach(btn => {
         btn.addEventListener("click", () => {
-          doDutyAction(btn.dataset.id, btn.dataset.action, btn);
+          const id = btn.dataset.id || "";
+          location.href = id ? `/static/nanny_requests.html?request_id=${encodeURIComponent(id)}` : "/static/nanny_requests.html";
         });
       });
-      list.querySelectorAll(".cancelBookingBtn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          cancelBooking(btn.dataset.id, btn);
-        });
-      });
-      renderDutyElapsed();
-      if (dutyTimerId) clearInterval(dutyTimerId);
-      if (document.querySelector("[data-check-in-at]")) {
-        dutyTimerId = setInterval(renderDutyElapsed, 1000);
-      }
     }
 
     (async () => {

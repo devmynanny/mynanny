@@ -182,9 +182,9 @@
         </div>
         <div class="doc-upload">
           <label class="small">Passport copy</label>
-          <div class="row">
+          <div class="row" style="align-items:center; gap:8px;">
             <input id="passportFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadPassportBtn" type="button">Upload passport</button>
+            <button id="uploadPassportBtn" type="button">Save</button>
           </div>
           <div class="small" id="passportStatus"></div>
         </div>
@@ -206,16 +206,12 @@
       </div>
       <div class="row" id="permitRow" style="margin-top:10px;">
         <div>
-          <label class="small">Work permit</label>
+          <label class="small">Permit/waiver/receipt</label>
           <select id="workPermit" style="width:200px; padding:8px;">
             <option value="">Select</option>
             <option value="yes">Yes</option>
             <option value="no">No</option>
           </select>
-        </div>
-        <div>
-          <label class="small">Work permit expiry</label>
-          <input id="workPermitExpiry" type="date" style="width:200px; padding:8px;" />
         </div>
         <div>
           <label class="small">Waiver (if no permit)</label>
@@ -226,10 +222,10 @@
           </select>
         </div>
         <div class="doc-upload">
-          <label class="small">Work permit copy</label>
-          <div class="row">
+          <label class="small">Permit/waiver/receipt copy</label>
+          <div class="row" style="align-items:center; gap:8px;">
             <input id="permitFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadPermitBtn" type="button">Upload permit</button>
+            <button id="uploadPermitBtn" type="button">Save</button>
           </div>
           <div class="small" id="permitStatus"></div>
         </div>
@@ -1368,7 +1364,7 @@
               passport_document_url: document.getElementById("passportFile").dataset.url || null,
               permit_status: permitStatus,
               work_permit: workPermitValue === "yes" ? true : (workPermitValue === "no" ? false : null),
-              work_permit_expiry: document.getElementById("workPermitExpiry").value || null,
+              work_permit_expiry: null,
               work_permit_document_url: document.getElementById("permitFile").dataset.url || null,
               waiver: waiverValue === "yes" ? true : (waiverValue === "no" ? false : null),
               sa_id_number: document.getElementById("saIdNumber").value || null,
@@ -1427,7 +1423,6 @@
           document.getElementById("passportStatus").textContent = "Passport uploaded.";
         }
         document.getElementById("workPermit").value = profile.work_permit === true ? "yes" : (profile.work_permit === false ? "no" : "");
-        document.getElementById("workPermitExpiry").value = profile.work_permit_expiry || "";
         document.getElementById("permitFile").dataset.url = profile.work_permit_document_url || "";
         if (profile.work_permit_document_url) {
           document.getElementById("permitStatus").textContent = "Permit uploaded.";

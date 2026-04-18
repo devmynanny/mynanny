@@ -31,6 +31,10 @@
     .detailList{margin:8px 0 0 18px;padding:0}
     .detailList li{margin:6px 0;color:#334155}
     .calendarBtn{background:#ecfdf5;border-color:#86efac;color:#166534;font-weight:600;text-decoration:none}
+    .fieldList{display:grid;gap:10px;margin-top:10px}
+    .fieldItem{display:grid;gap:4px}
+    .fieldLabel{font-weight:700;color:#0f172a}
+    .fieldValue{color:#334155;line-height:1.5}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -82,42 +86,98 @@
       return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${stamp(start)}/${stamp(end)}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(item.location_address || item.location_label || "")}`;
     }
 
-    function buildDetailItems(notes) {
-      return String(notes || "")
+    function parseBookingQuestionnaire(notes) {
+      const parsed = { additionalNotes: "", items: {} };
+      String(notes || "")
         .split(/\n+/)
         .map(line => line.trim())
         .filter(Boolean)
-        .map(line => `<li>${escapeHtml(line.replace(/^[-*]\s*/, "").trim())}</li>`)
-        .join("");
+        .forEach(line => {
+          if (!line.includes(":")) return;
+          const idx = line.indexOf(":");
+          const rawLabel = line.slice(0, idx).trim();
+          const rawValue = line.slice(idx + 1).trim();
+          if (!rawLabel) return;
+          if (rawLabel.toLowerCase() === "additional notes") {
+            parsed.additionalNotes = rawValue;
+            return;
+          }
+          parsed.items[rawLabel.toLowerCase()] = rawValue || "-";
+        });
+      return parsed;
+    }
+
+    function formatBookingSlot(slot) {
+      const startDt = slot && slot.start_dt ? new Date(slot.start_dt) : null;
+      const endDt = slot && slot.end_dt ? new Date(slot.end_dt) : null;
+      if (!startDt || Number.isNaN(startDt.getTime()) || !endDt || Number.isNaN(endDt.getTime())) {
+        const fallbackStart = window.formatDateTimeZA ? window.formatDateTimeZA(slot && slot.start_dt) : (slot && slot.start_dt) || "-";
+        const fallbackEnd = window.formatDateTimeZA ? window.formatDateTimeZA(slot && slot.end_dt) : (slot && slot.end_dt) || "-";
+        return `${fallbackStart} to ${fallbackEnd}`;
+      }
+      const dateLabel = new Intl.DateTimeFormat("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Africa/Johannesburg",
+      }).format(startDt);
+      const timeFmt = new Intl.DateTimeFormat("en-ZA", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Africa/Johannesburg",
+      });
+      return `${dateLabel}: ${timeFmt.format(startDt)} - ${timeFmt.format(endDt)}`;
+    }
+
+    function buildExpectationFields(notes) {
+      const questionnaire = parseBookingQuestionnaire(notes);
+      const items = questionnaire.items || {};
+      const fields = [
+        ["Age of the child(ren)", items["age of the child(ren)"] || "-"],
+        ["Number of child(ren)", items["children present"] || items["number of child(ren)"] || "1"],
+        ["Allergies of Child(ren)", items["allergies of child(ren)"] || "-"],
+        ["Special needs/disabilities of child(ren)", items["special needs/disabilities of child(ren)"] || "-"],
+        ["Will another adult be present", items["adult present at address"] || "-"],
+        ["Should the nanny bring her own food", items["meal arrangement"] || "-"],
+        ["Dogs at the home", items["dogs at home"] || "None provided"],
+        ["House upkeep expectation", items["house upkeep disclaimer understood"] || "-"],
+        ["Nanny responsibilities", items["nanny responsibilities"] || "-"],
+        ["Reason for booking", items["reason for booking"] || "-"],
+      ];
+      return fields.map(([label, value]) => `
+        <div class="fieldItem">
+          <div class="fieldLabel">${escapeHtml(label)}:</div>
+          <div class="fieldValue">${escapeHtml(value || "-")}</div>
+        </div>
+      `).join("");
     }
 
     async function loadBookingRequests() {
       const data = await fetchJson("/nannies/me/booking-requests");
       const list = document.getElementById("bookingRequestsList");
       list.innerHTML = "";
-      const items = data.results || [];
+      const params = new URLSearchParams(window.location.search);
+      const requestedId = String(params.get("request_id") || "").trim();
+      const rawItems = data.results || [];
+      const items = requestedId
+        ? rawItems.filter((item) => String(item.id || "") === requestedId || String(item.group_id || "") === requestedId)
+        : rawItems;
       if (!items.length) {
-        list.innerHTML = "<div class=\"muted\">No booking requests yet.</div>";
+        list.innerHTML = requestedId
+          ? "<div class=\"muted\">That booking could not be found.</div>"
+          : "<div class=\"muted\">No booking requests yet.</div>";
         return;
       }
       items.forEach(r => {
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const endMs = r.end_dt ? new Date(r.end_dt).getTime() : NaN;
+        const isPastBooking = Number.isFinite(endMs) && endMs < Date.now();
         const slots = Array.isArray(r.slots) ? r.slots : [];
-        const dayCount = Number(r.days_required || 0) || (slots.length ? new Set(slots.map(s => s.date || (s.start_dt || "").slice(0, 10))).size : 1);
         const slotItems = slots.length
-          ? slots.map(s => {
-              const sStart = window.formatDateTimeZA ? window.formatDateTimeZA(s.start_dt) : (s.start_dt || "-");
-              const sEnd = window.formatDateTimeZA ? window.formatDateTimeZA(s.end_dt) : (s.end_dt || "-");
-              return `<li>${sStart} to ${sEnd}</li>`;
-            }).join("")
-          : `<li>${start} to ${end}</li>`;
-        const scheduleBlock = `
-          <div class="daysNotice">
-            <div><strong>${dayCount} day${dayCount === 1 ? "" : "s"} required at this location.</strong></div>
-            <ul class="slotList">${slotItems}</ul>
-          </div>
-        `;
+          ? slots.map(s => `<li>${escapeHtml(formatBookingSlot(s))}</li>`).join("")
+          : `<li>${escapeHtml(`${start} to ${end}`)}</li>`;
         const loc = (r.location_label && r.location_address)
           ? `${r.location_label} - ${r.location_address}`
           : (r.location_label || r.location_address || "-");
@@ -140,7 +200,7 @@
           ? `https://bolt.eu/?destination=${encodeURIComponent(`${lat},${lng}`)}`
           : "";
         const response = responseMeta(r.nanny_response_status);
-        const detailsHtml = buildDetailItems(r.notes);
+        const expectationFieldsHtml = buildExpectationFields(r.notes);
         const currentResponse = String(r.nanny_response_status || "pending").toLowerCase();
         const canRespond = ["tbc", "pending_admin", "approved"].includes(String(r.status || "").toLowerCase()) && !["accepted", "declined"].includes(currentResponse);
         const accepted = currentResponse === "accepted";
@@ -150,19 +210,21 @@
         card.innerHTML = `
           <div class="headerRow">
             <div>
-              <div><strong>${escapeHtml(parentName || "Parent")}</strong> (${escapeHtml(r.parent_email || "-")})</div>
-              <div class="muted">Job ID: ${escapeHtml(jobId)}</div>
-              <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+              <div><strong>Client name:</strong> ${escapeHtml(parentName || "Parent")}</div>
+              <div class="muted"><strong>Booking dates:</strong></div>
+              <ul class="slotList">${slotItems}</ul>
+              ${isPastBooking ? "" : `<div class="muted"><strong>Booking address:</strong> ${escapeHtml(loc)}</div>`}
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
               ${accepted && calendarUrl ? `<a class="btn calendarBtn" href="${calendarUrl}" target="_blank" rel="noopener noreferrer">Add to my calendar</a>` : ""}
               <span class="statusPill ${response.className}">${escapeHtml(response.label)}</span>
             </div>
           </div>
-          ${scheduleBlock}
-          <div class="muted">Location: ${escapeHtml(loc)}</div>
-          ${hasCoords ? `<div class="mapWrap"><iframe class="mapFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="${mapSrc}" title="Client location map for job ${jobId}"></iframe></div><div class="mapLinks"><a class="mapLink" href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a><a class="mapLink boltLink" href="${boltDeepLink}" data-bolt-fallback="${boltFallbackUrl}" rel="noopener noreferrer">Ride with Bolt</a></div>` : `<div class="muted" style="margin-top:6px;">Map unavailable for this request.</div>`}
-          ${detailsHtml ? `<div class="detailBlock"><strong>Booking details</strong><ul class="detailList">${detailsHtml}</ul></div>` : ""}
+          ${isPastBooking ? "" : (hasCoords ? `<div class="mapWrap"><iframe class="mapFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="${mapSrc}" title="Client location map for job ${jobId}"></iframe></div><div class="mapLinks"><a class="mapLink" href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a><a class="mapLink boltLink" href="${boltDeepLink}" data-bolt-fallback="${boltFallbackUrl}" rel="noopener noreferrer">Ride with Bolt</a></div>` : `<div class="muted" style="margin-top:6px;">Map unavailable for this request.</div>`)}
+          <div class="detailBlock">
+            <strong>Booking details and Client expectations</strong>
+            <div class="fieldList">${expectationFieldsHtml}</div>
+          </div>
           <div class="muted" style="margin-top:10px;">Request status: ${escapeHtml(r.status || "-")}</div>
           ${r.nanny_responded_at ? `<div class="muted">Last updated by you: ${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(r.nanny_responded_at) : r.nanny_responded_at)}</div>` : ""}
           ${r.nanny_response_note ? `<div class="muted">Your note: ${escapeHtml(r.nanny_response_note)}</div>` : ""}

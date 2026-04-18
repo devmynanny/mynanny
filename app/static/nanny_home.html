@@ -30,9 +30,17 @@
     .listingTitle{font-weight:700}
     .listingMeta{color:#666;font-size:14px;margin-top:4px}
     .distancePill{display:inline-flex;align-items:center;border:1px solid #d1d5db;border-radius:999px;padding:4px 10px;background:#f9fafb;color:#374151;font-size:13px;margin-top:6px}
+    .acceptedCard{margin-top:20px}
+    .acceptedList{display:grid;gap:12px}
+    .acceptedBooking{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#f8fafc}
+    .acceptedMeta{display:grid;gap:4px}
+    .acceptedActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .btn.primarySoft{background:#ecfdf5;border-color:#86efac;color:#166534}
+    .btn.isDisabled{opacity:.55;cursor:not-allowed;pointer-events:none}
     @media (max-width:640px){
       .listingRow{grid-template-columns:1fr}
       .listingRow .btn{width:100%}
+      .acceptedActions .btn{width:100%}
     }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -49,6 +57,18 @@
       <button class="btn" id="goProfileBtn" type="button">My profile</button>
       <button class="btn" id="complaintTicketBtn" type="button">Complaint / ticket</button>
       <button class="btn" id="shareProfileBtn" type="button">Share my profile</button>
+    </div>
+  </div>
+
+  <div class="card acceptedCard">
+    <div class="sectionHead">
+      <div>
+        <h2>Accepted bookings</h2>
+        <div class="muted">Confirmed bookings that need your preparation and follow-up.</div>
+      </div>
+    </div>
+    <div id="acceptedBookings" class="acceptedList">
+      <div class="muted">Loading accepted bookings...</div>
     </div>
   </div>
 
@@ -77,9 +97,11 @@
         const data = await fetchJson("/nannies/me/booking-requests");
         const count = (data?.results || []).length;
         btn.textContent = count ? `View booking requests (${count})` : "View booking requests";
+        renderAcceptedBookings(data?.results || []);
         renderNearbyListings(data?.results || []);
       } catch {
         btn.textContent = "View booking requests";
+        renderAcceptedBookings([]);
         renderNearbyListings([]);
       }
     }
@@ -98,6 +120,86 @@
       if (window.formatDateTimeZA) return window.formatDateTimeZA(value);
       const dt = new Date(value);
       return Number.isNaN(dt.getTime()) ? value : dt.toLocaleString();
+    }
+
+    function normalizeWhatsAppNumber(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      const digits = raw.replace(/[^\d+]/g, "");
+      if (digits.startsWith("+")) return digits.slice(1);
+      if (digits.startsWith("00")) return digits.slice(2);
+      if (digits.startsWith("0")) return `27${digits.slice(1)}`;
+      return digits;
+    }
+
+    function buildCalendarReminderUrl(item) {
+      const start = item?.start_dt ? new Date(item.start_dt) : null;
+      const end = item?.end_dt ? new Date(item.end_dt) : null;
+      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "";
+      const stamp = (value) => value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+      const title = `My Nanny booking #${item.group_id || item.id}`;
+      const details = [
+        item.parent_name ? `Client: ${item.parent_name}` : "",
+        item.location_address ? `Address: ${item.location_address}` : "",
+        "Reminder: please set a notification for 1 day before this booking.",
+      ].filter(Boolean).join("\n");
+      return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${stamp(start)}/${stamp(end)}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(item.location_address || item.location_label || "")}`;
+    }
+
+    function renderAcceptedBookings(items) {
+      const container = document.getElementById("acceptedBookings");
+      if (!container) return;
+      const list = (Array.isArray(items) ? items : []).filter((item) => {
+        const response = String(item?.nanny_response_status || "").toLowerCase();
+        return response === "accepted";
+      });
+      list.sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
+      if (!list.length) {
+        container.innerHTML = "<div class=\"muted\">No accepted bookings yet.</div>";
+        return;
+      }
+      container.innerHTML = list.map((item) => {
+        const start = formatListingDate(item.start_dt);
+        const end = formatListingDate(item.end_dt);
+        const slots = Array.isArray(item.slots) ? item.slots : [];
+        const dates = slots.length
+          ? slots.map((slot) => formatListingDate(slot.start_dt)).join(" | ")
+          : start;
+        const reminderUrl = buildCalendarReminderUrl(item);
+        const whatsappPhone = normalizeWhatsAppNumber(item.parent_phone || "");
+        const whatsappClasses = whatsappPhone ? "btn" : "btn isDisabled";
+        const whatsappAttrs = whatsappPhone
+          ? `href="https://wa.me/${encodeURIComponent(whatsappPhone)}" target="_blank" rel="noopener noreferrer"`
+          : `href="#" aria-disabled="true"`;
+        return `
+          <div class="acceptedBooking">
+            <div class="listingTitle">Accepted booking #${escapeHtml(item.group_id || item.id || "-")}</div>
+            <div class="acceptedMeta">
+              <div class="listingMeta">Client: ${escapeHtml(item.parent_name || "Client")}</div>
+              <div class="listingMeta">Dates: ${escapeHtml(dates)}</div>
+              <div class="listingMeta">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+              <div class="listingMeta">Address: ${escapeHtml(item.location_address || item.location_label || "-")}</div>
+            </div>
+            <div class="acceptedActions">
+              <a class="btn primarySoft" href="${escapeHtml(reminderUrl)}" target="_blank" rel="noopener noreferrer">Create a reminder</a>
+              <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.id || "")}">View details of the booking</button>
+              <a class="${whatsappClasses}" ${whatsappAttrs}>WhatsApp</a>
+            </div>
+          </div>
+        `;
+      }).join("");
+      container.querySelectorAll(".acceptedDetailBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.id || "";
+          location.href = id ? `/static/nanny_requests.html?request_id=${encodeURIComponent(id)}` : "/static/nanny_requests.html";
+        });
+      });
+      container.querySelectorAll("a[aria-disabled='true']").forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          alert("Family WhatsApp details are not available for this booking yet.");
+        });
+      });
     }
 
     function listingDistance(item) {
