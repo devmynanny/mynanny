@@ -71,6 +71,11 @@
     .calendarIntro{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px}
     .calendarHint{max-width:620px}
     .calendarActions{display:flex;gap:8px;flex-wrap:wrap}
+    .calendarActionBtn{
+      font-weight:700;
+      border-color:#f28c7a;
+      color:#7a2e22;
+    }
     .recurringBookingCta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:220px}
     .recurringBookingNote{font-size:12px;color:#666;text-align:right}
     .fc .fc-bg-event.selectedDay{background:#dbeafe;opacity:0.95}
@@ -85,6 +90,11 @@
     .slotSleepoverBtn[aria-pressed="true"]{background:#d9b15f;color:#111;border-color:#d9b15f}
     .slotDateLabel{font-weight:600;color:#1f2937;padding-bottom:10px}
     .slotEmpty{color:#666}
+    .sleepoverExtras{display:grid;gap:12px;margin-top:14px;padding:12px;border:1px solid #f3d9a7;border-radius:12px;background:#fff8e6}
+    .sleepoverField{display:flex;flex-direction:column;gap:6px}
+    .sleepoverField label{font-size:12px;color:#666}
+    .sleepoverField textarea,.sleepoverField input{padding:10px;border-radius:10px;border:1px solid #ccc}
+    .sleepoverContinuationRow{display:grid;grid-template-columns:minmax(180px,1.4fr) minmax(160px,1fr);gap:10px;align-items:end}
     .scheduleList{display:grid;gap:8px}
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
     .weekdays{display:flex;flex-wrap:wrap;gap:8px}
@@ -136,14 +146,15 @@
     </div>
     <div id="searchCalendar"></div>
     <div class="calendarActions" style="margin-top:12px;">
-      <button class="btn" id="applySelectedDatesBtn" type="button">Apply selected dates</button>
-      <button class="btn secondary" id="clearSelectedDatesBtn" type="button">Clear dates</button>
+      <button class="btn calendarActionBtn" id="applySelectedDatesBtn" type="button">Apply selected dates</button>
+      <button class="btn secondary calendarActionBtn" id="clearSelectedDatesBtn" type="button">Clear dates</button>
     </div>
     <div class="selectedDatesPanel">
       <div style="font-weight:600;">Selected dates and times</div>
       <div id="selectedDatesSummary" class="muted" style="margin-top:6px;">No dates selected yet.</div>
       <div id="selectedDateChips" class="selectedDateChips"></div>
       <div id="selectedSlotRows" class="slotRows"></div>
+      <div id="sleepoverExtraFields"></div>
       <div style="margin-top:12px;">
         <button class="btn primary" id="searchBtn" type="button">Continue to available nannies</button>
       </div>
@@ -640,11 +651,13 @@
         .map((slot) => {
           if (!slot?.date || !slot?.start_time || !slot?.end_time) return null;
           const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-          const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
-          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
+          const continuationEndTime = slot.sleepover && slot.continuation_end_time ? slot.continuation_end_time : null;
+          const endDate = continuationEndTime ? addDaysToDate(slot.date, 1) : getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+          const effectiveEndTime = continuationEndTime || slot.end_time;
+          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, effectiveEndTime) : buildIso(endDate, effectiveEndTime);
           if (!startsAt || !endsAt) return null;
           if (new Date(endsAt) <= new Date(startsAt)) return null;
-          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, sleepover: !!slot.sleepover, starts_at: startsAt, ends_at: endsAt };
+          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, continuation_end_time: continuationEndTime, sleepover: !!slot.sleepover, starts_at: startsAt, ends_at: endsAt };
         })
         .filter(Boolean);
       const first = isoSlots[0] || null;
@@ -664,10 +677,23 @@
           return "Every selected date needs both an arrival and finishing time.";
         }
         const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-        const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
-        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
+        const continuationEndTime = slot.sleepover && slot.continuation_end_time ? slot.continuation_end_time : null;
+        if (slot.sleepover && !continuationEndTime && !normalized.some((candidate) => candidate.date === addDaysToDate(slot.date, 1))) {
+          return `Please add a finishing time for ${formatDateLabel(addDaysToDate(slot.date, 1))}.`;
+        }
+        const endDate = continuationEndTime ? addDaysToDate(slot.date, 1) : getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+        const effectiveEndTime = continuationEndTime || slot.end_time;
+        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, effectiveEndTime) : buildIso(endDate, effectiveEndTime);
         if (!startsAt || !endsAt || new Date(endsAt) <= new Date(startsAt)) {
           return `Finishing time must be after arrival time for ${formatDateLabel(slot.date)}.`;
+        }
+      }
+      if (normalized.some((slot) => !!slot.sleepover)) {
+        if (!(bookingState.sleepover_expectations || "").trim()) {
+          return "Please explain what is expected of the nanny on the sleep over request.";
+        }
+        if (!(bookingState.sleepover_reason || "").trim()) {
+          return "Please share the reason for the sleep over request.";
         }
       }
       return null;
@@ -691,6 +717,7 @@
                 date: String(slot?.date || "").trim(),
                 start_time: String(slot?.start_time || "").trim(),
                 end_time: String(slot?.end_time || "").trim(),
+                continuation_end_time: String(slot?.continuation_end_time || "").trim(),
                 sleepover: !!slot?.sleepover,
               }))
               .filter((slot) => slot.date && slot.start_time && slot.end_time)
@@ -699,6 +726,8 @@
         return {
           source: parsed?.source === "multi" ? "multi" : "once",
           slots,
+          sleepover_expectations: String(parsed?.sleepover_expectations || "").trim(),
+          sleepover_reason: String(parsed?.sleepover_reason || "").trim(),
         };
       } catch {
         return null;
@@ -712,8 +741,11 @@
           date: slot.date,
           start_time: slot.start_time,
           end_time: slot.end_time,
+          continuation_end_time: slot.continuation_end_time || null,
           sleepover: !!slot.sleepover,
         })),
+        sleepover_expectations: bookingState.sleepover_expectations || "",
+        sleepover_reason: bookingState.sleepover_reason || "",
       }));
     }
 
@@ -722,6 +754,8 @@
       if (!state || !Array.isArray(state.slots) || !state.slots.length) return false;
       selectedCalendarDates = new Set(state.slots.map((slot) => slot.date));
       setBookingSlots(state.slots);
+      bookingState.sleepover_expectations = state.sleepover_expectations || "";
+      bookingState.sleepover_reason = state.sleepover_reason || "";
       renderCalendarSelectedDates();
       updateSelectedDatesSummary();
       renderSelectedSlotRows();
@@ -792,11 +826,16 @@
 
     function renderSelectedSlotRows() {
       const rowsEl = document.getElementById("selectedSlotRows");
+      const sleepoverEl = document.getElementById("sleepoverExtraFields");
       const slots = sortSlots(bookingState.slots);
       if (!slots.length) {
         rowsEl.innerHTML = `<div class="slotEmpty">Apply selected dates to set arrival and finishing times.</div>`;
+        if (sleepoverEl) sleepoverEl.innerHTML = "";
         return;
       }
+      const slotDates = new Set(slots.map((slot) => slot.date));
+      const trailingSleepoverSlot = [...slots].reverse().find((slot) => !!slot.sleepover && !slotDates.has(addDaysToDate(slot.date, 1))) || null;
+      const hasSleepover = slots.some((slot) => !!slot.sleepover);
       rowsEl.innerHTML = slots.map((slot) => `
         <div class="slotRow" data-date="${escapeHtml(slot.date)}">
           <div class="slotDateLabel">${escapeHtml(formatDateLabel(slot.date))}</div>
@@ -812,6 +851,50 @@
           <button class="btn secondary removeSlotBtn" type="button">Remove</button>
         </div>
       `).join("");
+      if (sleepoverEl) {
+        if (!hasSleepover) {
+          sleepoverEl.innerHTML = "";
+        } else {
+          sleepoverEl.innerHTML = `
+            <div class="sleepoverExtras">
+              <div class="sleepoverField">
+                <label>What is expected of the nanny on a sleep over request?</label>
+                <textarea id="sleepoverExpectations" rows="3">${escapeHtml(bookingState.sleepover_expectations || "")}</textarea>
+              </div>
+              <div class="sleepoverField">
+                <label>Please share the reason for the sleep over request so the nanny can understand the circumstances during the sleep over.</label>
+                <textarea id="sleepoverReason" rows="3">${escapeHtml(bookingState.sleepover_reason || "")}</textarea>
+              </div>
+              ${trailingSleepoverSlot ? `
+                <div class="sleepoverContinuationRow" data-date="${escapeHtml(trailingSleepoverSlot.date)}">
+                  <div class="slotDateLabel">${escapeHtml(formatDateLabel(addDaysToDate(trailingSleepoverSlot.date, 1)))}</div>
+                  <div class="slotField">
+                    <label>Finishing time</label>
+                    <input type="time" id="sleepoverContinuationEndTime" value="${escapeHtml(trailingSleepoverSlot.continuation_end_time || trailingSleepoverSlot.end_time || "08:00")}" />
+                  </div>
+                </div>
+              ` : ""}
+            </div>
+          `;
+          document.getElementById("sleepoverExpectations")?.addEventListener("input", (event) => {
+            bookingState.sleepover_expectations = event.target.value || "";
+            persistCandidateSearchState(candidateSearchSource);
+          });
+          document.getElementById("sleepoverReason")?.addEventListener("input", (event) => {
+            bookingState.sleepover_reason = event.target.value || "";
+            persistCandidateSearchState(candidateSearchSource);
+          });
+          document.getElementById("sleepoverContinuationEndTime")?.addEventListener("change", (event) => {
+            if (!trailingSleepoverSlot) return;
+            const slot = bookingState.slots.find((item) => item.date === trailingSleepoverSlot.date);
+            if (!slot) return;
+            slot.continuation_end_time = event.target.value || "";
+            setBookingSlots(bookingState.slots);
+            persistCandidateSearchState(candidateSearchSource);
+            refreshBookingEstimate().catch(() => {});
+          });
+        }
+      }
 
       rowsEl.querySelectorAll(".slotStartTime").forEach((input) => {
         input.addEventListener("change", (event) => {
@@ -841,7 +924,17 @@
           const slot = bookingState.slots.find((item) => item.date === row?.dataset.date);
           if (!slot) return;
           slot.sleepover = !slot.sleepover;
+          if (!slot.sleepover) {
+            slot.continuation_end_time = "";
+          } else {
+            const nextDate = addDaysToDate(slot.date, 1);
+            const hasExplicitNextSlot = bookingState.slots.some((item) => item.date === nextDate);
+            if (!hasExplicitNextSlot && !slot.continuation_end_time) {
+              slot.continuation_end_time = slot.end_time || "08:00";
+            }
+          }
           setBookingSlots(bookingState.slots);
+          persistCandidateSearchState(candidateSearchSource);
           renderSelectedSlotRows();
           refreshBookingEstimate().catch(() => {});
         });
@@ -857,6 +950,7 @@
           renderCalendarSelectedDates();
           updateSelectedDatesSummary();
           renderSelectedSlotRows();
+          persistCandidateSearchState(candidateSearchSource);
         });
       });
     }
@@ -875,6 +969,7 @@
           date,
           start_time: current?.start_time || defaults.start_time,
           end_time: current?.end_time || defaults.end_time,
+          continuation_end_time: current?.continuation_end_time || "",
           sleepover: !!current?.sleepover,
         };
       });
@@ -932,6 +1027,8 @@
       start_dt: null,
       end_dt: null,
       slots: [],
+      sleepover_expectations: "",
+      sleepover_reason: "",
       selectedNannyIds: [],
     };
 
@@ -944,7 +1041,7 @@
         <div class="scheduleItem">
           <strong>${escapeHtml(formatDateLabel(slot.date))}</strong><br>
           ${escapeHtml(formatSlotTimeRange(slot))}
-          ${slot.sleepover ? `<br><span class="muted">Sleepover requested</span>` : ""}
+          ${slot.sleepover ? `<br><span class="muted">Sleepover requested${slot.continuation_end_time ? ` until ${escapeHtml(slot.continuation_end_time)} the next day` : ""}</span>` : ""}
         </div>
       `).join("");
     }
@@ -952,6 +1049,19 @@
     function formatCurrencyCents(cents, currency = "ZAR") {
       const amount = Number(cents || 0) / 100;
       return new Intl.NumberFormat("en-ZA", { style: "currency", currency }).format(amount);
+    }
+
+    function buildSleepoverNotes(baseNotes = "") {
+      const notes = [];
+      const trimmedBase = String(baseNotes || "").trim();
+      if (trimmedBase) notes.push(trimmedBase);
+      if ((bookingState.sleepover_expectations || "").trim()) {
+        notes.push(`Sleepover expectations: ${bookingState.sleepover_expectations.trim()}`);
+      }
+      if ((bookingState.sleepover_reason || "").trim()) {
+        notes.push(`Sleepover reason: ${bookingState.sleepover_reason.trim()}`);
+      }
+      return notes.join("\n").trim() || null;
     }
 
     async function refreshBookingEstimate() {
@@ -1256,7 +1366,7 @@
         status.textContent = "Please select a location.";
         return;
       }
-      const notes = document.getElementById("bookingNotes").value || null;
+      const notes = buildSleepoverNotes(document.getElementById("bookingNotes").value || "");
       const locationId = locSelect ? Number(locSelect.value) : null;
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
 

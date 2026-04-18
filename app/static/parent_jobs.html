@@ -80,6 +80,20 @@
       return value ? "Yes" : "No";
     }
 
+    function sanitizePhone(value) {
+      return String(value || "").replace(/[^\d+]/g, "");
+    }
+
+    function toWhatsappUrl(phone) {
+      const cleaned = sanitizePhone(phone).replace(/^\+/, "");
+      return cleaned ? `https://wa.me/${cleaned}` : "";
+    }
+
+    function toTelUrl(phone) {
+      const cleaned = sanitizePhone(phone);
+      return cleaned ? `tel:${cleaned}` : "";
+    }
+
     function toDateTimeInputValue(value) {
       if (!value) return "";
       let raw = value;
@@ -143,6 +157,12 @@
       `;
     }
 
+    function openJobDetails(card) {
+      const details = card?.querySelector(".job-details");
+      if (!details) return;
+      details.style.display = "block";
+    }
+
     function profileHtml(profile) {
       const qualifications = Array.isArray(profile?.qualifications) && profile.qualifications.length
         ? profile.qualifications.map((item) => item.name).join(", ")
@@ -204,6 +224,10 @@
           ? r.requested_nannies.map(n => `${formatName(n.name)} (ID ${n.id})`).join(", ")
           : "-";
         const form = r.booking_form || {};
+        const canEditJob = !!(r.can_edit_details || r.can_edit_form) && (r.status === "tbc" || r.status === "pending_admin");
+        const showActiveNannyContacts = r.status === "approved" && category !== "past";
+        const whatsappUrl = toWhatsappUrl(r.accepted_nanny_phone_alt);
+        const callUrl = toTelUrl(r.accepted_nanny_phone);
         const cardHtml = `
           <div class="card">
           <div><strong>Job ID:</strong> ${escapeHtml(r.job_id)}</div>
@@ -212,6 +236,9 @@
           <div class="muted">${escapeHtml(nannyLine)}</div>
           <div class="actions">
             ${r.status !== "cancelled" ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
+            ${canEditJob ? `<button class="btn editJobBtn" data-id="${r.job_id}">Edit job</button>` : ""}
+            ${showActiveNannyContacts && whatsappUrl ? `<a class="btn" data-contact-action="whatsapp" href="${escapeHtml(whatsappUrl)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
+            ${showActiveNannyContacts && callUrl ? `<a class="btn" data-contact-action="call" href="${escapeHtml(callUrl)}">Call nanny</a>` : ""}
             ${r.accepted_nanny_id ? `<button class="btn viewNannyProfileBtn" data-id="${r.accepted_nanny_id}">View nanny profile</button>` : ""}
           </div>
           <div class="job-details">
@@ -271,10 +298,23 @@
       }
       list.querySelectorAll(".card").forEach(card => {
         card.addEventListener("click", (e) => {
-          if (e.target.closest("button")) return;
+          if (e.target.closest("button") || e.target.closest("a")) return;
           const details = card.querySelector(".job-details");
           if (details) {
             details.style.display = details.style.display === "block" ? "none" : "block";
+          }
+        });
+      });
+      list.querySelectorAll(".editJobBtn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const card = btn.closest(".card");
+          openJobDetails(card);
+          const editSection = Array.from(card?.querySelectorAll(".detailSection") || []).find((section) => {
+            const title = section.querySelector("h3")?.textContent || "";
+            return /Edit booking/i.test(title);
+          });
+          if (editSection) {
+            editSection.scrollIntoView({ behavior: "smooth", block: "start" });
           }
         });
       });

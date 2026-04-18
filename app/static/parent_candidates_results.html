@@ -9,6 +9,11 @@
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:1100px;width:min(1100px,100%)}
     .top{display:flex;gap:12px;align-items:center}
     .btn{padding:10px 14px;border-radius:10px;border:1px solid #ccc;background:#fff;cursor:pointer}
+    .btn.coralGlow{
+      border-color:#f08c7d;
+      box-shadow:0 0 0 3px rgba(240,140,125,0.22);
+      font-weight:700;
+    }
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:16px}
     .card{border:1px solid #ddd;border-radius:14px;padding:16px}
     .muted{color:#666}
@@ -39,6 +44,7 @@
     .bookingDisclaimer{padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
     .bookingDisclaimer label{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:#374151}
     .bookingDisclaimer input{width:auto;margin:2px 0 0;padding:0}
+    .bookingCheckLabelText{font-weight:700}
     /* The calendar itself is the primary way to select a time range, so the manual
        date/time search bar can remain hidden while still allowing scripts to use it */
     .search-bar{display:none;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
@@ -184,7 +190,7 @@
         <div class="muted">These dates and times are being used to match available nannies.</div>
       </div>
       <div class="calendarActions">
-        <button class="btn secondary" id="editDatesBtn" type="button">Edit dates and times</button>
+        <button class="btn secondary coralGlow" id="editDatesBtn" type="button">Edit dates and times</button>
       </div>
     </div>
     <div id="multiDayNotice" class="muted" style="margin-top:6px; display:none;"></div>
@@ -192,16 +198,11 @@
   </div>
 
   <div id="status" class="muted" style="margin-top:10px"></div>
-  <div class="resultsActionBar">
-    <button class="btn" data-broadcast-action="nearby" type="button">Broadcast to nearest 30km</button>
-    <button class="btn" data-broadcast-action="selection" type="button">Broadcast to my selection</button>
-    <button class="btn" data-broadcast-action="favorites" type="button">Broadcast to my favorites</button>
-  </div>
   <div id="list" class="grid"></div>
   <div class="resultsActionBar" style="margin-bottom:10px;">
-    <button class="btn" data-broadcast-action="nearby" type="button">Broadcast to nearest 30km</button>
-    <button class="btn" data-broadcast-action="selection" type="button">Broadcast to my selection</button>
-    <button class="btn" data-broadcast-action="favorites" type="button">Broadcast to my favorites</button>
+    <button class="btn coralGlow" data-broadcast-action="nearby" type="button">Broadcast to nearest 30km</button>
+    <button class="btn coralGlow" data-broadcast-action="selection" type="button">Broadcast to my selection</button>
+    <button class="btn coralGlow" data-broadcast-action="favorites" type="button">Broadcast to my favorites</button>
   </div>
 
   <div id="bookingModal" class="modalBack">
@@ -216,12 +217,12 @@
       <select id="bookingLocation"></select>
       <label class="muted" style="margin-top:8px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
         <input id="bookingLocationConfirm" type="checkbox" style="margin:0;" />
-        I confirm this is the correct location
+        <span class="bookingCheckLabelText">I confirm this is the correct location</span>
       </label>
 
       <label class="muted" style="margin-top:8px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
         <input id="bookingSleepover" type="checkbox" style="margin:0;" />
-        Sleepover required (adds R150)
+        <span class="bookingCheckLabelText">Sleepover required (adds R150)</span>
       </label>
 
       <div class="bookingQuestionGrid">
@@ -500,11 +501,13 @@
         .map((slot) => {
           if (!slot?.date || !slot?.start_time || !slot?.end_time) return null;
           const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-          const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
-          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
+          const continuationEndTime = slot.sleepover && slot.continuation_end_time ? slot.continuation_end_time : null;
+          const endDate = continuationEndTime ? addDaysToDate(slot.date, 1) : getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+          const effectiveEndTime = continuationEndTime || slot.end_time;
+          const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, effectiveEndTime) : buildIso(endDate, effectiveEndTime);
           if (!startsAt || !endsAt) return null;
           if (new Date(endsAt) <= new Date(startsAt)) return null;
-          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, sleepover: !!slot.sleepover, starts_at: startsAt, ends_at: endsAt };
+          return { date: slot.date, start_time: slot.start_time, end_time: slot.end_time, continuation_end_time: continuationEndTime, sleepover: !!slot.sleepover, starts_at: startsAt, ends_at: endsAt };
         })
         .filter(Boolean);
       const first = isoSlots[0] || null;
@@ -524,8 +527,13 @@
           return "Every selected date needs both an arrival and finishing time.";
         }
         const startsAt = window.toIsoFromZA ? window.toIsoFromZA(slot.date, slot.start_time) : buildIso(slot.date, slot.start_time);
-        const endDate = getSlotEndDate(slot.date, slot.start_time, slot.end_time);
-        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, slot.end_time) : buildIso(endDate, slot.end_time);
+        const continuationEndTime = slot.sleepover && slot.continuation_end_time ? slot.continuation_end_time : null;
+        if (slot.sleepover && !continuationEndTime && !normalized.some((candidate) => candidate.date === addDaysToDate(slot.date, 1))) {
+          return `Please add a finishing time for ${formatDateLabel(addDaysToDate(slot.date, 1))}.`;
+        }
+        const endDate = continuationEndTime ? addDaysToDate(slot.date, 1) : getSlotEndDate(slot.date, slot.start_time, slot.end_time);
+        const effectiveEndTime = continuationEndTime || slot.end_time;
+        const endsAt = window.toIsoFromZA ? window.toIsoFromZA(endDate, effectiveEndTime) : buildIso(endDate, effectiveEndTime);
         if (!startsAt || !endsAt || new Date(endsAt) <= new Date(startsAt)) {
           return `Finishing time must be after arrival time for ${formatDateLabel(slot.date)}.`;
         }
@@ -551,6 +559,7 @@
                 date: String(slot?.date || "").trim(),
                 start_time: String(slot?.start_time || "").trim(),
                 end_time: String(slot?.end_time || "").trim(),
+                continuation_end_time: String(slot?.continuation_end_time || "").trim(),
                 sleepover: !!slot?.sleepover,
               }))
               .filter((slot) => slot.date && slot.start_time && slot.end_time)
@@ -559,6 +568,8 @@
         return {
           source: parsed?.source === "multi" ? "multi" : "once",
           slots,
+          sleepover_expectations: String(parsed?.sleepover_expectations || "").trim(),
+          sleepover_reason: String(parsed?.sleepover_reason || "").trim(),
         };
       } catch {
         return null;
@@ -804,6 +815,8 @@
       start_dt: null,
       end_dt: null,
       slots: [],
+      sleepover_expectations: "",
+      sleepover_reason: "",
       selectedNannyIds: [],
     };
 
@@ -816,9 +829,22 @@
         <div class="scheduleItem">
           <strong>${escapeHtml(formatDateLabel(slot.date))}</strong><br>
           ${escapeHtml(formatSlotTimeRange(slot))}
-          ${slot.sleepover ? `<br><span class="muted">Sleepover requested</span>` : ""}
+          ${slot.sleepover ? `<br><span class="muted">Sleepover requested${slot.continuation_end_time ? ` until ${escapeHtml(slot.continuation_end_time)} the next day` : ""}</span>` : ""}
         </div>
       `).join("");
+    }
+
+    function buildSleepoverNotes(baseNotes = "") {
+      const notes = [];
+      const trimmedBase = String(baseNotes || "").trim();
+      if (trimmedBase) notes.push(trimmedBase);
+      if ((bookingState.sleepover_expectations || "").trim()) {
+        notes.push(`Sleepover expectations: ${bookingState.sleepover_expectations.trim()}`);
+      }
+      if ((bookingState.sleepover_reason || "").trim()) {
+        notes.push(`Sleepover reason: ${bookingState.sleepover_reason.trim()}`);
+      }
+      return notes.join("\n").trim() || null;
     }
 
     function formatCurrencyCents(cents, currency = "ZAR") {
@@ -1175,10 +1201,8 @@
       const profs = [];
       const tags = (n.tags || []).map(t => t.name).filter(Boolean);
       const quals = (n.qualifications || []).map(q => q.name).filter(Boolean);
-      const langs = (n.languages || []).map(l => l.name).filter(Boolean);
       tags.forEach(t => profs.push(t));
       quals.forEach(q => profs.push(q));
-      langs.forEach(l => profs.push(l));
       const box = document.getElementById("previewProficiencies");
       if (profs.length === 0) {
         box.textContent = "No proficiencies listed.";
@@ -1232,7 +1256,7 @@
         return;
       }
       const questionnaire = getBookingQuestionnairePayload();
-      const notes = null;
+      const notes = buildSleepoverNotes("");
       const locationId = locSelect ? Number(locSelect.value) : null;
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
 
@@ -1788,6 +1812,8 @@
       syncFavoriteBroadcastModeUi();
 
       setBookingSlots(searchState.slots);
+      bookingState.sleepover_expectations = searchState.sleepover_expectations || "";
+      bookingState.sleepover_reason = searchState.sleepover_reason || "";
       renderResultsSchedule();
       renderMultiDayNoticeFromState(searchState);
       renderFavoriteBroadcastBanner();

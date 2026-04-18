@@ -4621,6 +4621,8 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 "accepted_nanny_id": None,
                 "accepted_nanny_user_id": None,
                 "accepted_nanny_name": None,
+                "accepted_nanny_phone": None,
+                "accepted_nanny_phone_alt": None,
                 "requested_nannies": [],
                 "booking_form": booking_form,
             }
@@ -4632,6 +4634,9 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             entry["accepted_nanny_id"] = req.nanny_id
             entry["accepted_nanny_user_id"] = nanny_u.id
             entry["accepted_nanny_name"] = nanny_u.name
+            if entry.get("booking_category") != "past":
+                entry["accepted_nanny_phone"] = getattr(nanny_u, "phone", None)
+                entry["accepted_nanny_phone_alt"] = getattr(nanny_u, "phone_alt", None)
         elif entry["status"] != "approved" and status in ("tbc", "pending_admin"):
             entry["status"] = "tbc"
         elif entry["status"] not in ("approved", "tbc", "pending_admin"):
