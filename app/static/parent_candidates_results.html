@@ -100,7 +100,7 @@
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
     .resultsActionBar{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:12px}
     .resultsActionBar.hidden{display:none}
-    .bookingToast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:3000;max-width:min(520px,calc(100vw - 32px));padding:14px 18px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;text-align:center}
+    .bookingToast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3000;max-width:min(640px,calc(100vw - 32px));padding:18px 22px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;font-size:17px;line-height:1.45;text-align:center}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
       .modalBack{padding:12px}
@@ -336,7 +336,6 @@
         <div id="previewProficiencies"></div>
       </div>
       <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
-        <button class="btn" id="broadcastFavoritesBtn" type="button">Broadcast to my favorites</button>
         <button class="btn primary" id="bookPreviewBtn" type="button">Book now</button>
         <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
       </div>
@@ -612,10 +611,6 @@
       document.querySelectorAll(".resultsActionBar").forEach((bar) => {
         bar.classList.toggle("hidden", favoriteBroadcastActive);
       });
-      const previewFavoritesBtn = document.getElementById("broadcastFavoritesBtn");
-      if (previewFavoritesBtn) {
-        previewFavoritesBtn.style.display = favoriteBroadcastActive ? "none" : "";
-      }
     }
 
     function renderResultsSchedule() {
@@ -1289,7 +1284,7 @@
         });
         const displayId = res?.group_id ?? "—";
         status.textContent = "";
-        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
         const res = await fetchJson("/booking-requests/bulk", {
           method: "POST",
@@ -1317,7 +1312,7 @@
         });
         const displayId = res?.group_id ?? "—";
         status.textContent = "";
-        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       } else {
         const res = await fetchJson("/booking-requests", {
           method: "POST",
@@ -1345,7 +1340,7 @@
         });
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
         status.textContent = "";
-        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       }
       document.getElementById("submitBookingBtn").disabled = true;
       if (favoriteBroadcastActive) {
@@ -1757,10 +1752,6 @@
     document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
     document.getElementById("previewModal").addEventListener("click", (e) => {
       if (e.target.id === "previewModal") closePreview();
-    });
-    document.getElementById("broadcastFavoritesBtn").addEventListener("click", () => {
-      if (!previewNanny) return;
-      broadcastToFavorites(true);
     });
     document.getElementById("bookPreviewBtn").addEventListener("click", () => {
       if (!previewNanny) return;

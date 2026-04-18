@@ -29,6 +29,7 @@
       .photo-controls{display:flex;flex-direction:column;gap:8px}
       .doc-upload{display:flex;flex-direction:column;gap:6px;min-width:220px}
       .doc-upload input[type="file"]{width:100%}
+      .doc-column-title{color:#222;font-size:15px;font-weight:700}
       .err { color: #b00020; margin-top: 6px; }
       .help-tip{
         display:inline-flex;
@@ -128,6 +129,7 @@
     </div>
 
     <div class="card">
+      <div style="font-weight:700; margin-bottom:12px;">Personal details</div>
       <div class="row top">
         <div class="stack" style="flex:1; min-width:240px;">
           <label class="small">Full name</label>
@@ -158,15 +160,19 @@
           </div>
         </div>
       </div>
-      <div id="bioSection" class="hidden-temporary" style="margin-top:10px;">
-        <label class="small">Bio (optional)</label>
-        <textarea id="bio" style="width:100%; min-height:80px; padding:8px;" placeholder="Short bio"></textarea>
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="font-weight:600; margin-bottom:8px;">Work preferences</div>
-      <div class="row">
+      <div class="row" style="margin-top:10px;">
+        <div style="min-width:220px; flex:1;">
+          <label class="small">Race</label>
+          <select id="race" style="width:100%; padding:8px;">
+            <option value="">Select race</option>
+            <option value="Black">Black</option>
+            <option value="Coloured">Coloured</option>
+            <option value="Indian/Asian">Indian/Asian</option>
+            <option value="White">White</option>
+            <option value="Other">Other</option>
+          </select>
+          <div class="err" id="raceError" style="display:none;"></div>
+        </div>
         <div style="min-width:220px; flex:1;">
           <label class="small">Do you have your own car?</label>
           <select id="ownCar" style="width:100%; padding:8px;">
@@ -193,6 +199,39 @@
           </select>
         </div>
       </div>
+      <div class="row top" style="margin-top:10px;">
+        <div style="min-width:220px; flex:1; max-width:360px;">
+          <label class="small">Have you done training with My Nanny?</label>
+          <select id="myNannyTrainingStatus" style="width:100%; padding:8px;">
+            <option value="">Select</option>
+            <option value="yes">Yes</option>
+            <option value="not_yet">Not yet</option>
+          </select>
+        </div>
+        <div class="admin-only-section" id="dogPreferenceSection" style="min-width:220px; flex:1; max-width:360px;">
+          <label class="small">Preference with dogs</label>
+          <select id="dogPreference" style="width:100%; padding:8px;">
+            <option value="">Select preference</option>
+            <option value="i_prefer_small_dogs">I prefer small dogs</option>
+            <option value="any_dog_is_fine">Any dog is fine</option>
+            <option value="not_pitbulls_or_rotweilers">Not pitbulls or rotweilers</option>
+            <option value="no_dogs">No dogs</option>
+          </select>
+          <div class="admin-locked-note">This field is completed by admin and is visible here for reference.</div>
+        </div>
+        <div class="doc-upload" style="flex:1; min-width:260px;">
+          <label class="small">Police clearance/Criminal check</label>
+          <div class="row" style="align-items:center; gap:8px;">
+            <input id="policeClearanceFile" type="file" accept=".pdf,image/*" />
+            <button id="uploadPoliceClearanceBtn" type="button">Save</button>
+          </div>
+          <div class="small" id="policeClearanceStatus"></div>
+        </div>
+      </div>
+      <div id="bioSection" class="hidden-temporary" style="margin-top:10px;">
+        <label class="small">Bio (optional)</label>
+        <textarea id="bio" style="width:100%; min-height:80px; padding:8px;" placeholder="Short bio"></textarea>
+      </div>
     </div>
 
     <div class="card">
@@ -214,18 +253,6 @@
       <div style="margin-top:10px;">
         <label class="small">Do you have any medical conditions or chronic medications?</label>
         <textarea id="medicalConditions" style="width:100%; min-height:76px; padding:8px;" placeholder="Share anything important here, or write 'None'."></textarea>
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="font-weight:600; margin-bottom:8px;">Training</div>
-      <div style="min-width:220px; max-width:360px;">
-        <label class="small">Have you done training with My Nanny?</label>
-        <select id="myNannyTrainingStatus" style="width:100%; padding:8px;">
-          <option value="">Select</option>
-          <option value="yes">Yes</option>
-          <option value="not_yet">Not yet</option>
-        </select>
       </div>
     </div>
 
@@ -254,18 +281,6 @@
             <option value="Zimbabwean">Zimbabwean</option>
           </select>
           <div class="err" id="nationalityError" style="display:none;"></div>
-        </div>
-        <div style="flex:1; min-width:240px;">
-          <label class="small">Race</label>
-          <select id="race" style="width:100%; padding:8px;">
-            <option value="">Select race</option>
-            <option value="Black">Black</option>
-            <option value="Coloured">Coloured</option>
-            <option value="Indian/Asian">Indian/Asian</option>
-            <option value="White">White</option>
-            <option value="Other">Other</option>
-          </select>
-          <div class="err" id="raceError" style="display:none;"></div>
         </div>
       </div>
       <div class="row" id="passportRow" style="margin-top:10px;">
@@ -356,18 +371,6 @@
       <div class="small" id="locationStatus"></div>
     </div>
 
-    <div class="card admin-only-section" id="dogPreferenceSection">
-      <div style="font-weight:600; margin-bottom:8px;">Preference with dogs</div>
-      <select id="dogPreference" style="width:100%; max-width:360px; padding:8px;">
-        <option value="">Select preference</option>
-        <option value="i_prefer_small_dogs">I prefer small dogs</option>
-        <option value="any_dog_is_fine">Any dog is fine</option>
-        <option value="not_pitbulls_or_rotweilers">Not pitbulls or rotweilers</option>
-        <option value="no_dogs">No dogs</option>
-      </select>
-      <div class="admin-locked-note">This field is completed by admin and is visible here for reference.</div>
-    </div>
-
     <div class="card admin-only-section" id="qualificationsSection">
       <div style="font-weight:600; margin-bottom:8px;">Qualifications</div>
       <div id="qualificationsList" class="row"></div>
@@ -394,19 +397,9 @@
       <div class="small" style="margin-bottom:10px;">
         You can upload what you have now and finish your profile. The only mandatory documents right now are your ID/passport and one permit document: permit, waiver, or receipt.
       </div>
-      <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; margin-top:8px;">
+      <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; margin-top:8px;">
         <div class="doc-upload">
-          <label class="small">Police clearance/Criminal check</label>
-          <div style="margin-top:6px;">
-            <input id="policeClearanceFile" type="file" accept=".pdf,image/*" />
-          </div>
-          <div style="margin-top:8px;">
-            <button id="uploadPoliceClearanceBtn" type="button">Save</button>
-          </div>
-          <div class="small" id="policeClearanceStatus"></div>
-        </div>
-        <div class="doc-upload">
-          <label class="small">Drivers license (optional):</label>
+          <label class="small doc-column-title">Drivers license (optional):</label>
           <div style="margin-top:6px;">
             <input id="driversLicenseFile" type="file" accept=".pdf,image/*" />
           </div>
@@ -416,7 +409,7 @@
           <div class="small" id="driversLicenseStatus"></div>
         </div>
         <div class="doc-upload">
-          <label class="small">Certificates:</label>
+          <label class="small doc-column-title">Certificates:</label>
           <div style="margin-top:6px;">
           <input id="certificateFile" type="file" accept=".pdf,image/*" />
           </div>

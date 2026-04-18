@@ -95,13 +95,14 @@
     .sleepoverField label{font-size:12px;color:#666}
     .sleepoverField textarea,.sleepoverField input{padding:10px;border-radius:10px;border:1px solid #ccc}
     .sleepoverContinuationRow{display:grid;grid-template-columns:minmax(180px,1.4fr) minmax(160px,1fr);gap:10px;align-items:end}
+    .sleepoverContinuationNote{margin-top:4px;font-size:12px;color:#7a7a7a;font-style:italic}
     .scheduleList{display:grid;gap:8px}
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
     .weekdays{display:flex;flex-wrap:wrap;gap:8px}
     .weekdays label{display:flex;align-items:center;gap:6px;font-size:13px;color:#555}
     .weekdays input{width:auto;margin:0;padding:0}
     .inlineStatus{min-height:18px;color:#b91c1c;font-size:13px;margin-top:10px}
-    .bookingToast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:3000;max-width:min(520px,calc(100vw - 32px));padding:14px 18px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;text-align:center}
+    .bookingToast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3000;max-width:min(640px,calc(100vw - 32px));padding:18px 22px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;font-size:17px;line-height:1.45;text-align:center}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
       .recurringBookingCta{align-items:flex-start}
@@ -859,15 +860,18 @@
             <div class="sleepoverExtras">
               <div class="sleepoverField">
                 <label>What is expected of the nanny on a sleep over request?</label>
-                <textarea id="sleepoverExpectations" rows="3">${escapeHtml(bookingState.sleepover_expectations || "")}</textarea>
+                <textarea id="sleepoverExpectations" rows="3" placeholder="eg. bath the kids at 19h&#10;prepare / feed dinner at 18h&#10;bedtime by 20:00 / read a story">${escapeHtml(bookingState.sleepover_expectations || "")}</textarea>
               </div>
               <div class="sleepoverField">
                 <label>Please share the reason for the sleep over request so the nanny can understand the circumstances during the sleep over.</label>
-                <textarea id="sleepoverReason" rows="3">${escapeHtml(bookingState.sleepover_reason || "")}</textarea>
+                <textarea id="sleepoverReason" rows="3" placeholder="eg. we need some sleep / work function / date night / etc&#10;we leave at 19h&#10;we return around midnight">${escapeHtml(bookingState.sleepover_reason || "")}</textarea>
               </div>
               ${trailingSleepoverSlot ? `
                 <div class="sleepoverContinuationRow" data-date="${escapeHtml(trailingSleepoverSlot.date)}">
-                  <div class="slotDateLabel">${escapeHtml(formatDateLabel(addDaysToDate(trailingSleepoverSlot.date, 1)))}</div>
+                  <div>
+                    <div class="slotDateLabel">${escapeHtml(formatDateLabel(addDaysToDate(trailingSleepoverSlot.date, 1)))}</div>
+                    <div class="sleepoverContinuationNote">(this is the time thatthe nanny can clock out and go home)</div>
+                  </div>
                   <div class="slotField">
                     <label>Finishing time</label>
                     <input type="time" id="sleepoverContinuationEndTime" value="${escapeHtml(trailingSleepoverSlot.continuation_end_time || trailingSleepoverSlot.end_time || "08:00")}" />
@@ -1387,7 +1391,7 @@
         });
         const displayId = res?.group_id ?? "—";
         status.textContent = "";
-        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
         const res = await fetchJson("/booking-requests/bulk", {
           method: "POST",
@@ -1404,7 +1408,7 @@
         });
         const displayId = res?.group_id ?? "—";
         status.textContent = "";
-        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       } else {
         const res = await fetchJson("/booking-requests", {
           method: "POST",
@@ -1421,7 +1425,7 @@
         });
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
         status.textContent = "";
-        showBookingToast(`Request submitted. Job ID: ${displayId}. We'll notify you as soon as a nanny accepts the job.`);
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       }
       document.getElementById("submitBookingBtn").disabled = true;
       setTimeout(closeBookingModal, 300);

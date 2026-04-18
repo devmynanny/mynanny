@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Nanny Operations</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:900px;width:min(900px,100%)}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:1120px;width:min(1120px,100%)}
     .topbar{
       display:flex;
       align-items:center;
@@ -30,17 +30,33 @@
     .listingTitle{font-weight:700}
     .listingMeta{color:#666;font-size:14px;margin-top:4px}
     .distancePill{display:inline-flex;align-items:center;border:1px solid #d1d5db;border-radius:999px;padding:4px 10px;background:#f9fafb;color:#374151;font-size:13px;margin-top:6px}
-    .acceptedCard{margin-top:20px}
-    .acceptedList{display:grid;gap:12px}
-    .acceptedBooking{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#f8fafc}
-    .acceptedMeta{display:grid;gap:4px}
+    .bookingGlance{display:grid;grid-template-columns:minmax(300px,0.95fr) minmax(420px,1.35fr);gap:18px;align-items:start}
+    .bookingStack{display:grid;gap:16px}
+    .bookingPanel{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#f8fafc}
+    .bookingPanelTitle{margin:0 0 10px;font-size:20px}
+    .bookingPanelList{display:grid;gap:10px}
+    .bookingItem{border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff}
+    .bookingItemTitle{font-weight:700}
+    .bookingItemMeta{color:#666;font-size:14px;margin-top:4px}
     .acceptedActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .monthCalendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+    .calendarHead{font-size:12px;color:#666;font-weight:600;text-align:center}
+    .calendarDay{min-height:96px;border:1px solid #e5e5e5;border-radius:8px;padding:6px;background:#fff;overflow:hidden}
+    .calendarDayNumber{font-size:12px;color:#555;margin-bottom:4px}
+    .calendarBooking{font-size:12px;line-height:1.25;border-left:3px solid #1f7a4d;padding-left:5px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
+    .calendarMore{font-size:12px;color:#666;margin-top:4px}
+    .calendarWrap{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#fff}
+    .calendarTitle{margin:0 0 10px;font-size:20px}
+    .monthNav{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+    .monthLabel{font-weight:700;font-size:18px}
     .btn.primarySoft{background:#ecfdf5;border-color:#86efac;color:#166534}
     .btn.isDisabled{opacity:.55;cursor:not-allowed;pointer-events:none}
     @media (max-width:640px){
       .listingRow{grid-template-columns:1fr}
       .listingRow .btn{width:100%}
-      .acceptedActions .btn{width:100%}
+      .bookingGlance{grid-template-columns:1fr}
+      .monthNav{flex-wrap:wrap}
+      .calendarDay{min-height:84px}
     }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -63,12 +79,33 @@
   <div class="card acceptedCard">
     <div class="sectionHead">
       <div>
-        <h2>Accepted bookings</h2>
-        <div class="muted">Confirmed bookings that need your preparation and follow-up.</div>
+        <h2>Your calendar</h2>
+        <div class="muted">Your current work schedule, including bookings in progress and upcoming bookings.</div>
       </div>
     </div>
-    <div id="acceptedBookings" class="acceptedList">
-      <div class="muted">Loading accepted bookings...</div>
+    <div class="bookingGlance">
+      <div class="bookingStack">
+        <div class="bookingPanel">
+          <h3 class="bookingPanelTitle">Bookings in progress</h3>
+          <div id="inProgressBookings" class="bookingPanelList">
+            <div class="muted">Loading bookings...</div>
+          </div>
+        </div>
+        <div class="bookingPanel">
+          <h3 class="bookingPanelTitle">Upcoming bookings</h3>
+          <div id="upcomingBookings" class="bookingPanelList">
+            <div class="muted">Loading bookings...</div>
+          </div>
+        </div>
+      </div>
+      <div class="calendarWrap">
+        <div class="monthNav">
+          <button class="btn secondary" id="calendarPrevBtn" type="button">Previous</button>
+          <div id="calendarMonthLabel" class="monthLabel">Loading...</div>
+          <button class="btn secondary" id="calendarNextBtn" type="button">Next</button>
+        </div>
+        <div id="nannyBookingsCalendar"></div>
+      </div>
     </div>
   </div>
 
@@ -87,6 +124,9 @@
 
   <script src="/static/app.js?v=2"></script>
   <script>
+    let currentCalendarMonth = null;
+    let dutyBookingsCache = [];
+
     document.getElementById("goAvailabilityBtn").addEventListener("click", () => {
       location.href = "/static/nanny_availability.html";
     });
@@ -97,13 +137,26 @@
         const data = await fetchJson("/nannies/me/booking-requests");
         const count = (data?.results || []).length;
         btn.textContent = count ? `View booking requests (${count})` : "View booking requests";
-        renderAcceptedBookings(data?.results || []);
         renderNearbyListings(data?.results || []);
       } catch {
         btn.textContent = "View booking requests";
-        renderAcceptedBookings([]);
         renderNearbyListings([]);
       }
+    }
+
+    async function loadDutyBookings() {
+      try {
+        const data = await fetchJson("/nannies/me/duty-bookings");
+        dutyBookingsCache = Array.isArray(data?.results) ? data.results : [];
+      } catch {
+        dutyBookingsCache = [];
+      }
+      if (!currentCalendarMonth) {
+        const now = new Date();
+        currentCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      }
+      renderDutyBookingPanels(dutyBookingsCache);
+      renderBookingsCalendar(currentCalendarMonth, dutyBookingsCache);
     }
 
     function escapeHtml(value) {
@@ -132,58 +185,63 @@
       return digits;
     }
 
-    function buildCalendarReminderUrl(item) {
-      const start = item?.start_dt ? new Date(item.start_dt) : null;
-      const end = item?.end_dt ? new Date(item.end_dt) : null;
-      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "";
-      const stamp = (value) => value.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-      const title = `My Nanny booking #${item.group_id || item.id}`;
-      const details = [
-        item.parent_name ? `Client: ${item.parent_name}` : "",
-        item.location_address ? `Address: ${item.location_address}` : "",
-        "Reminder: please set a notification for 1 day before this booking.",
-      ].filter(Boolean).join("\n");
-      return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${stamp(start)}/${stamp(end)}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(item.location_address || item.location_label || "")}`;
+    function formatDayDateLabel(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      return new Intl.DateTimeFormat("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Africa/Johannesburg",
+      }).format(dt);
     }
 
-    function renderAcceptedBookings(items) {
-      const container = document.getElementById("acceptedBookings");
-      if (!container) return;
-      const list = (Array.isArray(items) ? items : []).filter((item) => {
-        const response = String(item?.nanny_response_status || "").toLowerCase();
-        return response === "accepted";
+    function formatCalendarTimeRange(startValue, endValue) {
+      const start = startValue ? new Date(startValue) : null;
+      const end = endValue ? new Date(endValue) : null;
+      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "-";
+      const fmt = new Intl.DateTimeFormat("en-ZA", {
+        hour: "numeric",
+        hour12: true,
+        timeZone: "Africa/Johannesburg",
       });
-      list.sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
+      const startText = fmt.format(start).replace(/\s/g, "").toLowerCase();
+      const endText = fmt.format(end).replace(/\s/g, "").toLowerCase().replace(":00", "");
+      return `${startText}-${endText}`;
+    }
+
+    function bookingStatusKey(item) {
+      return String(item?.status || "").toLowerCase();
+    }
+
+    function isInProgressBooking(item) {
+      const status = bookingStatusKey(item);
+      return status === "active" || (item?.check_in_at && !item?.check_out_at);
+    }
+
+    function isUpcomingBooking(item) {
+      const status = bookingStatusKey(item);
+      if (["completed", "cancelled", "rejected"].includes(status)) return false;
+      return !isInProgressBooking(item);
+    }
+
+    function renderBookingPanel(containerId, items, emptyText) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      const list = Array.isArray(items) ? items : [];
       if (!list.length) {
-        container.innerHTML = "<div class=\"muted\">No accepted bookings yet.</div>";
+        container.innerHTML = `<div class="muted">${escapeHtml(emptyText)}</div>`;
         return;
       }
       container.innerHTML = list.map((item) => {
-        const start = formatListingDate(item.start_dt);
-        const end = formatListingDate(item.end_dt);
-        const slots = Array.isArray(item.slots) ? item.slots : [];
-        const dates = slots.length
-          ? slots.map((slot) => formatListingDate(slot.start_dt)).join(" | ")
-          : start;
-        const reminderUrl = buildCalendarReminderUrl(item);
-        const whatsappPhone = normalizeWhatsAppNumber(item.parent_phone || "");
-        const whatsappClasses = whatsappPhone ? "btn" : "btn isDisabled";
-        const whatsappAttrs = whatsappPhone
-          ? `href="https://wa.me/${encodeURIComponent(whatsappPhone)}" target="_blank" rel="noopener noreferrer"`
-          : `href="#" aria-disabled="true"`;
         return `
-          <div class="acceptedBooking">
-            <div class="listingTitle">Accepted booking #${escapeHtml(item.group_id || item.id || "-")}</div>
-            <div class="acceptedMeta">
-              <div class="listingMeta">Client: ${escapeHtml(item.parent_name || "Client")}</div>
-              <div class="listingMeta">Dates: ${escapeHtml(dates)}</div>
-              <div class="listingMeta">${escapeHtml(start)} to ${escapeHtml(end)}</div>
-              <div class="listingMeta">Address: ${escapeHtml(item.location_address || item.location_label || "-")}</div>
-            </div>
+          <div class="bookingItem">
+            <div class="bookingItemTitle">${escapeHtml(item.parent_name || "Client")}</div>
+            <div class="bookingItemMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}</div>
+            <div class="bookingItemMeta">${escapeHtml(formatListingDate(item.start_dt))} to ${escapeHtml(formatListingDate(item.end_dt))}</div>
+            <div class="bookingItemMeta">${escapeHtml(item.location_address || item.location_label || "-")}</div>
             <div class="acceptedActions">
-              <a class="btn primarySoft" href="${escapeHtml(reminderUrl)}" target="_blank" rel="noopener noreferrer">Create a reminder</a>
-              <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.id || "")}">View details of the booking</button>
-              <a class="${whatsappClasses}" ${whatsappAttrs}>WhatsApp</a>
+              <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || item.request_id || "")}">View details</button>
             </div>
           </div>
         `;
@@ -194,12 +252,71 @@
           location.href = id ? `/static/nanny_requests.html?request_id=${encodeURIComponent(id)}` : "/static/nanny_requests.html";
         });
       });
-      container.querySelectorAll("a[aria-disabled='true']").forEach((link) => {
-        link.addEventListener("click", (e) => {
-          e.preventDefault();
-          alert("Family WhatsApp details are not available for this booking yet.");
-        });
+    }
+
+    function renderDutyBookingPanels(items) {
+      const normalized = Array.isArray(items) ? items.slice() : [];
+      normalized.sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
+      const inProgress = normalized.filter(isInProgressBooking);
+      const upcoming = normalized.filter(isUpcomingBooking);
+      renderBookingPanel("inProgressBookings", inProgress, "No bookings in progress.");
+      renderBookingPanel("upcomingBookings", upcoming, "No upcoming bookings.");
+    }
+
+    function toLocalDateParts(date) {
+      const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Africa/Johannesburg",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
       });
+      const parts = formatter.formatToParts(date);
+      const year = parts.find((part) => part.type === "year")?.value;
+      const month = parts.find((part) => part.type === "month")?.value;
+      const day = parts.find((part) => part.type === "day")?.value;
+      return { year: Number(year), month: Number(month), day: Number(day) };
+    }
+
+    function renderBookingsCalendar(monthDate, items) {
+      const title = document.getElementById("calendarMonthLabel");
+      const container = document.getElementById("nannyBookingsCalendar");
+      if (!container || !monthDate) return;
+      if (title) {
+        title.textContent = monthDate.toLocaleDateString("en-ZA", {
+          month: "long",
+          year: "numeric",
+        });
+      }
+      const year = monthDate.getFullYear();
+      const month = monthDate.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const totalDays = lastDay.getDate();
+      const offset = firstDay.getDay();
+      const byDate = new Map();
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const dt = item?.start_dt ? new Date(item.start_dt) : null;
+        if (!dt || Number.isNaN(dt.getTime())) return;
+        const parts = toLocalDateParts(dt);
+        if (parts.year !== year || (parts.month - 1) !== month) return;
+        const key = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+        if (!byDate.has(key)) byDate.set(key, []);
+        byDate.get(key).push(item);
+      });
+      const heads = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => `<div class="calendarHead">${day}</div>`).join("");
+      const blanks = Array.from({ length: offset }, () => `<div></div>`).join("");
+      const cells = Array.from({ length: totalDays }, (_, index) => {
+        const day = index + 1;
+        const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const bookings = (byDate.get(key) || []).sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
+        const shown = bookings.slice(0, 3).map((booking) => {
+          const label = `${booking.parent_name || "Client"} ${formatCalendarTimeRange(booking.start_dt, booking.end_dt)}`;
+          return `<div class="calendarBooking">${escapeHtml(label)}</div>`;
+        }).join("");
+        const more = bookings.length > 3 ? `<div class="calendarMore">+${bookings.length - 3} more</div>` : "";
+        return `<div class="calendarDay"><div class="calendarDayNumber">${day}</div>${shown}${more}</div>`;
+      }).join("");
+      container.innerHTML = `<div class="monthCalendar">${heads}${blanks}${cells}</div>`;
     }
 
     function listingDistance(item) {
@@ -284,6 +401,16 @@
       } catch {}
       window.prompt("Copy your profile link:", shareUrl);
     });
+    document.getElementById("calendarPrevBtn").addEventListener("click", () => {
+      if (!currentCalendarMonth) return;
+      currentCalendarMonth = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth() - 1, 1);
+      renderBookingsCalendar(currentCalendarMonth, dutyBookingsCache);
+    });
+    document.getElementById("calendarNextBtn").addEventListener("click", () => {
+      if (!currentCalendarMonth) return;
+      currentCalendarMonth = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth() + 1, 1);
+      renderBookingsCalendar(currentCalendarMonth, dutyBookingsCache);
+    });
 
     (async () => {
       const me = await requireMe();
@@ -291,7 +418,7 @@
         location.href = "/static/login.html";
         return;
       }
-      updateRequestCount();
+      await Promise.all([updateRequestCount(), loadDutyBookings()]);
     })();
   </script>
 </body>

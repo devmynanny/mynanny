@@ -44,6 +44,7 @@
       <option value="upcoming">Upcoming bookings</option>
       <option value="in_progress">In progress</option>
       <option value="past">Past bookings</option>
+      <option value="cancelled">Cancelations</option>
     </select>
   </div>
 
@@ -115,6 +116,8 @@
         ["Nanny responsibilities", form?.responsibilities || "-"],
         ["Adult present at address", form?.adult_present || "-"],
         ["Reason for booking", form?.booking_reason || "-"],
+        ["Sleepover expectations", form?.sleepover_expectations || "-"],
+        ["Sleepover reason", form?.sleepover_reason || "-"],
         ["Children present", form?.kids_count ?? "-"],
         ["Meal arrangement", form?.meal_option || "-"],
         ["Foods not allowed in home", form?.food_restrictions || "-"],
@@ -203,10 +206,13 @@
         upcoming: [],
         in_progress: [],
         past: [],
+        cancelled: [],
       };
       items.forEach(r => {
         const statusKey = (r.status || "").toLowerCase();
-        const category = String(r.booking_category || "upcoming").toLowerCase();
+        const category = statusKey === "cancelled"
+          ? "cancelled"
+          : String(r.booking_category || "upcoming").toLowerCase();
         if (filter !== "all" && filter !== category) return;
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
@@ -288,6 +294,7 @@
         { key: "upcoming", label: "Upcoming bookings" },
         { key: "in_progress", label: "In progress" },
         { key: "past", label: "Past bookings" },
+        { key: "cancelled", label: "Cancelations" },
       ];
       sectionOrder.forEach((section) => {
         if (!sections[section.key].length) return;

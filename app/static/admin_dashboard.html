@@ -37,6 +37,16 @@
     .detailSection:last-child{border-bottom:0}
     .detailRow{margin:4px 0}
     .detailDay{border:1px solid #eee;border-radius:10px;padding:10px;margin-top:8px}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:flex-start;justify-content:center;padding:20px;z-index:9999;overflow-y:auto}
+    .modal{background:#fff;border-radius:12px;width:min(760px,100%);border:1px solid #ddd;padding:16px;max-height:calc(100vh - 40px);overflow-y:auto;margin:auto 0}
+    .modalActions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:14px}
+    .assignSummary{color:#555;font-size:14px;line-height:1.45}
+    .assignList{display:grid;gap:10px;margin-top:12px}
+    .assignOption{border:1px solid #e5e7eb;border-radius:12px;padding:12px;display:flex;gap:10px;align-items:flex-start}
+    .assignOption input{margin-top:4px}
+    .assignOptionTitle{font-weight:700}
+    .assignOptionMeta{color:#666;font-size:14px;margin-top:4px}
+    .assignReason{width:100%;min-height:90px;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;margin-top:10px}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -159,6 +169,25 @@
     <div id="bookingDetailBody" class="muted" style="margin-top:12px;">Loading...</div>
   </div>
 
+  <div id="assignNannyModal" class="modalBack">
+    <div class="modal">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <h2 style="margin:0;">Assign nanny manually</h2>
+        <button class="btn" id="closeAssignNannyModalBtn" type="button">Close</button>
+      </div>
+      <div id="assignNannySummary" class="assignSummary" style="margin-top:10px;">Loading available nannies...</div>
+      <div id="assignNannyList" class="assignList"></div>
+      <label style="display:block; margin-top:12px;">
+        <div style="font-weight:600; margin-bottom:6px;">Reason for manual assignment</div>
+        <textarea id="assignNannyReason" class="assignReason" placeholder="Explain why admin is assigning this nanny manually."></textarea>
+      </label>
+      <div id="assignNannyError" class="err" style="margin-top:10px;"></div>
+      <div class="modalActions">
+        <button class="btn" id="confirmAssignNannyBtn" type="button">Assign selected nanny</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
   <script>
     function escapeHtml(value) {
@@ -171,6 +200,7 @@
     }
 
     const logoutBtn = document.getElementById("logoutBtn");
+    let currentAssignRequestId = null;
     if (logoutBtn) {
       logoutBtn.addEventListener("click", () => {
         logout();
@@ -428,6 +458,74 @@
       return `${hrs} hr ${mins} min`;
     }
 
+    function yesNo(value) {
+      return value ? "Yes" : "No";
+    }
+
+    function closeAssignNannyModal() {
+      currentAssignRequestId = null;
+      document.getElementById("assignNannyModal").style.display = "none";
+      document.getElementById("assignNannySummary").textContent = "";
+      document.getElementById("assignNannyList").innerHTML = "";
+      document.getElementById("assignNannyReason").value = "";
+      document.getElementById("assignNannyError").textContent = "";
+    }
+
+    function renderAssignNannyOptions(data) {
+      const summary = document.getElementById("assignNannySummary");
+      const list = document.getElementById("assignNannyList");
+      const schedule = Array.isArray(data?.schedule) ? data.schedule : [];
+      const locationBits = [data?.location?.label, data?.location?.address].filter(Boolean);
+      const locationText = locationBits.length ? locationBits.join(" - ") : "Client address unavailable";
+      const count = Array.isArray(data?.results) ? data.results.length : 0;
+      summary.innerHTML = `
+        <div><strong>Radius:</strong> ${escapeHtml(data?.radius_km || 30)}km from ${escapeHtml(locationText)}</div>
+        <div style="margin-top:4px;"><strong>Selected dates:</strong> ${escapeHtml(String(schedule.length || 0))} slot(s)</div>
+        <div style="margin-top:4px;"><strong>Available nannies found:</strong> ${escapeHtml(count)}</div>
+      `;
+      if (!count) {
+        list.innerHTML = `<div class="bookingEmpty">No approved nannies are available for all selected dates within ${escapeHtml(data?.radius_km || 30)}km.</div>`;
+        return;
+      }
+      list.innerHTML = data.results.map((item) => `
+        <label class="assignOption">
+          <input type="radio" name="assignNannyChoice" value="${escapeHtml(item.nanny_id)}" />
+          <div>
+            <div class="assignOptionTitle">${escapeHtml(item.name || `Nanny #${item.nanny_id}`)} <span class="muted">(ID ${escapeHtml(item.nanny_id)})</span></div>
+            <div class="assignOptionMeta">
+              ${escapeHtml(item.distance_km != null ? `${item.distance_km} km away` : "Distance unavailable")}
+              ${item.location_hint ? ` • ${escapeHtml(item.location_hint)}` : ""}
+            </div>
+            <div class="assignOptionMeta">
+              Rating: ${escapeHtml(item.average_rating_12m != null ? `${item.average_rating_12m} (${item.review_count_12m || 0})` : "New")}
+              • Completed jobs: ${escapeHtml(item.completed_jobs_count || 0)}
+            </div>
+            <div class="assignOptionMeta">
+              Job type: ${escapeHtml(item.job_type || "-")}
+              • Own car: ${escapeHtml(yesNo(item.has_own_car))}
+              • Driver's license: ${escapeHtml(yesNo(item.has_drivers_license))}
+            </div>
+          </div>
+        </label>
+      `).join("");
+    }
+
+    async function openAssignNannyModal(requestId) {
+      currentAssignRequestId = requestId;
+      document.getElementById("assignNannyModal").style.display = "flex";
+      document.getElementById("assignNannySummary").textContent = "Loading available nannies...";
+      document.getElementById("assignNannyList").innerHTML = "";
+      document.getElementById("assignNannyReason").value = "";
+      document.getElementById("assignNannyError").textContent = "";
+      try {
+        const data = await fetchJson(`/admin/booking-requests/${requestId}/available-nannies`);
+        renderAssignNannyOptions(data);
+      } catch (err) {
+        document.getElementById("assignNannySummary").textContent = "";
+        document.getElementById("assignNannyList").innerHTML = `<div class="bookingEmpty">${escapeHtml(err.message || "Failed to load available nannies.")}</div>`;
+      }
+    }
+
     async function loadBookingDetail(requestId) {
       const card = document.getElementById("bookingDetailCard");
       const body = document.getElementById("bookingDetailBody");
@@ -599,24 +697,7 @@
       if (!btn) return;
       const requestId = btn.dataset.id;
       if (assign) {
-        const nannyIdRaw = prompt("Enter the nanny ID to assign manually:");
-        if (!nannyIdRaw) return;
-        const nannyId = Number(nannyIdRaw);
-        if (!Number.isFinite(nannyId) || nannyId <= 0) {
-          document.getElementById("authMsg").textContent = "Enter a valid nanny ID.";
-          return;
-        }
-        const reason = (prompt("Reason for manual assignment?") || "").trim();
-        if (!reason) {
-          document.getElementById("authMsg").textContent = "A reason is required for manual assignment.";
-          return;
-        }
-        fetchJson(`/admin/booking-requests/${requestId}/reject`, {
-          method: "POST",
-          body: JSON.stringify({ reason, assign_nanny_id: nannyId })
-        })
-          .then(() => Promise.all([loadBookingRequests(), refreshCounts(), loadBookingDetail(requestId)]))
-          .catch(err => { document.getElementById("authMsg").textContent = err.message; });
+        openAssignNannyModal(requestId).catch(err => { document.getElementById("authMsg").textContent = err.message; });
         return;
       }
       const path = approve ? "approve" : "reject";
@@ -649,6 +730,42 @@
 
     document.getElementById("closeBookingDetailBtn").addEventListener("click", () => {
       document.getElementById("bookingDetailCard").style.display = "none";
+    });
+
+    document.getElementById("closeAssignNannyModalBtn").addEventListener("click", closeAssignNannyModal);
+    document.getElementById("assignNannyModal").addEventListener("click", (e) => {
+      if (e.target.id === "assignNannyModal") closeAssignNannyModal();
+    });
+    document.getElementById("confirmAssignNannyBtn").addEventListener("click", async () => {
+      const requestId = currentAssignRequestId;
+      if (!requestId) return;
+      const chosen = document.querySelector('input[name="assignNannyChoice"]:checked');
+      const nannyId = Number(chosen?.value || 0);
+      const reason = (document.getElementById("assignNannyReason").value || "").trim();
+      const errorEl = document.getElementById("assignNannyError");
+      errorEl.textContent = "";
+      if (!Number.isFinite(nannyId) || nannyId <= 0) {
+        errorEl.textContent = "Please select a nanny to assign.";
+        return;
+      }
+      if (!reason) {
+        errorEl.textContent = "A reason is required for manual assignment.";
+        return;
+      }
+      const btn = document.getElementById("confirmAssignNannyBtn");
+      btn.disabled = true;
+      try {
+        await fetchJson(`/admin/booking-requests/${requestId}/reject`, {
+          method: "POST",
+          body: JSON.stringify({ reason, assign_nanny_id: nannyId })
+        });
+        closeAssignNannyModal();
+        await Promise.all([loadBookingRequests(), refreshCounts(), loadBookingDetail(requestId)]);
+      } catch (err) {
+        errorEl.textContent = err.message || "Failed to assign nanny.";
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     document.getElementById("refundsList").addEventListener("click", async (e) => {

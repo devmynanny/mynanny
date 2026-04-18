@@ -1358,6 +1358,8 @@ def _booking_questionnaire_from_notes(notes: Optional[str]) -> dict:
         "responsibilities": None,
         "adult_present": None,
         "booking_reason": None,
+        "sleepover_expectations": None,
+        "sleepover_reason": None,
         "kids_count": 1,
         "meal_option": None,
         "food_restrictions": None,
@@ -1372,6 +1374,8 @@ def _booking_questionnaire_from_notes(notes: Optional[str]) -> dict:
         "nanny responsibilities": "responsibilities",
         "adult present at address": "adult_present",
         "reason for booking": "booking_reason",
+        "sleepover expectations": "sleepover_expectations",
+        "sleepover reason": "sleepover_reason",
         "children present": "kids_count",
         "meal arrangement": "meal_option",
         "foods not allowed in home": "food_restrictions",
@@ -3468,6 +3472,7 @@ def list_nanny_me_duty_bookings(
         "results": [
             {
                 "booking_id": b.id,
+                "booking_request_id": getattr(b, "booking_request_id", None),
                 "parent_name": p.name,
                 "parent_email": p.email,
                 "start_dt": b.start_dt or (b.starts_at.isoformat() if b.starts_at else None),
@@ -6689,6 +6694,94 @@ def get_admin_booking_request_detail(
             }
             for booking in related_bookings
         ],
+    }
+
+
+@router.get("/admin/booking-requests/{request_id}/available-nannies")
+def get_admin_booking_request_available_nannies(
+    request_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_admin(authorization, db)
+
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Booking request not found")
+
+    parent_profile = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == req.parent_user_id).first()
+    location = None
+    if req.location_id:
+        location = db.query(models.ParentLocation).filter(models.ParentLocation.id == req.location_id).first()
+
+    parent_lat = None
+    parent_lng = None
+    if location and getattr(location, "lat", None) is not None and getattr(location, "lng", None) is not None:
+        parent_lat = float(location.lat)
+        parent_lng = float(location.lng)
+    elif parent_profile and getattr(parent_profile, "lat", None) is not None and getattr(parent_profile, "lng", None) is not None:
+        parent_lat = float(parent_profile.lat)
+        parent_lng = float(parent_profile.lng)
+
+    if parent_lat is None or parent_lng is None:
+        raise HTTPException(status_code=400, detail="Client location is missing coordinates")
+
+    windows = _booking_request_windows(db, req)
+    if not windows:
+        start_dt = _parse_iso_dt(req.start_dt or req.requested_starts_at)
+        end_dt = _parse_iso_dt(req.end_dt or req.requested_ends_at)
+        windows = [(start_dt, end_dt)]
+
+    candidates = _search_nannies_by_area(
+        db=db,
+        parent_area_id=None,
+        parent_lat=parent_lat,
+        parent_lng=parent_lng,
+        max_distance_km=30.0,
+        min_rating=None,
+        tag_ids=None,
+        qualification_ids=None,
+        language_ids=None,
+    )
+
+    available = []
+    for item in candidates:
+        nanny_id = int(item.get("nanny_id") or 0)
+        if nanny_id <= 0:
+            continue
+        if all(_is_nanny_available(db, nanny_id, slot_start, slot_end) for slot_start, slot_end in windows):
+            available.append(
+                {
+                    "nanny_id": nanny_id,
+                    "user_id": item.get("user_id"),
+                    "name": item.get("name"),
+                    "distance_km": item.get("distance_km"),
+                    "location_hint": item.get("location_hint"),
+                    "average_rating_12m": item.get("average_rating_12m"),
+                    "review_count_12m": item.get("review_count_12m"),
+                    "completed_jobs_count": item.get("completed_jobs_count"),
+                    "job_type": item.get("job_type"),
+                    "has_own_car": item.get("has_own_car"),
+                    "has_drivers_license": item.get("has_drivers_license"),
+                }
+            )
+
+    return {
+        "request_id": req.id,
+        "group_id": req.group_id or req.id,
+        "radius_km": 30,
+        "location": {
+            "label": getattr(location, "label", None) if location else None,
+            "address": getattr(location, "formatted_address", None) if location else getattr(parent_profile, "formatted_address", None) if parent_profile else None,
+        },
+        "schedule": [
+            {
+                "start_dt": _to_iso_z(slot_start),
+                "end_dt": _to_iso_z(slot_end),
+            }
+            for slot_start, slot_end in windows
+        ],
+        "results": available,
     }
 
 
