@@ -85,6 +85,7 @@ def _build_nanny_profile_summary(
     bio: Optional[str],
 ) -> Optional[str]:
     parts: List[str] = []
+    cleaned_bio = (bio or "").strip()
 
     intro_bits: List[str] = []
     if nationality:
@@ -106,7 +107,7 @@ def _build_nanny_profile_summary(
         displayed = ", ".join(qual_names[:3])
         if len(qual_names) > 3:
             displayed += f", and {len(qual_names) - 3} more"
-        parts.append(f"Qualifications include {displayed}.")
+        parts.append(f"She brings training in {displayed}.")
 
     tag_names: List[str] = []
     for item in (tags or []):
@@ -120,7 +121,7 @@ def _build_nanny_profile_summary(
         displayed = ", ".join(tag_names[:4])
         if len(tag_names) > 4:
             displayed += f", and {len(tag_names) - 4} more"
-        parts.append(f"Her profile highlights {displayed}.")
+        parts.append(f"Her profile highlights hands-on experience with {displayed}.")
 
     jobs = [job for job in (previous_jobs or []) if isinstance(job, dict)]
     if jobs:
@@ -138,10 +139,13 @@ def _build_nanny_profile_summary(
         summary += "."
         parts.append(summary)
         if len(jobs) > 1:
-            parts.append(f"She has listed {len(jobs)} previous childcare roles on her profile.")
+            parts.append(f"She has also listed {len(jobs)} childcare roles on her profile, which gives parents a fuller picture of her experience.")
+
+    if cleaned_bio:
+        bio_sentence = cleaned_bio if len(cleaned_bio) <= 180 else cleaned_bio[:177].rstrip() + "..."
+        parts.append(bio_sentence)
 
     if not parts:
-        cleaned_bio = (bio or "").strip()
         if not cleaned_bio:
             return None
         return cleaned_bio if len(cleaned_bio) <= 220 else cleaned_bio[:217].rstrip() + "..."
@@ -1273,7 +1277,7 @@ def notify_admin_unaccepted_booking_request(
     if not admins:
         return
     client = get_email_client()
-    subject = f"Booking request #{req.id} still unaccepted after 6 hours"
+    subject = "booking overdue"
     body = "\n".join(
         [
             "A booking request has not been accepted within 6 hours and may need manual admin intervention.",
@@ -6777,6 +6781,41 @@ def get_admin_booking_request_available_nannies(
                     "job_type": item.get("job_type"),
                     "has_own_car": item.get("has_own_car"),
                     "has_drivers_license": item.get("has_drivers_license"),
+                    "fully_available": True,
+                }
+            )
+
+    fallback_results = []
+    if not available:
+        fallback_candidates = _search_nannies_by_area(
+            db=db,
+            parent_area_id=None,
+            parent_lat=parent_lat,
+            parent_lng=parent_lng,
+            max_distance_km=None,
+            min_rating=None,
+            tag_ids=None,
+            qualification_ids=None,
+            language_ids=None,
+        )
+        for item in fallback_candidates:
+            nanny_id = int(item.get("nanny_id") or 0)
+            if nanny_id <= 0:
+                continue
+            fallback_results.append(
+                {
+                    "nanny_id": nanny_id,
+                    "user_id": item.get("user_id"),
+                    "name": item.get("name"),
+                    "distance_km": item.get("distance_km"),
+                    "location_hint": item.get("location_hint"),
+                    "average_rating_12m": item.get("average_rating_12m"),
+                    "review_count_12m": item.get("review_count_12m"),
+                    "completed_jobs_count": item.get("completed_jobs_count"),
+                    "job_type": item.get("job_type"),
+                    "has_own_car": item.get("has_own_car"),
+                    "has_drivers_license": item.get("has_drivers_license"),
+                    "fully_available": False,
                 }
             )
 
@@ -6784,6 +6823,8 @@ def get_admin_booking_request_available_nannies(
         "request_id": req.id,
         "group_id": req.group_id or req.id,
         "radius_km": 30,
+        "available_count": len(available),
+        "fallback_mode": not bool(available),
         "location": {
             "label": getattr(location, "label", None) if location else None,
             "address": getattr(location, "formatted_address", None) if location else getattr(parent_profile, "formatted_address", None) if parent_profile else None,
@@ -6795,7 +6836,7 @@ def get_admin_booking_request_available_nannies(
             }
             for slot_start, slot_end in windows
         ],
-        "results": available,
+        "results": available if available else fallback_results,
     }
 
 
@@ -6842,6 +6883,7 @@ def list_admin_bookings_overview(
 
     pending_requests = []
     unsuccessful_bookings = []
+    cancelled_bookings = []
     upcoming_bookings = []
     bookings_in_progress = []
     past_bookings = []
@@ -6867,7 +6909,10 @@ def list_admin_bookings_overview(
         }
         if req.status in ("tbc", "pending_admin"):
             pending_requests.append(item)
-        elif req.status in ("rejected", "cancelled") and req.id not in booking_request_ids:
+        elif req.status == "cancelled" and req.id not in booking_request_ids:
+            cancelled_bookings.append(item)
+            unsuccessful_bookings.append(item)
+        elif req.status == "rejected" and req.id not in booking_request_ids:
             unsuccessful_bookings.append(item)
 
     for booking, parent, nanny in booking_rows:
@@ -6904,7 +6949,11 @@ def list_admin_bookings_overview(
                 bookings_tomorrow.append(item)
             if month_start <= local_start.date() <= month_end:
                 month_confirmed_bookings.append(item)
-        if booking.status in ("cancelled", "rejected"):
+        if booking.status == "cancelled":
+            cancelled_bookings.append(item)
+            unsuccessful_bookings.append(item)
+            continue
+        if booking.status == "rejected":
             unsuccessful_bookings.append(item)
             continue
         if booking.status == "completed" or (end_dt and end_dt < now):
@@ -6953,6 +7002,7 @@ def list_admin_bookings_overview(
         "upcoming_bookings": _sort_desc(upcoming_bookings),
         "bookings_in_progress": _sort_desc(bookings_in_progress),
         "past_bookings": _sort_desc(past_bookings),
+        "cancelled_bookings": _sort_desc(cancelled_bookings),
         "unsuccessful_bookings": _sort_desc(unsuccessful_bookings),
         "month_calendar": {
             "year": month_start.year,

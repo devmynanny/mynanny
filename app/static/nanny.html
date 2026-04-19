@@ -27,11 +27,17 @@
       }
       .photo-preview{width:120px;height:120px;border-radius:12px;object-fit:cover;border:1px solid #ddd;background:#f3f4f6}
       .photo-controls{display:flex;flex-direction:column;gap:8px}
-      .doc-upload{display:flex;flex-direction:column;gap:6px;min-width:220px}
-      .doc-upload input[type="file"]{width:100%}
+      .doc-upload{display:flex;flex-direction:column;gap:6px;min-width:0;width:100%}
+      .doc-upload input[type="file"]{width:100%;min-width:0}
       .doc-column-title{color:#222;font-size:15px;font-weight:700}
-      .doc-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:12px}
-      .doc-column{display:flex;flex-direction:column;gap:10px}
+      .doc-columns{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:16px;margin-top:12px;align-items:start}
+      .doc-column{display:flex;flex-direction:column;gap:10px;min-width:0}
+      .doc-column > div{min-width:0}
+      .doc-column .row{flex-wrap:wrap;align-items:center}
+      .doc-column label,
+      .doc-column input,
+      .doc-column select,
+      .doc-column textarea{max-width:100%}
       .err { color: #b00020; margin-top: 6px; }
       .help-tip{
         display:inline-flex;
@@ -122,6 +128,9 @@
         display: flex;
         flex-direction: column;
         gap: 6px;
+      }
+      @media (max-width: 860px) {
+        .doc-columns{grid-template-columns:1fr}
       }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -1344,9 +1353,9 @@
         const nat = (document.getElementById("nationality").value || "").trim().toLowerCase();
         const isSa = nat === "south african";
         const hasNat = !!nat;
-        document.getElementById("passportRow").style.display = (!hasNat || isSa) ? "none" : "flex";
+        document.getElementById("passportRow").style.display = (!hasNat || isSa) ? "none" : "block";
         document.getElementById("permitRow").style.display = (!hasNat || isSa) ? "none" : "flex";
-        document.getElementById("saIdRow").style.display = (hasNat && isSa) ? "flex" : "none";
+        document.getElementById("saIdRow").style.display = (hasNat && isSa) ? "block" : "none";
         const permitVal = document.getElementById("workPermit").value;
         const permitFileRow = document.getElementById("permitFile")?.parentElement?.parentElement;
         if (permitFileRow) permitFileRow.style.display = permitVal === "yes" ? "flex" : "none";

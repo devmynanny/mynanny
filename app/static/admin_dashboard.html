@@ -23,12 +23,17 @@
     .bookingReason{margin-top:6px;color:#7a2e2e}
     .bookingOverdue{margin-top:6px;color:#b45309;font-weight:600}
     .bookingGlance{display:grid;grid-template-columns:minmax(240px,1fr) minmax(320px,1.4fr);gap:16px;align-items:start}
+    .bookingFilterBar{display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff}
+    .bookingFilterBar label{font-size:14px;font-weight:600;color:#1e3a8a}
+    .bookingFilterBar select{padding:10px 12px;border:1px solid #93c5fd;border-radius:10px;background:#fff;min-width:220px;font:inherit}
     .monthCalendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
     .calendarHead{font-size:12px;color:#666;font-weight:600;text-align:center}
     .calendarDay{min-height:76px;border:1px solid #e5e5e5;border-radius:8px;padding:6px;background:#fff;overflow:hidden}
     .calendarDayNumber{font-size:12px;color:#555;margin-bottom:4px}
-    .calendarBooking{font-size:12px;line-height:1.25;border-left:3px solid #1f7a4d;padding-left:5px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
+    .calendarBooking{font-size:12px;line-height:1.25;border-left:3px solid var(--booking-accent,#1f7a4d);background:var(--booking-bg,#f8fafc);border-radius:8px;padding:5px 6px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
     .calendarMore{font-size:12px;color:#666;margin-top:4px}
+    .bookingSectionGroup{display:block}
+    .bookingSectionGroup.hidden{display:none}
     .syncOk{color:#166534}
     .syncWarn{color:#b45309}
     @media (max-width:760px){.bookingGlance{grid-template-columns:1fr}.monthCalendar{gap:4px}.calendarDay{min-height:64px;padding:5px}.calendarBooking{font-size:11px}}
@@ -46,6 +51,9 @@
     .assignOption input{margin-top:4px}
     .assignOptionTitle{font-weight:700}
     .assignOptionMeta{color:#666;font-size:14px;margin-top:4px}
+    .assignAvailabilityNote{display:inline-block;margin-top:6px;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:600}
+    .assignAvailabilityNote.available{background:#dcfce7;color:#166534}
+    .assignAvailabilityNote.manual{background:#ffedd5;color:#9a3412}
     .assignReason{width:100%;min-height:90px;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;margin-top:10px}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -136,18 +144,41 @@
           <div id="inProgressBookingsList"></div>
         </div>
         <div>
+          <div class="bookingFilterBar">
+            <label for="bookingSectionFilter">Filter bookings below calendar</label>
+            <select id="bookingSectionFilter">
+              <option value="all">All</option>
+              <option value="pending">Pending requests</option>
+              <option value="upcoming">Upcoming bookings</option>
+              <option value="past">Past bookings</option>
+              <option value="cancelled">Cancelations</option>
+              <option value="unsuccessful">Unsuccessful bookings</option>
+            </select>
+          </div>
           <div class="bookingSectionTitle" id="monthCalendarTitle">Bookings this month</div>
           <div id="monthBookingsCalendar"></div>
         </div>
       </div>
-      <div class="bookingSectionTitle">Pending requests</div>
-      <div id="bookingRequestsList"></div>
-      <div class="bookingSectionTitle">Upcoming bookings</div>
-      <div id="upcomingBookingsList"></div>
-      <div class="bookingSectionTitle">Past bookings</div>
-      <div id="pastBookingsList"></div>
-      <div class="bookingSectionTitle">Unsuccessful bookings</div>
-      <div id="unsuccessfulBookingsList"></div>
+      <div class="bookingSectionGroup" data-booking-filter="pending">
+        <div class="bookingSectionTitle">Pending requests</div>
+        <div id="bookingRequestsList"></div>
+      </div>
+      <div class="bookingSectionGroup" data-booking-filter="upcoming">
+        <div class="bookingSectionTitle">Upcoming bookings</div>
+        <div id="upcomingBookingsList"></div>
+      </div>
+      <div class="bookingSectionGroup" data-booking-filter="past">
+        <div class="bookingSectionTitle">Past bookings</div>
+        <div id="pastBookingsList"></div>
+      </div>
+      <div class="bookingSectionGroup" data-booking-filter="cancelled">
+        <div class="bookingSectionTitle">Cancelations</div>
+        <div id="cancelledBookingsList"></div>
+      </div>
+      <div class="bookingSectionGroup" data-booking-filter="unsuccessful">
+        <div class="bookingSectionTitle">Unsuccessful bookings</div>
+        <div id="unsuccessfulBookingsList"></div>
+      </div>
     </div>
   </div>
   <div id="sectionBilling" style="display:none;">
@@ -201,6 +232,14 @@
 
     const logoutBtn = document.getElementById("logoutBtn");
     let currentAssignRequestId = null;
+    const ADMIN_CALENDAR_COLORS = [
+      { bg: "#ffedd5", accent: "#f97316" },
+      { bg: "#dbeafe", accent: "#3b82f6" },
+      { bg: "#dcfce7", accent: "#22c55e" },
+      { bg: "#fce7f3", accent: "#ec4899" },
+      { bg: "#ede9fe", accent: "#8b5cf6" },
+      { bg: "#fef3c7", accent: "#d97706" },
+    ];
     if (logoutBtn) {
       logoutBtn.addEventListener("click", () => {
         logout();
@@ -259,6 +298,10 @@
         const el = document.getElementById(s);
         if (el) el.style.display = (s === id) ? "block" : "none";
       });
+      const bookingDetailCard = document.getElementById("bookingDetailCard");
+      if (bookingDetailCard && id !== "sectionBookingRequests") {
+        bookingDetailCard.style.display = "none";
+      }
     }
 
     async function refreshCounts() {
@@ -375,6 +418,24 @@
       });
     }
 
+    function getAdminBookingColor(item) {
+      const key = String(item?.request_id || item?.booking_id || item?.id || "");
+      let hash = 0;
+      for (let i = 0; i < key.length; i += 1) {
+        hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+      }
+      return ADMIN_CALENDAR_COLORS[hash % ADMIN_CALENDAR_COLORS.length];
+    }
+
+    function applyBookingSectionFilter() {
+      const selected = document.getElementById("bookingSectionFilter")?.value || "all";
+      document.querySelectorAll(".bookingSectionGroup").forEach((section) => {
+        const key = section.getAttribute("data-booking-filter");
+        const shouldShow = selected === "all" || selected === key;
+        section.classList.toggle("hidden", !shouldShow);
+      });
+    }
+
     function renderBookingCollection(containerId, list, options = {}) {
       const container = document.getElementById(containerId);
       if (!container) return;
@@ -387,7 +448,7 @@
       items.forEach(r => {
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt ? new Date(r.start_dt).toLocaleString() : "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt ? new Date(r.end_dt).toLocaleString() : "-");
-        const parentLine = escapeHtml(r.parent_email ? r.parent_email : (r.parent_name || "Parent"));
+        const parentLine = escapeHtml(r.parent_name || "Client");
         const nannyName = escapeHtml(r.nanny_name || "Nanny");
         const row = document.createElement("div");
         row.className = "bookingRow";
@@ -440,7 +501,8 @@
         const bookings = Array.isArray(day.bookings) ? day.bookings : [];
         const shown = bookings.slice(0, 2).map((b) => {
           const time = b.start_dt ? new Date(b.start_dt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-          return `<div class="calendarBooking" title="${escapeHtml((b.parent_name || b.parent_email || "Client") + " with " + (b.nanny_name || "Nanny"))}">${escapeHtml(time)} ${escapeHtml(b.nanny_name || "Nanny")} / ${escapeHtml(b.parent_name || b.parent_email || "Client")}</div>`;
+          const colors = getAdminBookingColor(b);
+          return `<div class="calendarBooking" style="--booking-bg:${escapeHtml(colors.bg)};--booking-accent:${escapeHtml(colors.accent)}" title="${escapeHtml((b.parent_name || "Client") + " with " + (b.nanny_name || "Nanny"))}">${escapeHtml(time)} ${escapeHtml(b.nanny_name || "Nanny")} / ${escapeHtml(b.parent_name || "Client")}</div>`;
         }).join("");
         const more = bookings.length > 2 ? `<div class="calendarMore">+${bookings.length - 2} more</div>` : "";
         return `<div class="calendarDay"><div class="calendarDayNumber">${escapeHtml(day.day || "")}</div>${shown || ""}${more}</div>`;
@@ -477,17 +539,21 @@
       const schedule = Array.isArray(data?.schedule) ? data.schedule : [];
       const locationBits = [data?.location?.label, data?.location?.address].filter(Boolean);
       const locationText = locationBits.length ? locationBits.join(" - ") : "Client address unavailable";
-      const count = Array.isArray(data?.results) ? data.results.length : 0;
+      const results = Array.isArray(data?.results) ? data.results : [];
+      const count = results.length;
+      const availableCount = Number(data?.available_count || 0);
+      const fallbackMode = !!data?.fallback_mode;
       summary.innerHTML = `
         <div><strong>Radius:</strong> ${escapeHtml(data?.radius_km || 30)}km from ${escapeHtml(locationText)}</div>
         <div style="margin-top:4px;"><strong>Selected dates:</strong> ${escapeHtml(String(schedule.length || 0))} slot(s)</div>
-        <div style="margin-top:4px;"><strong>Available nannies found:</strong> ${escapeHtml(count)}</div>
+        <div style="margin-top:4px;"><strong>Available nannies found:</strong> ${escapeHtml(availableCount)}</div>
+        ${fallbackMode ? `<div style="margin-top:6px;color:#9a3412;"><strong>No nannies are fully available for all selected dates.</strong> Showing all approved nannies below, ordered by distance, so admin can still assign manually.</div>` : ""}
       `;
       if (!count) {
-        list.innerHTML = `<div class="bookingEmpty">No approved nannies are available for all selected dates within ${escapeHtml(data?.radius_km || 30)}km.</div>`;
+        list.innerHTML = `<div class="bookingEmpty">No approved nannies could be found for manual assignment.</div>`;
         return;
       }
-      list.innerHTML = data.results.map((item) => `
+      list.innerHTML = results.map((item) => `
         <label class="assignOption">
           <input type="radio" name="assignNannyChoice" value="${escapeHtml(item.nanny_id)}" />
           <div>
@@ -505,6 +571,7 @@
               • Own car: ${escapeHtml(yesNo(item.has_own_car))}
               • Driver's license: ${escapeHtml(yesNo(item.has_drivers_license))}
             </div>
+            <div class="assignAvailabilityNote ${item.fully_available ? "available" : "manual"}">${item.fully_available ? "Available for all selected dates" : "Manual override needed"}</div>
           </div>
         </label>
       `).join("");
@@ -553,7 +620,7 @@
           <div class="detailSection">
             <div class="detailRow"><strong>Request #:</strong> ${escapeHtml(data?.request_id || "-")}</div>
             <div class="detailRow"><strong>Status:</strong> ${escapeHtml(data?.status || "-")}</div>
-            <div class="detailRow"><strong>Parent:</strong> ${escapeHtml(data?.parent?.name || "-")} (${escapeHtml(data?.parent?.email || "-")})</div>
+            <div class="detailRow"><strong>Parent:</strong> ${escapeHtml(data?.parent?.name || "-")}</div>
             <div class="detailRow"><strong>Nanny:</strong> ${escapeHtml(data?.nanny?.name || "-")} (${escapeHtml(data?.nanny?.email || "-")})</div>
             <div class="detailRow"><strong>Location:</strong> ${escapeHtml(data?.location?.label || data?.location?.address || "-")}</div>
             <div class="detailRow"><strong>Created:</strong> ${escapeHtml(formatDt(data?.created_at))}</div>
@@ -594,8 +661,10 @@
       renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { emptyText: "No upcoming bookings." });
       renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { emptyText: "No bookings currently in progress." });
       renderBookingCollection("pastBookingsList", data?.past_bookings || [], { emptyText: "No past bookings yet." });
+      renderBookingCollection("cancelledBookingsList", data?.cancelled_bookings || [], { emptyText: "No cancelations yet." });
       renderBookingCollection("unsuccessfulBookingsList", data?.unsuccessful_bookings || [], { emptyText: "No unsuccessful bookings yet." });
       renderMonthCalendar(data?.month_calendar);
+      applyBookingSectionFilter();
     }
 
     async function loadRefunds() {
@@ -718,7 +787,7 @@
         .catch(err => { document.getElementById("authMsg").textContent = err.message; });
     });
 
-    ["tomorrowBookingsList", "upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
+    ["tomorrowBookingsList", "upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "cancelledBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener("click", (e) => {
@@ -731,6 +800,7 @@
     document.getElementById("closeBookingDetailBtn").addEventListener("click", () => {
       document.getElementById("bookingDetailCard").style.display = "none";
     });
+    document.getElementById("bookingSectionFilter").addEventListener("change", applyBookingSectionFilter);
 
     document.getElementById("closeAssignNannyModalBtn").addEventListener("click", closeAssignNannyModal);
     document.getElementById("assignNannyModal").addEventListener("click", (e) => {
@@ -760,7 +830,7 @@
           body: JSON.stringify({ reason, assign_nanny_id: nannyId })
         });
         closeAssignNannyModal();
-        await Promise.all([loadBookingRequests(), refreshCounts(), loadBookingDetail(requestId)]);
+        await Promise.all([loadBookingRequests(), refreshCounts()]);
       } catch (err) {
         errorEl.textContent = err.message || "Failed to assign nanny.";
       } finally {
