@@ -263,6 +263,7 @@
             booking_ids: [],
             parent_name: item?.parent_name || "Client",
             parent_email: item?.parent_email || "",
+            parent_phone: item?.parent_phone || "",
             location_label: item?.location_label || null,
             location_address: item?.location_address || null,
             status: item?.status || "",
@@ -287,6 +288,7 @@
         if (!group.end_dt || String(item?.end_dt || "") > String(group.end_dt || "")) group.end_dt = item?.end_dt || group.end_dt;
         if (item?.check_in_at && (!group.check_in_at || String(item.check_in_at) < String(group.check_in_at))) group.check_in_at = item.check_in_at;
         if (!group.check_out_at || (item?.check_out_at && String(item.check_out_at) > String(group.check_out_at))) group.check_out_at = item?.check_out_at || group.check_out_at;
+        if (!group.parent_phone && item?.parent_phone) group.parent_phone = item.parent_phone;
         if (bookingStatusKey(item) === "active") group.status = "active";
       });
       return Array.from(groups.values()).map((group) => {
