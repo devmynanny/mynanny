@@ -555,11 +555,13 @@
     }
 
     function buildAdminCalendarItems(data) {
-      const combined = [
-        ...(Array.isArray(data?.upcoming_bookings) ? data.upcoming_bookings : []),
-        ...(Array.isArray(data?.bookings_in_progress) ? data.bookings_in_progress : []),
-        ...(Array.isArray(data?.past_bookings) ? data.past_bookings : []),
-      ];
+      const combined = Array.isArray(data?.confirmed_bookings) && data.confirmed_bookings.length
+        ? data.confirmed_bookings
+        : [
+            ...(Array.isArray(data?.upcoming_bookings) ? data.upcoming_bookings : []),
+            ...(Array.isArray(data?.bookings_in_progress) ? data.bookings_in_progress : []),
+            ...(Array.isArray(data?.past_bookings) ? data.past_bookings : []),
+          ];
       const deduped = new Map();
       combined.forEach((item) => {
         const key = String(item?.booking_id || item?.request_id || item?.id || "");

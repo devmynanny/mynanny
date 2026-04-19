@@ -7117,6 +7117,7 @@ def list_admin_bookings_overview(
     past_bookings = []
     bookings_tomorrow = []
     month_confirmed_bookings = []
+    confirmed_bookings = []
 
     for req, parent, nanny in request_rows:
         item = {
@@ -7148,7 +7149,7 @@ def list_admin_bookings_overview(
         end_dt = booking.ends_at
         related_request = request_by_id.get(getattr(booking, "booking_request_id", None))
         nanny_response_status = (getattr(related_request, "nanny_response_status", None) or "").lower() if related_request else ""
-        is_confirmed = booking.status in ("approved", "accepted") and nanny_response_status == "accepted"
+        is_confirmed = booking.status in ("approved", "accepted")
         item = {
             "source": "booking",
             "request_id": getattr(booking, "booking_request_id", None),
@@ -7171,6 +7172,8 @@ def list_admin_bookings_overview(
             "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
             "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),
         }
+        if is_confirmed:
+            confirmed_bookings.append(item)
         if is_confirmed and start_dt:
             local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
             if local_start.date() == tomorrow:
@@ -7226,6 +7229,7 @@ def list_admin_bookings_overview(
 
     return {
         "pending_requests": _sort_desc(pending_requests),
+        "confirmed_bookings": _sort_asc(confirmed_bookings),
         "bookings_tomorrow": _sort_asc(bookings_tomorrow),
         "upcoming_bookings": _sort_desc(upcoming_bookings),
         "bookings_in_progress": _sort_desc(bookings_in_progress),
