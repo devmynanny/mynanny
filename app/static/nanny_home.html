@@ -199,6 +199,41 @@
       }).format(dt);
     }
 
+    function formatPreferredDateLabel(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      const parts = new Intl.DateTimeFormat("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "2-digit",
+        timeZone: "Africa/Johannesburg",
+      }).formatToParts(dt);
+      const day = parts.find((part) => part.type === "day")?.value || "";
+      const month = parts.find((part) => part.type === "month")?.value || "";
+      const year = parts.find((part) => part.type === "year")?.value || "";
+      return `${day} ${month} '${year}`;
+    }
+
+    function formatPreferredTime(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      return new Intl.DateTimeFormat("en-ZA", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Africa/Johannesburg",
+      }).format(dt);
+    }
+
+    function formatPreferredBookingRange(startValue, endValue) {
+      if (!startValue || !endValue) return "-";
+      const startDate = formatPreferredDateLabel(startValue);
+      const endDate = formatPreferredDateLabel(endValue);
+      const timeRange = `${formatPreferredTime(startValue)} - ${formatPreferredTime(endValue)}`;
+      if (startDate === endDate) return `${startDate}: ${timeRange}`;
+      return `${startDate} - ${endDate}: ${timeRange}`;
+    }
+
     function formatCalendarTimeRange(startValue, endValue) {
       const start = startValue ? new Date(startValue) : null;
       const end = endValue ? new Date(endValue) : null;
@@ -334,15 +369,11 @@
         return;
       }
       container.innerHTML = list.map((item) => {
-        const totalDays = item.slots.length || 1;
-        const dayLabel = totalDays === 1 ? "1 day" : `${totalDays} days`;
         const whatsappUrl = buildWhatsAppUrl(item.parent_phone, item.parent_name);
         return `
           <div class="bookingItem">
             <div class="bookingItemTitle">${escapeHtml(item.parent_name || "Client")}</div>
-            <div class="bookingItemMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}${item.end_dt && item.end_dt !== item.start_dt ? ` to ${escapeHtml(formatDayDateLabel(item.end_dt))}` : ""}</div>
-            <div class="bookingItemMeta">${escapeHtml(dayLabel)} • ${escapeHtml(formatCompactTimeRange(item.start_dt, item.end_dt))}</div>
-            <div class="bookingItemMeta">${escapeHtml(formatListingDate(item.start_dt))} to ${escapeHtml(formatListingDate(item.end_dt))}</div>
+            <div class="bookingItemMeta">${escapeHtml(formatPreferredBookingRange(item.start_dt, item.end_dt))}</div>
             <div class="bookingItemMeta">${escapeHtml(item.location_address || item.location_label || "-")}</div>
             <div class="acceptedActions">
               <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || "")}">View details</button>
@@ -458,18 +489,11 @@
         return;
       }
       container.innerHTML = visible.map((item) => {
-        const start = formatListingDate(item.start_dt);
-        const end = formatListingDate(item.end_dt);
-        const slots = Array.isArray(item.slots) ? item.slots : [];
-        const dates = slots.length
-          ? slots.map((slot) => formatListingDate(slot.start_dt)).join(" | ")
-          : start;
         return `
           <div class="listingRow">
             <div>
               <div class="listingTitle">Booking #${escapeHtml(item.group_id || item.id || "-")}</div>
-              <div class="listingMeta">${escapeHtml(dates)}</div>
-              <div class="listingMeta">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+              <div class="listingMeta">${escapeHtml(formatPreferredBookingRange(item.start_dt, item.end_dt))}</div>
               <span class="distancePill">${escapeHtml(listingDistance(item))}</span>
             </div>
             <button class="btn viewListingBtn" type="button" data-id="${escapeHtml(item.id || "")}">View booking</button>

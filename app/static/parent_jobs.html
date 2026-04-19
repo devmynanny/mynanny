@@ -48,6 +48,28 @@
     .calendarFilterBar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0 14px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff}
     .calendarFilterLabel{font-weight:700;color:#1e3a8a}
     .calendarFilterBar select{min-width:220px;padding:10px 12px;border:1px solid #93c5fd;border-radius:10px;background:#fff;font:inherit}
+    .avatar{width:64px;height:64px;border-radius:12px;object-fit:cover;background:#f3f4f6;border:1px solid #ddd;display:flex;align-items:center;justify-content:center;font-weight:600;color:#6b7280}
+    .previewModal{background:#fff;border-radius:12px;width:min(640px,100%);border:1px solid #ddd;padding:18px;position:relative}
+    .previewHeader{display:flex;gap:12px;align-items:center}
+    .previewTitle{font-weight:700;font-size:20px}
+    .previewSection{margin-top:12px}
+    .previewSectionTitle{font-weight:600;margin-bottom:6px}
+    .previewSectionToggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0;border:none;background:transparent;cursor:pointer;font:inherit;text-align:left}
+    .previewChevron{font-size:16px;color:#666;transition:transform .18s ease}
+    .previewChevron.open{transform:rotate(180deg)}
+    .previewSectionBody.collapsed{display:none}
+    .trustPills{display:flex;flex-wrap:wrap;gap:8px}
+    .trustPill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px}
+    .infoGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+    .infoItem{font-size:14px;color:#444}
+    .infoItem strong{color:#1f2937}
+    .workList{display:grid;gap:8px}
+    .workItem{border:1px solid #e5e7eb;border-radius:10px;padding:8px}
+    .workRole{font-weight:600}
+    .workMeta{font-size:13px;color:#555}
+    .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999}
+    .summaryText{margin-top:10px;line-height:1.45;color:#374151}
+    .previewPills .pill{margin:6px 6px 0 0}
     @media (max-width:760px){
       .bookingGlance{grid-template-columns:1fr}
       .monthNav{flex-wrap:wrap}
@@ -106,11 +128,49 @@
 
   <div id="jobsList"></div>
 
+  <div id="previewModal" class="modalBack">
+    <div class="previewModal">
+      <div class="previewHeader">
+        <div id="previewAvatar" class="avatar"></div>
+        <div>
+          <div id="previewName" class="previewTitle"></div>
+          <div id="previewMeta" class="muted"></div>
+        </div>
+      </div>
+      <div id="previewBio" style="margin-top:12px"></div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Trust and verification</div>
+        <div id="previewTrust" class="trustPills"></div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Profile details</div>
+        <div id="previewDetails" class="infoGrid"></div>
+      </div>
+      <div class="previewSection">
+        <button id="previewWorkHistoryToggle" class="previewSectionToggle" type="button" aria-expanded="false" aria-controls="previewWorkHistoryWrap">
+          <span class="previewSectionTitle">Work history</span>
+          <span id="previewWorkHistoryChevron" class="previewChevron">&#9662;</span>
+        </button>
+        <div id="previewWorkHistoryWrap" class="previewSectionBody collapsed">
+          <div id="previewWorkHistory" class="workList muted"></div>
+        </div>
+      </div>
+      <div class="previewSection">
+        <div class="previewSectionTitle">Proficiencies</div>
+        <div id="previewProficiencies" class="previewPills"></div>
+      </div>
+      <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
+        <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
   <script>
     let cancellationWindowHours = 15;
     let currentCalendarMonth = null;
     let parentBookingsCache = [];
+    let previewNanny = null;
 
     function escapeHtml(value) {
       return String(value == null ? "" : value)
@@ -192,6 +252,29 @@
       return `${normalize(start)}-${normalize(end)}`;
     }
 
+    function formatShortBookingDate(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      const parts = new Intl.DateTimeFormat("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "2-digit",
+        timeZone: "Africa/Johannesburg",
+      }).formatToParts(dt);
+      const day = parts.find((part) => part.type === "day")?.value || "";
+      const month = parts.find((part) => part.type === "month")?.value || "";
+      const year = parts.find((part) => part.type === "year")?.value || "";
+      return `${day} ${month} '${year}`;
+    }
+
+    function formatBookingDateTimeRange(startValue, endValue) {
+      if (!startValue || !endValue) return "-";
+      const startDate = formatShortBookingDate(startValue);
+      const endDate = formatShortBookingDate(endValue);
+      const timeRange = formatCompactTimeRange(startValue, endValue).replace(/am/g, "").replace(/pm/g, "").trim();
+      return `${startDate} - ${endDate}: ${timeRange}`;
+    }
+
     function toLocalDateParts(date) {
       const formatter = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Africa/Johannesburg",
@@ -238,7 +321,7 @@
           <div class="bookingCardTitle">${item.accepted_nanny_name ? `<strong>Nanny:</strong> ${escapeHtml(item.accepted_nanny_name)}` : escapeHtml(bookingDisplayName(item))}</div>
           <div class="bookingCardMeta">${item.accepted_nanny_name ? `Accepted booking` : `Job ID: ${escapeHtml(item.job_id || "-")}`}</div>
           <div class="bookingStatusBadge">Job status: ${escapeHtml(mapStatus(item.status || "-"))}</div>
-          <div class="bookingCardMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}${item.end_dt && item.end_dt !== item.start_dt ? ` to ${escapeHtml(formatDayDateLabel(item.end_dt))}` : ""}</div>
+          <div class="bookingCardMeta">${escapeHtml(formatBookingDateTimeRange(item.start_dt, item.end_dt))}</div>
           <div class="actions">
             <button class="btn dashboardViewBtn" type="button" data-id="${escapeHtml(item.job_id || "")}">View details</button>
             ${item.accepted_nanny_id ? `<button class="btn dashboardViewProfileBtn" type="button" data-job-id="${escapeHtml(item.job_id || "")}" data-nanny-id="${escapeHtml(item.accepted_nanny_id || "")}">View profile</button>` : ""}
@@ -322,15 +405,16 @@
     function renderBookingsDashboard(items) {
       const list = Array.isArray(items) ? items.slice() : [];
       list.sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
-      const inProgress = list.filter((item) => String(item.booking_category || "").toLowerCase() === "in_progress");
-      const upcoming = list.filter((item) => String(item.booking_category || "").toLowerCase() === "upcoming");
+      const visibleDashboardItems = list.filter((item) => !["cancelled", "rejected"].includes(String(item.status || "").toLowerCase()));
+      const inProgress = visibleDashboardItems.filter((item) => String(item.booking_category || "").toLowerCase() === "in_progress");
+      const upcoming = visibleDashboardItems.filter((item) => String(item.booking_category || "").toLowerCase() === "upcoming");
       renderDashboardPanel("inProgressBookings", inProgress, "No bookings in progress.");
       renderDashboardPanel("upcomingBookings", upcoming, "No upcoming bookings.");
       if (!currentCalendarMonth) {
         const now = new Date();
         currentCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       }
-      renderParentBookingsCalendar(currentCalendarMonth, list.filter((item) => !["cancelled", "rejected"].includes(String(item.status || "").toLowerCase())));
+      renderParentBookingsCalendar(currentCalendarMonth, visibleDashboardItems);
     }
 
     function renderFormPreview(form) {
@@ -389,30 +473,71 @@
       details.style.display = "block";
     }
 
-    function profileHtml(profile) {
-      const qualifications = Array.isArray(profile?.qualifications) && profile.qualifications.length
-        ? profile.qualifications.map((item) => item.name).join(", ")
-        : "-";
-      const tags = Array.isArray(profile?.tags) && profile.tags.length
-        ? profile.tags.map((item) => item.name).join(", ")
-        : "-";
-      const languages = Array.isArray(profile?.languages) && profile.languages.length
-        ? profile.languages.map((item) => item.name).join(", ")
-        : "-";
-      return `
-        <div class="profilePanel">
-          <div><strong>${escapeHtml(profile?.name || "Nanny profile")}</strong></div>
-          <div class="muted">Nationality: ${escapeHtml(profile?.nationality || "-")}</div>
-          <div class="muted">Location: ${escapeHtml(profile?.location_hint || "-")}</div>
-          <div class="muted">Job type: ${escapeHtml(profile?.job_type || "-")}</div>
-          <div class="muted">Qualifications: ${escapeHtml(qualifications)}</div>
-          <div class="muted">Experience areas: ${escapeHtml(tags)}</div>
-          <div class="muted">Languages: ${escapeHtml(languages)}</div>
-          <div class="muted">Driver's license: ${escapeHtml(yesNo(profile?.has_drivers_license))}</div>
-          <div class="muted">Own car: ${escapeHtml(yesNo(profile?.has_own_car))}</div>
-          <div class="summaryText">${escapeHtml(profile?.profile_summary || "No summary available yet.")}</div>
-        </div>
-      `;
+    function openPreview(profile) {
+      previewNanny = profile;
+      const name = formatName(profile?.name || `Nanny ${profile?.nanny_id || ""}`);
+      const initials = (name || "N").trim().split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
+      const avatarEl = document.getElementById("previewAvatar");
+      if (profile?.profile_photo_url) {
+        avatarEl.innerHTML = `<img src="${profile.profile_photo_url}" alt="${escapeHtml(name)}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`;
+      } else {
+        avatarEl.textContent = initials;
+      }
+      document.getElementById("previewName").textContent = name;
+      const meta = [];
+      if (profile?.average_rating_12m != null) meta.push(`⭐ ${profile.average_rating_12m} (${profile.review_count_12m ?? 0})`);
+      else meta.push("⭐ New");
+      if (profile?.distance_km != null) meta.push(`${Number(profile.distance_km).toFixed(2)} km away`);
+      if (profile?.location_hint) meta.push(profile.location_hint);
+      document.getElementById("previewMeta").textContent = meta.join(" • ");
+
+      const summary = profile?.profile_summary || profile?.bio || "";
+      document.getElementById("previewBio").innerHTML = `<div class="summaryText">${escapeHtml(summary || "No bio yet.")}</div>`;
+
+      const trustBits = [
+        profile?.approved ? "Approved by My Nanny" : "Pending approval",
+        (profile?.review_count_12m || 0) > 0 ? `${profile.review_count_12m} recent review(s)` : "No recent reviews yet",
+      ];
+      document.getElementById("previewTrust").innerHTML = trustBits.map((v) => `<span class="trustPill">${escapeHtml(v)}</span>`).join("");
+
+      const details = [
+        ["Completed jobs", profile?.completed_jobs_count ?? 0],
+        ["Age", profile?.age ?? "Not provided"],
+        ["Languages", (profile?.languages || []).map((l) => l.name).join(", ") || "Not provided"],
+        ["Qualifications", (profile?.qualifications || []).map((q) => q.name).join(", ") || "Not provided"],
+      ];
+      document.getElementById("previewDetails").innerHTML = details
+        .map(([label, value]) => `<div class="infoItem"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(String(value))}</div>`)
+        .join("");
+
+      const jobs = Array.isArray(profile?.previous_jobs) ? profile.previous_jobs.filter(Boolean) : [];
+      document.getElementById("previewWorkHistory").innerHTML = jobs.length
+        ? jobs.slice(0, 3).map((job) => `
+            <div class="workItem">
+              <div class="workRole">${escapeHtml(job.role || "Previous role")}</div>
+              <div class="workMeta">${escapeHtml(job.employer || "Employer not listed")} • ${escapeHtml(job.period || "Period not listed")}</div>
+            </div>
+          `).join("")
+        : "No previous positions listed yet.";
+      document.getElementById("previewWorkHistoryWrap").classList.add("collapsed");
+      document.getElementById("previewWorkHistoryToggle").setAttribute("aria-expanded", "false");
+      document.getElementById("previewWorkHistoryChevron").classList.remove("open");
+
+      const proficiencies = [
+        ...(profile?.tags || []).map((tag) => tag.name).filter(Boolean),
+        ...(profile?.qualifications || []).map((item) => item.name).filter(Boolean),
+        ...(profile?.languages || []).map((item) => item.name).filter(Boolean),
+      ];
+      document.getElementById("previewProficiencies").innerHTML = proficiencies.length
+        ? proficiencies.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("")
+        : "No proficiencies listed.";
+
+      document.getElementById("previewModal").style.display = "flex";
+    }
+
+    function closePreview() {
+      document.getElementById("previewModal").style.display = "none";
+      previewNanny = null;
     }
 
     async function loadJobs() {
@@ -441,6 +566,7 @@
         if (filter !== "all" && filter !== category) return;
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const bookingRange = formatBookingDateTimeRange(r.start_dt, r.end_dt);
         const status = mapStatus(r.status);
         const displayName = formatName(r.accepted_nanny_name || "Nanny");
         let nannyLine = "Awaiting nanny acceptance";
@@ -462,7 +588,7 @@
         const cardHtml = `
           <div class="card">
           <div><strong>Job ID:</strong> ${escapeHtml(r.job_id)}</div>
-          <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+          <div class="muted">${escapeHtml(bookingRange)}</div>
           <div class="muted">Status: ${escapeHtml(status)}</div>
           <div class="muted">${escapeHtml(nannyLine)}</div>
           <div class="actions">
@@ -473,7 +599,7 @@
             ${r.accepted_nanny_id ? `<button class="btn viewNannyProfileBtn" data-id="${r.accepted_nanny_id}">View nanny profile</button>` : ""}
           </div>
           <div class="job-details">
-            <div><strong>Requested times:</strong> ${escapeHtml(start)} to ${escapeHtml(end)}</div>
+            <div><strong>Requested times:</strong> ${escapeHtml(bookingRange)}</div>
             <div><strong>Requested nannies:</strong> ${escapeHtml(requestedNannies)}</div>
             ${r.accepted_nanny_name ? `<div><strong>Confirmed nanny:</strong> ${escapeHtml(displayName)} (ID ${escapeHtml(r.accepted_nanny_id || "-")})</div>` : ""}
             <div><strong>Job status:</strong> ${escapeHtml(status)}</div>
@@ -576,19 +702,7 @@
           btn.disabled = true;
           try {
             const profile = await fetchJson(`/parents/me/nannies/${btn.dataset.id}/profile`);
-            const card = btn.closest(".card");
-            let panel = card.querySelector(".profilePanel");
-            if (panel) {
-              panel.remove();
-            } else {
-              const wrapper = document.createElement("div");
-              wrapper.innerHTML = profileHtml(profile);
-              const details = card.querySelector(".job-details");
-              if (details) {
-                details.style.display = "block";
-                details.insertAdjacentElement("afterbegin", wrapper.firstElementChild);
-              }
-            }
+            openPreview(profile);
           } catch (e) {
             alert(e.message || "Failed to load nanny profile");
           } finally {
@@ -672,6 +786,17 @@
       if (!currentCalendarMonth) return;
       currentCalendarMonth = new Date(currentCalendarMonth.getFullYear(), currentCalendarMonth.getMonth() + 1, 1);
       renderParentBookingsCalendar(currentCalendarMonth, parentBookingsCache.filter((item) => !["cancelled", "rejected"].includes(String(item.status || "").toLowerCase())));
+    });
+    document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
+    document.getElementById("previewModal").addEventListener("click", (e) => {
+      if (e.target.id === "previewModal") closePreview();
+    });
+    document.getElementById("previewWorkHistoryToggle").addEventListener("click", () => {
+      const wrap = document.getElementById("previewWorkHistoryWrap");
+      const chevron = document.getElementById("previewWorkHistoryChevron");
+      const isCollapsed = wrap.classList.toggle("collapsed");
+      document.getElementById("previewWorkHistoryToggle").setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      chevron.classList.toggle("open", !isCollapsed);
     });
 
     (async () => {

@@ -213,7 +213,6 @@
   <div id="status" class="muted" style="margin-top:10px"></div>
   <div id="emptyAvailabilityNotice" class="emptyAvailabilityNotice">
     <div id="emptyAvailabilityText" class="emptyAvailabilityText"></div>
-    <button class="btn coralGlow" id="emptyAvailabilityBroadcastBtn" type="button">Broadcast to nearest 30km</button>
   </div>
   <div id="list" class="grid"></div>
   <div class="resultsActionBar" style="margin-bottom:10px;">
@@ -1670,12 +1669,6 @@
           }
         });
       });
-      const emptyBroadcastBtn = document.getElementById("emptyAvailabilityBroadcastBtn");
-      if (emptyBroadcastBtn) {
-        emptyBroadcastBtn.addEventListener("click", () => {
-          broadcastToNearby(false);
-        });
-      }
     }
 
     async function runSearch(){
