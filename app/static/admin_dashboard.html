@@ -86,6 +86,10 @@
     <div class="card" style="margin-bottom:10px;">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
         <label>
+          Search
+          <input id="userSearchFilter" type="text" placeholder="Name, phone, ID or passport" />
+        </label>
+        <label>
           Role
           <select id="userRoleFilter">
             <option value="">All</option>
@@ -144,7 +148,11 @@
           <div id="inProgressBookingsList"></div>
         </div>
         <div>
-          <div class="bookingSectionTitle" id="monthCalendarTitle">Bookings this month</div>
+          <div class="monthNav" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+            <button class="btn" id="adminCalendarPrevBtn" type="button">Previous</button>
+            <div class="bookingSectionTitle" id="monthCalendarTitle" style="margin:0;">Bookings this month</div>
+            <button class="btn" id="adminCalendarNextBtn" type="button">Next</button>
+          </div>
           <div id="monthBookingsCalendar"></div>
         </div>
       </div>
@@ -318,6 +326,8 @@
     }
 
     let usersCache = [];
+    let adminCalendarItems = [];
+    let currentAdminCalendarMonth = null;
 
     function renderUsers(users) {
       const container = document.getElementById("usersList");
@@ -335,10 +345,13 @@
         const rating = (u.rating === null || u.rating === undefined) ? "-" : `${u.rating} (${u.review_count || 0})`;
         const joined = u.joined_at ? (window.formatDateTimeZA ? window.formatDateTimeZA(u.joined_at) : new Date(u.joined_at).toLocaleString()) : "-";
         const lastActive = u.last_activity_at ? (window.formatDateTimeZA ? window.formatDateTimeZA(u.last_activity_at) : new Date(u.last_activity_at).toLocaleString()) : "-";
+        const phoneBits = [u.phone, u.phone_alt].filter(Boolean);
+        const identityDoc = u.sa_id_number || u.passport_number || "-";
         row.innerHTML = `
           <div>
-            <div><strong>${u.email || "-"}</strong></div>
-            <div class="muted">Role: ${u.role || "-"} | Admin: ${u.is_admin ? "Yes" : "No"} | Rating: ${rating} | Location: ${loc}</div>
+            <div><strong>${u.name || "-"}</strong></div>
+            <div class="muted">Email: ${u.email || "-"} | Role: ${u.role || "-"} | Admin: ${u.is_admin ? "Yes" : "No"} | Rating: ${rating}</div>
+            <div class="muted">Phone: ${phoneBits.length ? phoneBits.join(" | ") : "-"} | ID / Passport: ${identityDoc} | Location: ${loc}</div>
             <div class="muted">Joined: ${joined} | Last activity: ${lastActive}</div>
           </div>
         `;
@@ -348,11 +361,25 @@
     }
 
     function applyUserFilters() {
+      const search = (document.getElementById("userSearchFilter").value || "").trim().toLowerCase();
       const role = (document.getElementById("userRoleFilter").value || "").toLowerCase();
       const loc = (document.getElementById("userLocationFilter").value || "").trim().toLowerCase();
       const sort = document.getElementById("userSort").value;
 
       let list = (usersCache || []).slice();
+      if (search) {
+        list = list.filter(u => {
+          const haystack = [
+            u.name,
+            u.email,
+            u.phone,
+            u.phone_alt,
+            u.sa_id_number,
+            u.passport_number,
+          ].map(value => String(value || "").toLowerCase());
+          return haystack.some(value => value.includes(search));
+        });
+      }
       if (role) list = list.filter(u => (u.role || "").toLowerCase() === role);
       if (loc) {
         list = list.filter(u => {
@@ -446,8 +473,7 @@
         return;
       }
       items.forEach(r => {
-        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt ? new Date(r.start_dt).toLocaleString() : "-");
-        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt ? new Date(r.end_dt).toLocaleString() : "-");
+        const bookingRange = formatAdminBookingRange(r.start_dt, r.end_dt);
         const parentLine = escapeHtml(r.parent_name || "Client");
         const nannyName = escapeHtml(r.nanny_name || "Nanny");
         const row = document.createElement("div");
@@ -465,7 +491,7 @@
           <div>
             <div><strong>${parentLine}</strong> → <strong>${nannyName}</strong></div>
             <div class="bookingMeta">${refLine}</div>
-            <div class="bookingMeta">${escapeHtml(start)} to ${escapeHtml(end)}</div>
+            <div class="bookingMeta">${escapeHtml(bookingRange)}</div>
             <div class="bookingMeta">Status: ${escapeHtml(r.status || "-")}</div>
             ${locationLine}
             ${reasonLine}
@@ -483,29 +509,103 @@
       });
     }
 
-    function renderMonthCalendar(calendar) {
+    function toAdminLocalDateParts(date) {
+      const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Africa/Johannesburg",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      const parts = formatter.formatToParts(date);
+      const year = parts.find((part) => part.type === "year")?.value;
+      const month = parts.find((part) => part.type === "month")?.value;
+      const day = parts.find((part) => part.type === "day")?.value;
+      return { year: Number(year), month: Number(month), day: Number(day) };
+    }
+
+    function formatAdminDateLabel(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      return new Intl.DateTimeFormat("en-ZA", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        timeZone: "Africa/Johannesburg",
+      }).format(dt);
+    }
+
+    function formatAdminCalendarTime(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "";
+      return new Intl.DateTimeFormat("en-ZA", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Africa/Johannesburg",
+      }).format(dt);
+    }
+
+    function formatAdminBookingRange(startValue, endValue) {
+      if (!startValue || !endValue) return "-";
+      const startDate = formatAdminDateLabel(startValue);
+      const endDate = formatAdminDateLabel(endValue);
+      const timeRange = `${formatAdminCalendarTime(startValue)}-${formatAdminCalendarTime(endValue)}`;
+      if (startDate === endDate) return `${startDate}: ${timeRange}`;
+      return `${startDate} - ${endDate}: ${timeRange}`;
+    }
+
+    function buildAdminCalendarItems(data) {
+      const combined = [
+        ...(Array.isArray(data?.upcoming_bookings) ? data.upcoming_bookings : []),
+        ...(Array.isArray(data?.bookings_in_progress) ? data.bookings_in_progress : []),
+        ...(Array.isArray(data?.past_bookings) ? data.past_bookings : []),
+      ];
+      const deduped = new Map();
+      combined.forEach((item) => {
+        const key = String(item?.booking_id || item?.request_id || item?.id || "");
+        if (!key) return;
+        if (!deduped.has(key)) deduped.set(key, item);
+      });
+      return Array.from(deduped.values()).filter((item) => !["cancelled", "rejected"].includes(String(item?.status || "").toLowerCase()));
+    }
+
+    function renderMonthCalendar(monthDate, items) {
       const title = document.getElementById("monthCalendarTitle");
       const container = document.getElementById("monthBookingsCalendar");
       if (!container) return;
-      if (title) title.textContent = calendar?.month_label ? `Bookings for ${calendar.month_label}` : "Bookings this month";
-      const days = Array.isArray(calendar?.days) ? calendar.days : [];
-      if (!days.length) {
-        container.innerHTML = "<div class=\"bookingEmpty\">No calendar days to show.</div>";
-        return;
+      if (!monthDate) return;
+      if (title) {
+        title.textContent = `Bookings for ${monthDate.toLocaleDateString("en-ZA", { month: "long", year: "numeric" })}`;
       }
-      const first = new Date(`${days[0].date}T00:00:00`);
-      const offset = Number.isNaN(first.getTime()) ? 0 : first.getDay();
+      const year = monthDate.getFullYear();
+      const month = monthDate.getMonth();
+      const first = new Date(year, month, 1);
+      const last = new Date(year, month + 1, 0);
+      const totalDays = last.getDate();
+      const offset = first.getDay();
+      const byDate = new Map();
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const dt = item?.start_dt ? new Date(item.start_dt) : null;
+        if (!dt || Number.isNaN(dt.getTime())) return;
+        const parts = toAdminLocalDateParts(dt);
+        if (parts.year !== year || (parts.month - 1) !== month) return;
+        const key = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+        if (!byDate.has(key)) byDate.set(key, []);
+        byDate.get(key).push(item);
+      });
       const heads = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => `<div class="calendarHead">${d}</div>`).join("");
       const blanks = Array.from({ length: offset }, () => `<div></div>`).join("");
-      const cells = days.map((day) => {
-        const bookings = Array.isArray(day.bookings) ? day.bookings : [];
+      const cells = Array.from({ length: totalDays }, (_, index) => {
+        const day = index + 1;
+        const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const bookings = byDate.get(key) || [];
         const shown = bookings.slice(0, 2).map((b) => {
-          const time = b.start_dt ? new Date(b.start_dt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+          const time = `${formatAdminCalendarTime(b.start_dt)}-${formatAdminCalendarTime(b.end_dt)}`;
           const colors = getAdminBookingColor(b);
           return `<div class="calendarBooking" style="--booking-bg:${escapeHtml(colors.bg)};--booking-accent:${escapeHtml(colors.accent)}" title="${escapeHtml((b.parent_name || "Client") + " with " + (b.nanny_name || "Nanny"))}">${escapeHtml(time)} ${escapeHtml(b.nanny_name || "Nanny")} / ${escapeHtml(b.parent_name || "Client")}</div>`;
         }).join("");
         const more = bookings.length > 2 ? `<div class="calendarMore">+${bookings.length - 2} more</div>` : "";
-        return `<div class="calendarDay"><div class="calendarDayNumber">${escapeHtml(day.day || "")}</div>${shown || ""}${more}</div>`;
+        return `<div class="calendarDay"><div class="calendarDayNumber">${escapeHtml(day)}</div>${shown || ""}${more}</div>`;
       }).join("");
       container.innerHTML = `<div class="monthCalendar">${heads}${blanks}${cells}</div>`;
     }
@@ -653,14 +753,28 @@
 
     async function loadBookingRequests() {
       const data = await fetchJson("/admin/bookings/overview");
-      renderBookingCollection("tomorrowBookingsList", data?.bookings_tomorrow || [], { emptyText: "No confirmed bookings tomorrow." });
+      adminCalendarItems = buildAdminCalendarItems(data);
+      if (!currentAdminCalendarMonth) {
+        const now = new Date();
+        currentAdminCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      }
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowParts = toAdminLocalDateParts(tomorrow);
+      const bookingsTomorrow = adminCalendarItems.filter((item) => {
+        const dt = item?.start_dt ? new Date(item.start_dt) : null;
+        if (!dt || Number.isNaN(dt.getTime())) return false;
+        const parts = toAdminLocalDateParts(dt);
+        return parts.year === tomorrowParts.year && parts.month === tomorrowParts.month && parts.day === tomorrowParts.day;
+      });
+      renderBookingCollection("tomorrowBookingsList", bookingsTomorrow, { emptyText: "No confirmed bookings tomorrow." });
       renderBookingCollection("bookingRequestsList", data?.pending_requests || [], { showActions: true, emptyText: "No pending booking requests." });
       renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { emptyText: "No upcoming bookings." });
       renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { emptyText: "No bookings currently in progress." });
       renderBookingCollection("pastBookingsList", data?.past_bookings || [], { emptyText: "No past bookings yet." });
       renderBookingCollection("cancelledBookingsList", data?.cancelled_bookings || [], { emptyText: "No cancelations yet." });
       renderBookingCollection("unsuccessfulBookingsList", data?.unsuccessful_bookings || [], { emptyText: "No unsuccessful bookings yet." });
-      renderMonthCalendar(data?.month_calendar);
+      renderMonthCalendar(currentAdminCalendarMonth, adminCalendarItems);
       applyBookingSectionFilter();
     }
 
@@ -724,6 +838,16 @@
     document.getElementById("btnChangeLogs").addEventListener("click", () => {
       window.location.href = "/static/admin_audit.html";
     });
+    document.getElementById("adminCalendarPrevBtn").addEventListener("click", () => {
+      if (!currentAdminCalendarMonth) return;
+      currentAdminCalendarMonth = new Date(currentAdminCalendarMonth.getFullYear(), currentAdminCalendarMonth.getMonth() - 1, 1);
+      renderMonthCalendar(currentAdminCalendarMonth, adminCalendarItems);
+    });
+    document.getElementById("adminCalendarNextBtn").addEventListener("click", () => {
+      if (!currentAdminCalendarMonth) return;
+      currentAdminCalendarMonth = new Date(currentAdminCalendarMonth.getFullYear(), currentAdminCalendarMonth.getMonth() + 1, 1);
+      renderMonthCalendar(currentAdminCalendarMonth, adminCalendarItems);
+    });
 
     document.getElementById("usersList").addEventListener("click", (e) => {
       const row = e.target.closest(".clickable-row");
@@ -737,6 +861,7 @@
       applyUserFilters();
     });
     document.getElementById("clearUserFilters").addEventListener("click", () => {
+      document.getElementById("userSearchFilter").value = "";
       document.getElementById("userRoleFilter").value = "";
       document.getElementById("userLocationFilter").value = "";
       document.getElementById("userSort").value = "joined_asc";

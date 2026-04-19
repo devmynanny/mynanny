@@ -7574,14 +7574,6 @@ def admin_list_users(
 ):
     require_admin(authorization, db)
     query = db.query(models.User)
-    if q:
-        like = f"%{q.lower()}%"
-        query = query.filter(
-            or_(
-                func.lower(models.User.name).like(like),
-                func.lower(models.User.email).like(like),
-            )
-        )
     if role:
         query = query.filter(models.User.role == role)
     users = query.order_by(models.User.id.asc()).all()
@@ -7636,6 +7628,24 @@ def admin_list_users(
         if u.role != "nanny" or nanny_approved_map.get(u.id, False)
     ]
 
+    search_term = (q or "").strip().lower()
+    if search_term:
+        def _matches_search(user):
+            parent_profile = parent_profiles.get(user.id)
+            nanny_profile = nanny_profiles.get(user.id)
+            haystack = [
+                getattr(user, "name", None),
+                getattr(user, "email", None),
+                getattr(user, "phone", None),
+                getattr(user, "phone_alt", None),
+                getattr(parent_profile, "phone", None) if parent_profile else None,
+                getattr(nanny_profile, "sa_id_number", None) if nanny_profile else None,
+                getattr(nanny_profile, "passport_number", None) if nanny_profile else None,
+            ]
+            return any(search_term in str(value or "").strip().lower() for value in haystack if value)
+
+        users = [u for u in users if _matches_search(u)]
+
     rating_map = {}
     for nanny_id in set(nanny_ids.values()):
         try:
@@ -7671,6 +7681,10 @@ def admin_list_users(
             "id": u.id,
             "name": u.name,
             "email": u.email,
+            "phone": getattr(u, "phone", None) or getattr(parent_profiles.get(u.id), "phone", None),
+            "phone_alt": getattr(u, "phone_alt", None),
+            "sa_id_number": getattr(nanny_profiles.get(u.id), "sa_id_number", None) if u.role == "nanny" else None,
+            "passport_number": getattr(nanny_profiles.get(u.id), "passport_number", None) if u.role == "nanny" else None,
             "role": u.role,
             "is_admin": bool(getattr(u, "is_admin", False)),
             "nanny_id": nanny_ids.get(u.id),
