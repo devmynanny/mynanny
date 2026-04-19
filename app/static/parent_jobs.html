@@ -239,7 +239,6 @@
           <div class="bookingCardMeta">${item.accepted_nanny_name ? `Accepted booking` : `Job ID: ${escapeHtml(item.job_id || "-")}`}</div>
           <div class="bookingStatusBadge">Job status: ${escapeHtml(mapStatus(item.status || "-"))}</div>
           <div class="bookingCardMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}${item.end_dt && item.end_dt !== item.start_dt ? ` to ${escapeHtml(formatDayDateLabel(item.end_dt))}` : ""}</div>
-          <div class="bookingCardMeta">${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(item.start_dt) : (item.start_dt || "-"))} to ${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(item.end_dt) : (item.end_dt || "-"))}</div>
           <div class="actions">
             <button class="btn dashboardViewBtn" type="button" data-id="${escapeHtml(item.job_id || "")}">View details</button>
             ${item.accepted_nanny_id ? `<button class="btn dashboardViewProfileBtn" type="button" data-job-id="${escapeHtml(item.job_id || "")}" data-nanny-id="${escapeHtml(item.accepted_nanny_id || "")}">View profile</button>` : ""}

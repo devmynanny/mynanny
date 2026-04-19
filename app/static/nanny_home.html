@@ -39,6 +39,8 @@
     .bookingItemTitle{font-weight:700}
     .bookingItemMeta{color:#666;font-size:14px;margin-top:4px}
     .acceptedActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .whatsAppBtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
+    .whatsAppIcon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;background:#25d366;color:#fff;font-size:11px;font-weight:700;line-height:1}
     .monthCalendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
     .calendarHead{font-size:12px;color:#666;font-weight:600;text-align:center}
     .calendarDay{min-height:96px;border:1px solid #e5e5e5;border-radius:8px;padding:6px;background:#fff;overflow:hidden}
@@ -233,6 +235,15 @@
       }).format(value);
     }
 
+    function buildWhatsAppUrl(phone, name) {
+      const normalized = normalizeWhatsAppNumber(phone);
+      if (!normalized) return "";
+      const message = name
+        ? `Hi ${name}, this is your booked nanny contacting you via My Nanny.`
+        : "Hi, this is your booked nanny contacting you via My Nanny.";
+      return `https://wa.me/${encodeURIComponent(normalized)}?text=${encodeURIComponent(message)}`;
+    }
+
     function bookingStatusKey(item) {
       return String(item?.status || "").toLowerCase();
     }
@@ -323,6 +334,7 @@
       container.innerHTML = list.map((item) => {
         const totalDays = item.slots.length || 1;
         const dayLabel = totalDays === 1 ? "1 day" : `${totalDays} days`;
+        const whatsappUrl = buildWhatsAppUrl(item.parent_phone, item.parent_name);
         return `
           <div class="bookingItem">
             <div class="bookingItemTitle">${escapeHtml(item.parent_name || "Client")}</div>
@@ -332,6 +344,7 @@
             <div class="bookingItemMeta">${escapeHtml(item.location_address || item.location_label || "-")}</div>
             <div class="acceptedActions">
               <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || "")}">View details</button>
+              ${whatsappUrl ? `<a class="btn whatsAppBtn" href="${whatsappUrl}" target="_blank" rel="noopener noreferrer"><span class="whatsAppIcon">W</span><span>WhatsApp</span></a>` : ""}
             </div>
           </div>
         `;

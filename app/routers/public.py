@@ -30,6 +30,15 @@ from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
 
+
+def _current_job_availability_allows_bookings(value: Optional[str]) -> bool:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"unavailable", "permanent_only"}:
+        return False
+    if normalized in {"piece_and_permanent", "piece_only"}:
+        return True
+    return True
+
 DEFAULT_NANNY_TAGS = [
     "Baby care (0-12 months)",
     "Newborn care",
@@ -2788,7 +2797,9 @@ def update_nanny_me_profile(
     if payload.job_type is not None:
         profile.job_type = _norm_text(payload.job_type)
     if payload.current_job_availability is not None:
-        profile.current_job_availability = _norm_text(payload.current_job_availability)
+        normalized_availability = _norm_text(payload.current_job_availability)
+        profile.current_job_availability = normalized_availability
+        user.is_active = _current_job_availability_allows_bookings(normalized_availability)
     if payload.police_clearance_status is not None:
         profile.police_clearance_status = _norm_text(payload.police_clearance_status)
     if payload.has_own_kids is not None:
@@ -3284,9 +3295,14 @@ def set_nanny_inactive(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
     inactive = bool(payload.get("inactive"))
-    user.is_active = not inactive
+    current_job_availability = getattr(profile, "current_job_availability", None) if profile else None
+    if current_job_availability in {"piece_and_permanent", "piece_only", "permanent_only", "unavailable"}:
+        user.is_active = _current_job_availability_allows_bookings(current_job_availability)
+    else:
+        user.is_active = not inactive
     db.commit()
     return {"ok": True, "is_active": bool(user.is_active)}
 
@@ -3315,6 +3331,23 @@ def list_nanny_me_booking_requests(
         .order_by(models.BookingRequest.created_at.desc())
         .all()
     )
+    accepted_booking_windows = []
+    accepted_bookings = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.nanny_id == nanny.id,
+            models.Booking.status.in_(["approved", "accepted", "pending"]),
+        )
+        .all()
+    )
+    for booking in accepted_bookings:
+        try:
+            start_dt = _parse_iso_dt(getattr(booking, "start_dt", None) or getattr(booking, "starts_at", None))
+            end_dt = _parse_iso_dt(getattr(booking, "end_dt", None) or getattr(booking, "ends_at", None))
+        except Exception:
+            continue
+        if start_dt and end_dt:
+            accepted_booking_windows.append((start_dt, end_dt, getattr(booking, "booking_request_id", None)))
     results = []
     for req, parent, loc, prof in rows:
         instructions = None
@@ -3327,6 +3360,14 @@ def list_nanny_me_booking_requests(
                 .first()
             )
         windows = _booking_request_windows(db, req)
+        current_response = (getattr(req, "nanny_response_status", None) or "pending").lower()
+        if current_response != "accepted" and windows:
+            overlaps_accepted_booking = any(
+                booked_request_id != req.id and any(_overlaps(slot_start, slot_end, booked_start, booked_end) for slot_start, slot_end in windows)
+                for booked_start, booked_end, booked_request_id in accepted_booking_windows
+            )
+            if overlaps_accepted_booking:
+                continue
         slots = [
             {
                 "start_dt": _to_iso_z(w[0]),
@@ -3336,7 +3377,9 @@ def list_nanny_me_booking_requests(
             for w in windows
         ]
         day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
-        total_wage_cents = int(getattr(req, "wage_cents", None) or 0)
+        total_cents = int(getattr(req, "total_cents", None) or 0)
+        booking_fee_cents = int(getattr(req, "booking_fee_cents", None) or 0)
+        total_wage_cents = int(getattr(req, "wage_cents", None) or max(0, total_cents - booking_fee_cents))
         daily_wage_cents = int(round(total_wage_cents / max(day_count, 1))) if total_wage_cents else 0
         location_lat = (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None)
         location_lng = (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None)
@@ -3371,6 +3414,7 @@ def list_nanny_me_booking_requests(
             "slots": slots,
             "days_required": day_count,
             "wage_cents": total_wage_cents,
+            "booking_fee_cents": booking_fee_cents,
             "daily_wage_cents": daily_wage_cents,
             "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
         })
@@ -3417,7 +3461,9 @@ def list_nanny_me_bookings(
             for w in windows
         ]
         day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
-        total_wage_cents = int(getattr(req, "wage_cents", None) or 0)
+        total_cents = int(getattr(req, "total_cents", None) or 0)
+        booking_fee_cents = int(getattr(req, "booking_fee_cents", None) or 0)
+        total_wage_cents = int(getattr(req, "wage_cents", None) or max(0, total_cents - booking_fee_cents))
         daily_wage_cents = int(round(total_wage_cents / max(day_count, 1))) if total_wage_cents else 0
         results.append({
             "id": req.id,
@@ -3435,6 +3481,7 @@ def list_nanny_me_bookings(
             "slots": slots,
             "days_required": day_count,
             "wage_cents": total_wage_cents,
+            "booking_fee_cents": booking_fee_cents,
             "daily_wage_cents": daily_wage_cents,
             "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
         })
@@ -3473,10 +3520,12 @@ def list_nanny_me_duty_bookings(
     user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
 
     parent_user = aliased(models.User)
+    parent_profile = aliased(models.ParentProfile)
     rows = (
-        db.query(models.Booking, parent_user, models.BookingRequest)
+        db.query(models.Booking, parent_user, models.BookingRequest, parent_profile)
         .join(parent_user, parent_user.id == models.Booking.client_user_id)
         .outerjoin(models.BookingRequest, models.BookingRequest.id == models.Booking.booking_request_id)
+        .outerjoin(parent_profile, parent_profile.user_id == models.Booking.client_user_id)
         .filter(models.Booking.nanny_id == nanny.id)
         .order_by(models.Booking.starts_at.desc())
         .all()
@@ -3488,6 +3537,7 @@ def list_nanny_me_duty_bookings(
                 "booking_request_id": getattr(b, "booking_request_id", None),
                 "parent_name": p.name,
                 "parent_email": p.email,
+                "parent_phone": (getattr(prof, "phone", None) or getattr(p, "phone", None)),
                 "start_dt": b.start_dt or (b.starts_at.isoformat() if b.starts_at else None),
                 "end_dt": b.end_dt or (b.ends_at.isoformat() if b.ends_at else None),
                 "status": b.status,
@@ -3509,7 +3559,7 @@ def list_nanny_me_duty_bookings(
                     if req else 0
                 ),
             }
-            for b, p, req in rows
+            for b, p, req, prof in rows
         ]
     }
 
@@ -4679,24 +4729,80 @@ def get_parent_nanny_profile_preview(
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
-
-    results = _search_nannies_by_area(
-        db=db,
-        parent_area_id=None,
-        parent_lat=None,
-        parent_lng=None,
-        max_distance_km=None,
-        min_rating=None,
-        tag_ids=None,
-        qualification_ids=None,
-        language_ids=None,
-        min_age=None,
-        max_age=None,
-    )
-    match = next((item for item in results if int(item.get("nanny_id") or 0) == nanny_id), None)
-    if not match:
+    nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
+    if not nanny:
         raise HTTPException(status_code=404, detail="Nanny profile not found")
-    return match
+    nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first()
+    if not nanny_user:
+        raise HTTPException(status_code=404, detail="Nanny profile not found")
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+
+    def simple_list(items):
+        return [{"id": x.id, "name": x.name} for x in (items or [])]
+
+    qualifications = simple_list(getattr(profile, "qualifications", None)) if profile else []
+    tags = simple_list(getattr(profile, "tags", None)) if profile else []
+    languages = simple_list(getattr(profile, "languages", None)) if profile else []
+    previous_jobs = _normalize_previous_jobs(getattr(profile, "previous_jobs_json", None)) if profile else []
+    age = compute_age(getattr(profile, "date_of_birth", None)) if profile else None
+    location_hint = None
+    if profile and getattr(profile, "suburb", None) and getattr(profile, "city", None):
+        location_hint = f"{profile.suburb}, {profile.city}"
+    elif profile and getattr(profile, "city", None):
+        location_hint = profile.city
+
+    return {
+        "nanny_id": nanny.id,
+        "approved": bool(getattr(nanny, "approved", False)),
+        "user_id": nanny_user.id,
+        "name": _public_nanny_name(nanny_user.name),
+        "nickname": getattr(nanny_user, "nickname", None),
+        "last_initial": getattr(nanny_user, "last_initial", None),
+        "profile_photo_url": getattr(nanny_user, "profile_photo_url", None),
+        "profile_summary": _build_nanny_profile_summary(
+            age=age,
+            nationality=getattr(profile, "nationality", None) if profile else None,
+            qualifications=qualifications,
+            tags=tags,
+            previous_jobs=previous_jobs,
+            bio=getattr(profile, "bio", None) if profile else None,
+        ),
+        "bio": getattr(profile, "bio", None) if profile else None,
+        "date_of_birth": getattr(profile, "date_of_birth", None) if profile else None,
+        "age": age,
+        "nationality": getattr(profile, "nationality", None) if profile else None,
+        "ethnicity": getattr(profile, "ethnicity", None) if profile else None,
+        "qualifications": qualifications,
+        "tags": tags,
+        "languages": languages,
+        "job_type": getattr(profile, "job_type", None) if profile else None,
+        "has_drivers_license": getattr(profile, "has_drivers_license", None) if profile else None,
+        "has_own_car": getattr(profile, "has_own_car", None) if profile else None,
+        "dog_preference": getattr(profile, "dog_preference", None) if profile else None,
+        "average_rating_12m": get_rating_12m_for_nanny(db, nanny.id)[0],
+        "review_count_12m": get_rating_12m_for_nanny(db, nanny.id)[1] or 0,
+        "distance_km": None,
+        "location_hint": location_hint,
+        "completed_jobs_count": (
+            db.query(func.count(models.BookingRequest.id))
+            .filter(models.BookingRequest.nanny_id == nanny.id, models.BookingRequest.status == "approved")
+            .scalar()
+            or 0
+        ),
+        "has_identity_document": False,
+        "has_passport_document": False,
+        "previous_jobs": [
+            {
+                "role": job.get("role"),
+                "employer": job.get("employer"),
+                "period": job.get("period"),
+                "care_type": job.get("care_type"),
+                "kids_age_when_started": job.get("kids_age_when_started"),
+                "disability_details": job.get("disability_details"),
+            }
+            for job in previous_jobs
+        ],
+    }
 
 
 @router.patch("/parents/me/booking-requests/{job_id}/cancel")
@@ -6452,13 +6558,171 @@ def reject_booking_request(
 def reject_booking_request_post(
     request_id: int,
     request: Request,
+    payload: Optional[BookingRequestReject] = None,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
     return reject_booking_request(
         request_id=request_id,
-        payload=None,
+        payload=payload,
         request=request,
+        authorization=authorization,
+        db=db,
+    )
+
+
+@router.patch("/admin/booking-requests/{request_id}/assign-nanny")
+def assign_booking_request_nanny(
+    request_id: int,
+    request: Request,
+    payload: Optional[BookingRequestReject] = None,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = _require_admin_user(authorization, db)
+    if payload is None:
+        payload = BookingRequestReject()
+
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Booking request not found")
+    if req.status not in ("pending_admin", "tbc"):
+        raise HTTPException(status_code=400, detail="Booking request is not pending")
+
+    selected_nanny_id = int(payload.assign_nanny_id or 0)
+    if selected_nanny_id <= 0:
+        raise HTTPException(status_code=400, detail="Please select a nanny to assign")
+
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for manual assignment")
+
+    nanny = db.query(models.Nanny).filter(models.Nanny.id == selected_nanny_id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Assigned nanny not found")
+
+    windows = _booking_request_windows(db, req)
+    if not windows:
+        raise HTTPException(status_code=400, detail="Invalid booking window")
+    for slot_start, slot_end in windows:
+        if not _is_nanny_available(db, selected_nanny_id, slot_start, slot_end):
+            raise HTTPException(status_code=409, detail="Selected nanny is no longer available for the requested dates")
+
+    location = None
+    if req.location_id:
+        location = db.query(models.ParentLocation).filter(models.ParentLocation.id == req.location_id).first()
+
+    start_dt = min(w[0] for w in windows)
+    end_dt = max(w[1] for w in windows)
+    before_status = req.status
+    previous_nanny_id = req.nanny_id
+    created_bookings = []
+
+    req.nanny_id = selected_nanny_id
+    req.status = "approved"
+    req.admin_reason = reason
+    req.start_dt = req.start_dt or _to_iso_z(start_dt)
+    req.end_dt = req.end_dt or _to_iso_z(end_dt)
+    req.admin_user_id = admin.id
+    req.admin_decided_at = datetime.utcnow()
+
+    for slot_start, slot_end in windows:
+        booking = models.Booking(
+            booking_request_id=req.id,
+            nanny_id=selected_nanny_id,
+            client_user_id=req.parent_user_id,
+            day=slot_start.date(),
+            status="approved",
+            price_cents=0,
+            starts_at=slot_start,
+            ends_at=slot_end,
+            start_dt=_to_iso_z(slot_start),
+            end_dt=_to_iso_z(slot_end),
+            lat=location.lat if location else None,
+            lng=location.lng if location else None,
+            location_mode="saved" if location else None,
+            location_label=(location.label or "Location").strip() if location else None,
+            formatted_address=getattr(location, "formatted_address", None) if location else None,
+        )
+        db.add(booking)
+        created_bookings.append(booking)
+
+    db.commit()
+
+    for slot_start, slot_end in windows:
+        db.add(
+            models.NannyAvailability(
+                nanny_id=selected_nanny_id,
+                date=slot_start.date(),
+                start_time=slot_start.time(),
+                end_time=slot_end.time(),
+                is_available=False,
+                created_by="admin",
+                type="blocked",
+                start_dt=_to_iso_z(slot_start),
+                end_dt=_to_iso_z(slot_end),
+            )
+        )
+    db.commit()
+
+    _sync_confirmed_booking_request_to_google_calendar(db, req)
+    notify_booking_reassigned(req.parent_user_id, selected_nanny_id, req.id, req.requested_starts_at, req.requested_ends_at)
+    log_booking_request_status_change(
+        db,
+        actor_user=admin,
+        target_user_id=req.parent_user_id,
+        booking_request_id=req.id,
+        before_status=before_status,
+        after_status=req.status,
+        request=request,
+        extra_after={
+            "admin_reason": req.admin_reason,
+            "previous_nanny_id": previous_nanny_id,
+            "nanny_id": selected_nanny_id,
+        },
+    )
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=req.parent_user_id,
+        entity="bookings",
+        entity_id=created_bookings[0].id if created_bookings else None,
+        action="create",
+        before_obj={},
+        after_obj={
+            "status": "approved",
+            "parent_user_id": req.parent_user_id,
+            "nanny_id": selected_nanny_id,
+            "start_dt": _to_iso_z(start_dt),
+            "end_dt": _to_iso_z(end_dt),
+            "location_label": (location.label if location else None),
+            "booking_count": len(created_bookings),
+            "manual_assignment": True,
+        },
+        changed_fields=None,
+        request=request,
+    )
+    primary_booking_id = created_bookings[0].id if created_bookings else None
+    return {
+        "ok": True,
+        "booking_id": primary_booking_id,
+        "booking_ids": [b.id for b in created_bookings],
+        "booking_request_id": req.id,
+    }
+
+
+@router.post("/admin/booking-requests/{request_id}/assign-nanny")
+def assign_booking_request_nanny_post(
+    request_id: int,
+    request: Request,
+    payload: Optional[BookingRequestReject] = None,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    return assign_booking_request_nanny(
+        request_id=request_id,
+        request=request,
+        payload=payload,
         authorization=authorization,
         db=db,
     )
@@ -6785,46 +7049,10 @@ def get_admin_booking_request_available_nannies(
                 }
             )
 
-    fallback_results = []
-    if not available:
-        fallback_candidates = _search_nannies_by_area(
-            db=db,
-            parent_area_id=None,
-            parent_lat=parent_lat,
-            parent_lng=parent_lng,
-            max_distance_km=None,
-            min_rating=None,
-            tag_ids=None,
-            qualification_ids=None,
-            language_ids=None,
-        )
-        for item in fallback_candidates:
-            nanny_id = int(item.get("nanny_id") or 0)
-            if nanny_id <= 0:
-                continue
-            fallback_results.append(
-                {
-                    "nanny_id": nanny_id,
-                    "user_id": item.get("user_id"),
-                    "name": item.get("name"),
-                    "distance_km": item.get("distance_km"),
-                    "location_hint": item.get("location_hint"),
-                    "average_rating_12m": item.get("average_rating_12m"),
-                    "review_count_12m": item.get("review_count_12m"),
-                    "completed_jobs_count": item.get("completed_jobs_count"),
-                    "job_type": item.get("job_type"),
-                    "has_own_car": item.get("has_own_car"),
-                    "has_drivers_license": item.get("has_drivers_license"),
-                    "fully_available": False,
-                }
-            )
-
     return {
         "request_id": req.id,
         "group_id": req.group_id or req.id,
         "radius_km": 30,
-        "available_count": len(available),
-        "fallback_mode": not bool(available),
         "location": {
             "label": getattr(location, "label", None) if location else None,
             "address": getattr(location, "formatted_address", None) if location else getattr(parent_profile, "formatted_address", None) if parent_profile else None,
@@ -6836,7 +7064,7 @@ def get_admin_booking_request_available_nannies(
             }
             for slot_start, slot_end in windows
         ],
-        "results": available if available else fallback_results,
+        "results": available,
     }
 
 

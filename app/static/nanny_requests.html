@@ -17,6 +17,8 @@
     .mapLinks{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
     .mapLink{display:inline-flex;align-items:center;justify-content:center;min-width:180px;padding:12px 16px;border-radius:12px;border:1px solid #d1d5db;background:#fff;text-decoration:none;color:#1f2937;font-weight:600}
     .mapLink:hover{background:#f8fafc}
+    .whatsAppLink{gap:8px}
+    .whatsAppIcon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;background:#25d366;color:#fff;font-size:11px;font-weight:700;line-height:1}
     .commitNotice{margin-top:10px;padding:10px;border:1px solid #f3d9a7;background:#fff8e6;border-radius:10px;color:#5f4a1a;font-size:14px}
     .daysNotice{margin-top:10px;padding:10px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;color:#1e3a8a}
     .slotList{margin:8px 0 0 18px;padding:0}
@@ -166,6 +168,25 @@
       }).format(value);
     }
 
+    function normalizeWhatsAppNumber(value) {
+      const raw = String(value || "").trim();
+      if (!raw) return "";
+      const digits = raw.replace(/[^\d+]/g, "");
+      if (digits.startsWith("+")) return digits.slice(1);
+      if (digits.startsWith("00")) return digits.slice(2);
+      if (digits.startsWith("0")) return `27${digits.slice(1)}`;
+      return digits;
+    }
+
+    function buildWhatsAppUrl(phone, name) {
+      const normalized = normalizeWhatsAppNumber(phone);
+      if (!normalized) return "";
+      const message = name
+        ? `Hi ${name}, this is your booked nanny contacting you via My Nanny.`
+        : "Hi, this is your booked nanny contacting you via My Nanny.";
+      return `https://wa.me/${encodeURIComponent(normalized)}?text=${encodeURIComponent(message)}`;
+    }
+
     async function loadBookingRequests() {
       const data = await fetchJson("/nannies/me/booking-requests");
       const list = document.getElementById("bookingRequestsList");
@@ -217,9 +238,10 @@
         const currentResponse = String(r.nanny_response_status || "pending").toLowerCase();
         const canRespond = ["tbc", "pending_admin", "approved"].includes(String(r.status || "").toLowerCase()) && !["accepted", "declined"].includes(currentResponse);
         const accepted = currentResponse === "accepted";
+        const whatsappUrl = accepted ? buildWhatsAppUrl(r.parent_phone, r.parent_name) : "";
         const calendarUrl = buildCalendarUrl(r);
         const earningsHtml = accepted && Number(r.wage_cents || 0) > 0
-          ? `<div class="earningsRow"><div class="earningsValue">Total earnings: ${escapeHtml(formatCurrencyZar(r.wage_cents))}</div></div>`
+          ? `<div class="earningsRow"><div class="earningsValue">Total earnings after agency booking fee: ${escapeHtml(formatCurrencyZar(r.wage_cents))}</div></div>`
           : "";
         const card = document.createElement("div");
         card.className = "card";
@@ -236,7 +258,7 @@
               <span class="statusPill ${response.className}">${escapeHtml(response.label)}</span>
             </div>
           </div>
-          ${isPastBooking ? "" : (hasCoords ? `<div class="mapWrap"><iframe class="mapFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="${mapSrc}" title="Client location map for job ${jobId}"></iframe></div><div class="mapLinks"><a class="mapLink" href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a><a class="mapLink boltLink" href="${boltDeepLink}" data-bolt-fallback="${boltFallbackUrl}" rel="noopener noreferrer">Ride with Bolt</a></div>` : `<div class="muted" style="margin-top:6px;">Map unavailable for this request.</div>`)}
+          ${isPastBooking ? "" : (hasCoords ? `<div class="mapWrap"><iframe class="mapFrame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="${mapSrc}" title="Client location map for job ${jobId}"></iframe></div><div class="mapLinks"><a class="mapLink" href="${googleMapsUrl}" target="_blank" rel="noopener noreferrer">Open in Google Maps</a><a class="mapLink boltLink" href="${boltDeepLink}" data-bolt-fallback="${boltFallbackUrl}" rel="noopener noreferrer">Ride with Bolt</a>${whatsappUrl ? `<a class="mapLink whatsAppLink" href="${whatsappUrl}" target="_blank" rel="noopener noreferrer"><span class="whatsAppIcon">W</span><span>WhatsApp</span></a>` : ""}</div>` : `<div class="muted" style="margin-top:6px;">Map unavailable for this request.</div>`)}
           <div class="detailBlock">
             <strong>Booking details and Client expectations</strong>
             <div class="fieldList">${expectationFieldsHtml}</div>
@@ -294,6 +316,10 @@
               method: "POST",
               body: JSON.stringify({ response, reason: reason || null }),
             });
+            if (response === "declined" && window.location.search.includes("request_id=")) {
+              window.location.href = "/static/nanny_requests.html";
+              return;
+            }
             loadBookingRequests().catch(() => {});
           } catch (e) {
             btn.disabled = false;

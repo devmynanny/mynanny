@@ -16,6 +16,7 @@
     .statusBadge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;color:#fff;}
     .statusActive{background:#16a34a;}
     .statusInactive{background:#dc2626;}
+    .statusLocked{background:#1d4ed8;}
     .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
     input, select{padding:10px;border-radius:10px;border:1px solid #ccc;max-width:100%;box-sizing:border-box}
     #calendar { max-width: 100%; margin-top: 12px; }
@@ -194,6 +195,7 @@
     }
 
     let calendarInstance = null;
+    let availabilityOverrideMode = "";
 
     function showAvailabilityTypePicker(rangeText) {
       return new Promise(resolve => {
@@ -427,15 +429,54 @@
       clearCalendarBtn.disabled = disabled;
     };
 
+    function availabilityAllowsBookings(value) {
+      const normalized = String(value || "").trim().toLowerCase();
+      if (normalized === "unavailable" || normalized === "permanent_only") return false;
+      if (normalized === "piece_only" || normalized === "piece_and_permanent") return true;
+      return true;
+    }
+
+    function syncAvailabilityOverrideUi(currentJobAvailability, fallbackIsActive = true) {
+      availabilityOverrideMode = String(currentJobAvailability || "").trim().toLowerCase();
+      const allowsBookings = availabilityAllowsBookings(availabilityOverrideMode);
+      const hasOverride = ["unavailable", "permanent_only", "piece_only", "piece_and_permanent"].includes(availabilityOverrideMode);
+      const effectiveIsActive = hasOverride ? allowsBookings : !!fallbackIsActive;
+      inactiveToggle.checked = !effectiveIsActive;
+      inactiveToggle.disabled = hasOverride;
+      if (hasOverride) {
+        if (availabilityOverrideMode === "permanent_only") {
+          inactiveStatus.textContent = "Unavailable for piece-job bookings — permanent placements only";
+          inactiveStatus.classList.add("statusLocked");
+          inactiveStatus.classList.remove("statusActive", "statusInactive");
+        } else if (availabilityOverrideMode === "unavailable") {
+          inactiveStatus.textContent = "Unavailable — no booking requests";
+          inactiveStatus.classList.add("statusLocked");
+          inactiveStatus.classList.remove("statusActive", "statusInactive");
+        } else if (availabilityOverrideMode === "piece_only") {
+          inactiveStatus.textContent = "Ready for bookings — piece jobs only";
+          inactiveStatus.classList.add("statusActive");
+          inactiveStatus.classList.remove("statusInactive", "statusLocked");
+        } else {
+          inactiveStatus.textContent = "Ready for bookings — piece jobs and permanent";
+          inactiveStatus.classList.add("statusActive");
+          inactiveStatus.classList.remove("statusInactive", "statusLocked");
+        }
+      } else {
+        inactiveStatus.classList.remove("statusLocked");
+        setWorkingStatus(effectiveIsActive);
+      }
+      disableSections(inactiveToggle.checked);
+    }
+
     const setWorkingStatus = (isActive) => {
       if (isActive) {
         inactiveStatus.textContent = "Ready for bookings";
         inactiveStatus.classList.add("statusActive");
-        inactiveStatus.classList.remove("statusInactive");
+        inactiveStatus.classList.remove("statusInactive", "statusLocked");
       } else {
         inactiveStatus.textContent = "Unavailable — no booking requests";
         inactiveStatus.classList.add("statusInactive");
-        inactiveStatus.classList.remove("statusActive");
+        inactiveStatus.classList.remove("statusActive", "statusLocked");
       }
     };
 
@@ -539,10 +580,11 @@
         return;
       }
       try {
-        const me2 = await fetchJson("/auth/me");
-        inactiveToggle.checked = !(me2?.is_active ?? true);
-        setWorkingStatus(!inactiveToggle.checked);
-        disableSections(inactiveToggle.checked);
+        const [me2, profile] = await Promise.all([
+          fetchJson("/auth/me"),
+          fetchJson("/nannies/me/profile"),
+        ]);
+        syncAvailabilityOverrideUi(profile?.current_job_availability, me2?.is_active ?? true);
       } catch {}
       loadAvailability().catch(() => {});
     })();

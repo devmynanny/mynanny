@@ -144,20 +144,20 @@
           <div id="inProgressBookingsList"></div>
         </div>
         <div>
-          <div class="bookingFilterBar">
-            <label for="bookingSectionFilter">Filter bookings below calendar</label>
-            <select id="bookingSectionFilter">
-              <option value="all">All</option>
-              <option value="pending">Pending requests</option>
-              <option value="upcoming">Upcoming bookings</option>
-              <option value="past">Past bookings</option>
-              <option value="cancelled">Cancelations</option>
-              <option value="unsuccessful">Unsuccessful bookings</option>
-            </select>
-          </div>
           <div class="bookingSectionTitle" id="monthCalendarTitle">Bookings this month</div>
           <div id="monthBookingsCalendar"></div>
         </div>
+      </div>
+      <div class="bookingFilterBar">
+        <label for="bookingSectionFilter">Filter Bookings:</label>
+        <select id="bookingSectionFilter">
+          <option value="">Select one</option>
+          <option value="pending">Pending requests</option>
+          <option value="upcoming">Upcoming bookings</option>
+          <option value="past">Past bookings</option>
+          <option value="cancelled">Cancelations</option>
+          <option value="unsuccessful">Unsuccessful bookings</option>
+        </select>
       </div>
       <div class="bookingSectionGroup" data-booking-filter="pending">
         <div class="bookingSectionTitle">Pending requests</div>
@@ -428,10 +428,10 @@
     }
 
     function applyBookingSectionFilter() {
-      const selected = document.getElementById("bookingSectionFilter")?.value || "all";
+      const selected = document.getElementById("bookingSectionFilter")?.value || "";
       document.querySelectorAll(".bookingSectionGroup").forEach((section) => {
         const key = section.getAttribute("data-booking-filter");
-        const shouldShow = selected === "all" || selected === key;
+        const shouldShow = !!selected && selected === key;
         section.classList.toggle("hidden", !shouldShow);
       });
     }
@@ -541,16 +541,13 @@
       const locationText = locationBits.length ? locationBits.join(" - ") : "Client address unavailable";
       const results = Array.isArray(data?.results) ? data.results : [];
       const count = results.length;
-      const availableCount = Number(data?.available_count || 0);
-      const fallbackMode = !!data?.fallback_mode;
       summary.innerHTML = `
         <div><strong>Radius:</strong> ${escapeHtml(data?.radius_km || 30)}km from ${escapeHtml(locationText)}</div>
         <div style="margin-top:4px;"><strong>Selected dates:</strong> ${escapeHtml(String(schedule.length || 0))} slot(s)</div>
-        <div style="margin-top:4px;"><strong>Available nannies found:</strong> ${escapeHtml(availableCount)}</div>
-        ${fallbackMode ? `<div style="margin-top:6px;color:#9a3412;"><strong>No nannies are fully available for all selected dates.</strong> Showing all approved nannies below, ordered by distance, so admin can still assign manually.</div>` : ""}
+        <div style="margin-top:4px;"><strong>Available nannies found:</strong> ${escapeHtml(count)}</div>
       `;
       if (!count) {
-        list.innerHTML = `<div class="bookingEmpty">No approved nannies could be found for manual assignment.</div>`;
+        list.innerHTML = `<div class="bookingEmpty">No nannies are available for all selected booking dates within 30km.</div>`;
         return;
       }
       list.innerHTML = results.map((item) => `
@@ -571,7 +568,7 @@
               • Own car: ${escapeHtml(yesNo(item.has_own_car))}
               • Driver's license: ${escapeHtml(yesNo(item.has_drivers_license))}
             </div>
-            <div class="assignAvailabilityNote ${item.fully_available ? "available" : "manual"}">${item.fully_available ? "Available for all selected dates" : "Manual override needed"}</div>
+            <div class="assignAvailabilityNote available">Available for all selected dates</div>
           </div>
         </label>
       `).join("");
@@ -825,7 +822,7 @@
       const btn = document.getElementById("confirmAssignNannyBtn");
       btn.disabled = true;
       try {
-        await fetchJson(`/admin/booking-requests/${requestId}/reject`, {
+        await fetchJson(`/admin/booking-requests/${requestId}/assign-nanny`, {
           method: "POST",
           body: JSON.stringify({ reason, assign_nanny_id: nannyId })
         });
