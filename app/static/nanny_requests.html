@@ -35,6 +35,8 @@
     .fieldItem{display:grid;gap:4px}
     .fieldLabel{font-weight:700;color:#0f172a}
     .fieldValue{color:#334155;line-height:1.5}
+    .earningsRow{display:flex;justify-content:flex-end;margin-top:12px}
+    .earningsValue{font-weight:700;color:#0f172a}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -155,6 +157,15 @@
       `).join("");
     }
 
+    function formatCurrencyZar(cents) {
+      const value = Number(cents || 0) / 100;
+      return new Intl.NumberFormat("en-ZA", {
+        style: "currency",
+        currency: "ZAR",
+        minimumFractionDigits: 2,
+      }).format(value);
+    }
+
     async function loadBookingRequests() {
       const data = await fetchJson("/nannies/me/booking-requests");
       const list = document.getElementById("bookingRequestsList");
@@ -207,6 +218,9 @@
         const canRespond = ["tbc", "pending_admin", "approved"].includes(String(r.status || "").toLowerCase()) && !["accepted", "declined"].includes(currentResponse);
         const accepted = currentResponse === "accepted";
         const calendarUrl = buildCalendarUrl(r);
+        const earningsHtml = accepted && Number(r.wage_cents || 0) > 0
+          ? `<div class="earningsRow"><div class="earningsValue">Total earnings: ${escapeHtml(formatCurrencyZar(r.wage_cents))}</div></div>`
+          : "";
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
@@ -230,6 +244,7 @@
           <div class="muted" style="margin-top:10px;">Request status: ${escapeHtml(r.status || "-")}</div>
           ${r.nanny_responded_at ? `<div class="muted">Last updated by you: ${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(r.nanny_responded_at) : r.nanny_responded_at)}</div>` : ""}
           ${r.nanny_response_note ? `<div class="muted">Your note: ${escapeHtml(r.nanny_response_note)}</div>` : ""}
+          ${earningsHtml}
           ${canRespond ? `<div class="commitNotice">Accept once you are ready to commit to this job. If you are not ready yet, you can mark it as still deciding, or decline it with a reason so admin can follow up quickly.</div><div class="actions"><button class="btn acceptBtn" data-id="${r.id}">Accept this booking</button><button class="btn decideBtn" data-id="${r.id}" data-response="deciding">Still deciding</button><button class="btn declineBtn" data-id="${r.id}" data-response="declined">Decline</button></div>` : ""}
         `;
         list.appendChild(card);

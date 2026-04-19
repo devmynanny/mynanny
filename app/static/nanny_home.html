@@ -44,6 +44,7 @@
     .calendarDay{min-height:96px;border:1px solid #e5e5e5;border-radius:8px;padding:6px;background:#fff;overflow:hidden}
     .calendarDayNumber{font-size:12px;color:#555;margin-bottom:4px}
     .calendarBooking{font-size:12px;line-height:1.25;border-left:3px solid #1f7a4d;padding-left:5px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
+    .calendarBookingEarning{display:block;color:#6b7280;margin-top:2px}
     .calendarMore{font-size:12px;color:#666;margin-top:4px}
     .calendarWrap{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#fff}
     .calendarTitle{margin:0 0 10px;font-size:20px}
@@ -223,6 +224,15 @@
       return `${normalize(start)}-${normalize(end)}`;
     }
 
+    function formatCurrencyZar(cents) {
+      const value = Number(cents || 0) / 100;
+      return new Intl.NumberFormat("en-ZA", {
+        style: "currency",
+        currency: "ZAR",
+        minimumFractionDigits: 2,
+      }).format(value);
+    }
+
     function bookingStatusKey(item) {
       return String(item?.status || "").toLowerCase();
     }
@@ -396,7 +406,10 @@
         const shown = bookings.slice(0, 3).map((booking) => {
           const label = `${booking.parent_name || "Client"} ${formatCalendarTimeRange(booking.start_dt, booking.end_dt)}`;
           const color = booking._calendar_color || bookingColorForGroup(booking._group_key);
-          return `<div class="calendarBooking" style="border-left-color:${escapeHtml(color.border)};background:${escapeHtml(color.background)};">${escapeHtml(label)}</div>`;
+          const earningText = Number(booking.daily_wage_cents || 0) > 0
+            ? `<span class="calendarBookingEarning">${escapeHtml(formatCurrencyZar(booking.daily_wage_cents))}</span>`
+            : "";
+          return `<div class="calendarBooking" style="border-left-color:${escapeHtml(color.border)};background:${escapeHtml(color.background)};">${escapeHtml(label)}${earningText}</div>`;
         }).join("");
         const more = bookings.length > 3 ? `<div class="calendarMore">+${bookings.length - 3} more</div>` : "";
         return `<div class="calendarDay"><div class="calendarDayNumber">${day}</div>${shown}${more}</div>`;

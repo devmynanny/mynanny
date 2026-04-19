@@ -3332,6 +3332,8 @@ def list_nanny_me_booking_requests(
             for w in windows
         ]
         day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
+        total_wage_cents = int(getattr(req, "wage_cents", None) or 0)
+        daily_wage_cents = int(round(total_wage_cents / max(day_count, 1))) if total_wage_cents else 0
         location_lat = (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None)
         location_lng = (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None)
         distance_km = None
@@ -3364,6 +3366,8 @@ def list_nanny_me_booking_requests(
             "distance_km": distance_km,
             "slots": slots,
             "days_required": day_count,
+            "wage_cents": total_wage_cents,
+            "daily_wage_cents": daily_wage_cents,
             "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
         })
     return {"results": results}
@@ -3409,6 +3413,8 @@ def list_nanny_me_bookings(
             for w in windows
         ]
         day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
+        total_wage_cents = int(getattr(req, "wage_cents", None) or 0)
+        daily_wage_cents = int(round(total_wage_cents / max(day_count, 1))) if total_wage_cents else 0
         results.append({
             "id": req.id,
             "group_id": req.group_id or req.id,
@@ -3424,6 +3430,8 @@ def list_nanny_me_bookings(
             "location_lng": (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None),
             "slots": slots,
             "days_required": day_count,
+            "wage_cents": total_wage_cents,
+            "daily_wage_cents": daily_wage_cents,
             "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
         })
     return {"results": results}
@@ -3462,8 +3470,9 @@ def list_nanny_me_duty_bookings(
 
     parent_user = aliased(models.User)
     rows = (
-        db.query(models.Booking, parent_user)
+        db.query(models.Booking, parent_user, models.BookingRequest)
         .join(parent_user, parent_user.id == models.Booking.client_user_id)
+        .outerjoin(models.BookingRequest, models.BookingRequest.id == models.Booking.booking_request_id)
         .filter(models.Booking.nanny_id == nanny.id)
         .order_by(models.Booking.starts_at.desc())
         .all()
@@ -3490,8 +3499,13 @@ def list_nanny_me_duty_bookings(
                 "check_out_lat": getattr(b, "check_out_lat", None),
                 "check_out_lng": getattr(b, "check_out_lng", None),
                 "check_out_distance_m": getattr(b, "check_out_distance_m", None),
+                "wage_cents": int(getattr(req, "wage_cents", None) or 0) if req else 0,
+                "daily_wage_cents": (
+                    int(round((int(getattr(req, "wage_cents", None) or 0)) / max(len(_booking_request_windows(db, req)) or 1, 1)))
+                    if req else 0
+                ),
             }
-            for b, p in rows
+            for b, p, req in rows
         ]
     }
 

@@ -30,6 +30,8 @@
       .doc-upload{display:flex;flex-direction:column;gap:6px;min-width:220px}
       .doc-upload input[type="file"]{width:100%}
       .doc-column-title{color:#222;font-size:15px;font-weight:700}
+      .doc-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:12px}
+      .doc-column{display:flex;flex-direction:column;gap:10px}
       .err { color: #b00020; margin-top: 6px; }
       .help-tip{
         display:inline-flex;
@@ -69,6 +71,28 @@
         margin-top: 8px;
         color: #666;
         font-size: 13px;
+      }
+      .admin-pill {
+        display:flex;
+        align-items:center;
+        gap:6px;
+        padding:6px 10px;
+        border:1px solid #d1d5db;
+        border-radius:10px;
+        background:#fff;
+      }
+      .admin-pill input {
+        accent-color:#4ea3e6;
+      }
+      .admin-pill.is-selected {
+        border-color:#7cc1f3;
+        box-shadow:0 0 0 3px rgba(78,163,230,0.18);
+        background:#eef7ff;
+      }
+      .admin-select-locked {
+        border-color:#7cc1f3;
+        box-shadow:0 0 0 3px rgba(78,163,230,0.18);
+        background:#eef7ff;
       }
       .completion-prompt {
         display: none;
@@ -210,7 +234,7 @@
         </div>
         <div class="admin-only-section" id="dogPreferenceSection" style="min-width:220px; flex:1; max-width:360px;">
           <label class="small">Preference with dogs</label>
-          <select id="dogPreference" style="width:100%; padding:8px;">
+          <select id="dogPreference" class="admin-select-locked" style="width:100%; padding:8px;">
             <option value="">Select preference</option>
             <option value="i_prefer_small_dogs">I prefer small dogs</option>
             <option value="any_dog_is_fine">Any dog is fine</option>
@@ -218,14 +242,6 @@
             <option value="no_dogs">No dogs</option>
           </select>
           <div class="admin-locked-note">This field is completed by admin and is visible here for reference.</div>
-        </div>
-        <div class="doc-upload" style="flex:1; min-width:260px;">
-          <label class="small">Police clearance/Criminal check</label>
-          <div class="row" style="align-items:center; gap:8px;">
-            <input id="policeClearanceFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadPoliceClearanceBtn" type="button">Save</button>
-          </div>
-          <div class="small" id="policeClearanceStatus"></div>
         </div>
       </div>
       <div id="bioSection" class="hidden-temporary" style="margin-top:10px;">
@@ -247,12 +263,12 @@
         </div>
         <div id="ownKidsDetailsRow" style="min-width:260px; flex:2;">
           <label class="small">How old are they and where do they stay?</label>
-          <textarea id="ownKidsDetails" style="width:100%; min-height:76px; padding:8px;" placeholder="Example: 8 and 12 years old, staying with my mother in Soweto."></textarea>
+          <textarea id="ownKidsDetails" style="width:100%; min-height:62px; padding:8px;" placeholder="Example: 8 and 12 years old, staying with my mother in Soweto."></textarea>
         </div>
       </div>
       <div style="margin-top:10px;">
         <label class="small">Do you have any medical conditions or chronic medications?</label>
-        <textarea id="medicalConditions" style="width:100%; min-height:76px; padding:8px;" placeholder="Share anything important here, or write 'None'."></textarea>
+        <textarea id="medicalConditions" style="width:100%; min-height:62px; padding:8px;" placeholder="Share anything important here, or write 'None'."></textarea>
       </div>
     </div>
 
@@ -283,64 +299,81 @@
           <div class="err" id="nationalityError" style="display:none;"></div>
         </div>
       </div>
-      <div class="row" id="passportRow" style="margin-top:10px;">
-        <div style="flex:1; min-width:240px;">
-          <label class="small">Passport number (if not South African) <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
-          <input id="passportNumber" style="width:100%; padding:8px;" placeholder="Passport number" />
-          <div class="err" id="passportError" style="display:none;"></div>
-        </div>
-        <div style="min-width:200px;">
-          <label class="small">Passport expiry date</label>
-          <input id="passportExpiry" type="date" style="width:100%; padding:8px;" />
-        </div>
-        <div class="doc-upload">
-          <label class="small">Passport copy</label>
-          <div class="row" style="align-items:center; gap:8px;">
-            <input id="passportFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadPassportBtn" type="button">Save</button>
+      <div class="doc-columns">
+        <div class="doc-column">
+          <div id="passportRow">
+            <label class="small doc-column-title">Passport</label>
+            <div style="margin-top:8px;">
+              <label class="small">Passport number (if not South African) <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
+              <input id="passportNumber" style="width:100%; padding:8px;" placeholder="Passport number" />
+              <div class="err" id="passportError" style="display:none;"></div>
+            </div>
+            <div style="margin-top:8px;">
+              <label class="small">Passport expiry date</label>
+              <input id="passportExpiry" type="date" style="width:100%; padding:8px;" />
+            </div>
+            <div class="doc-upload" style="margin-top:8px;">
+              <label class="small">Passport copy</label>
+              <div class="row" style="align-items:center; gap:8px;">
+                <input id="passportFile" type="file" accept=".pdf,image/*" />
+                <button id="uploadPassportBtn" type="button">Save</button>
+              </div>
+              <div class="small" id="passportStatus"></div>
+            </div>
           </div>
-          <div class="small" id="passportStatus"></div>
-        </div>
-      </div>
-      <div class="row" id="saIdRow" style="margin-top:10px;">
-        <div style="flex:1; min-width:240px;">
-          <label class="small">South African ID number <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
-          <input id="saIdNumber" style="width:100%; padding:8px;" placeholder="ID number" />
-          <div class="err" id="saIdError" style="display:none;"></div>
-        </div>
-        <div class="doc-upload">
-          <label class="small">Copy of ID</label>
-          <div class="row">
-            <input id="saIdFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadSaIdBtn" type="button">Upload ID</button>
+          <div id="saIdRow">
+            <label class="small doc-column-title">South African ID</label>
+            <div style="margin-top:8px;">
+              <label class="small">South African ID number <span class="help-tip" title="If you need to change this after approval, please contact admin.">?</span></label>
+              <input id="saIdNumber" style="width:100%; padding:8px;" placeholder="ID number" />
+              <div class="err" id="saIdError" style="display:none;"></div>
+            </div>
+            <div class="doc-upload" style="margin-top:8px;">
+              <label class="small">Copy of ID</label>
+              <div class="row" style="align-items:center; gap:8px;">
+                <input id="saIdFile" type="file" accept=".pdf,image/*" />
+                <button id="uploadSaIdBtn" type="button">Upload ID</button>
+              </div>
+              <div class="small" id="saIdStatus"></div>
+            </div>
           </div>
-          <div class="small" id="saIdStatus"></div>
         </div>
-      </div>
-      <div class="row" id="permitRow" style="margin-top:10px;">
-        <div>
-          <label class="small">Permit/waiver/receipt</label>
-          <select id="workPermit" style="width:200px; padding:8px;">
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </div>
-        <div>
-          <label class="small">Waiver (if no permit)</label>
-          <select id="waiver" style="width:200px; padding:8px;">
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </div>
-        <div class="doc-upload">
-          <label class="small">Permit/waiver/receipt copy</label>
-          <div class="row" style="align-items:center; gap:8px;">
-            <input id="permitFile" type="file" accept=".pdf,image/*" />
-            <button id="uploadPermitBtn" type="button">Save</button>
+        <div class="doc-column" id="permitRow">
+          <label class="small doc-column-title">Permit / waiver / receipt</label>
+          <div>
+            <label class="small">Permit/waiver/receipt</label>
+            <select id="workPermit" style="width:100%; padding:8px;">
+              <option value="">Select</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
           </div>
-          <div class="small" id="permitStatus"></div>
+          <div>
+            <label class="small">Waiver (if no permit)</label>
+            <select id="waiver" style="width:100%; padding:8px;">
+              <option value="">Select</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+          <div class="doc-upload">
+            <label class="small">Permit/waiver/receipt copy</label>
+            <div class="row" style="align-items:center; gap:8px;">
+              <input id="permitFile" type="file" accept=".pdf,image/*" />
+              <button id="uploadPermitBtn" type="button">Save</button>
+            </div>
+            <div class="small" id="permitStatus"></div>
+          </div>
+        </div>
+        <div class="doc-column">
+          <label class="small doc-column-title">Police clearance/Criminal check</label>
+          <div class="doc-upload">
+            <div class="row" style="align-items:center; gap:8px;">
+              <input id="policeClearanceFile" type="file" accept=".pdf,image/*" />
+              <button id="uploadPoliceClearanceBtn" type="button">Save</button>
+            </div>
+            <div class="small" id="policeClearanceStatus"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -692,7 +725,7 @@
         (tags || []).forEach(t => {
           const id = `tag_${t.id}`;
           const wrap = document.createElement("label");
-          wrap.className = "small";
+          wrap.className = "small admin-pill";
           wrap.style.display = "flex";
           wrap.style.alignItems = "center";
           wrap.style.gap = "6px";
@@ -701,7 +734,10 @@
         });
         (selectedIds || []).forEach(id => {
           const cb = document.getElementById(`tag_${id}`);
-          if (cb) cb.checked = true;
+          if (cb) {
+            cb.checked = true;
+            cb.closest(".admin-pill")?.classList.add("is-selected");
+          }
         });
         setAdminOnlyFieldAccess(profileIsAdminView);
       }
@@ -731,7 +767,7 @@
         (quals || []).forEach((q) => {
           const id = `qual_${q.id}`;
           const wrap = document.createElement("label");
-          wrap.className = "small";
+          wrap.className = "small admin-pill";
           wrap.style.display = "flex";
           wrap.style.alignItems = "center";
           wrap.style.gap = "6px";
@@ -740,7 +776,10 @@
         });
         (selectedIds || []).forEach((id) => {
           const cb = document.getElementById(`qual_${id}`);
-          if (cb) cb.checked = true;
+          if (cb) {
+            cb.checked = true;
+            cb.closest(".admin-pill")?.classList.add("is-selected");
+          }
         });
         document.querySelectorAll("input[name='qualifications']").forEach((el) => {
           el.addEventListener("change", syncStudyingDetails);
