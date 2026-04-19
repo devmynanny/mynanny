@@ -100,6 +100,19 @@
     .scheduleItem{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
     .resultsActionBar{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:12px}
     .resultsActionBar.hidden{display:none}
+    .emptyAvailabilityNotice{
+      display:none;
+      margin-top:14px;
+      padding:18px 20px;
+      border:1px solid #bfdbfe;
+      border-radius:14px;
+      background:#eff6ff;
+      box-shadow:0 10px 24px rgba(59,130,246,0.12);
+      color:#1e3a8a;
+    }
+    .emptyAvailabilityNotice.show{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+    .emptyAvailabilityText{font-size:18px;line-height:1.5;font-weight:700}
+    .emptyAvailabilityNotice .btn{flex-shrink:0}
     .bookingToast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3000;max-width:min(640px,calc(100vw - 32px));padding:18px 22px;border-radius:12px;background:#111827;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,.25);font-weight:600;font-size:17px;line-height:1.45;text-align:center}
     @media (max-width: 760px){
       .slotRow{grid-template-columns:1fr}
@@ -198,6 +211,10 @@
   </div>
 
   <div id="status" class="muted" style="margin-top:10px"></div>
+  <div id="emptyAvailabilityNotice" class="emptyAvailabilityNotice">
+    <div id="emptyAvailabilityText" class="emptyAvailabilityText"></div>
+    <button class="btn coralGlow" id="emptyAvailabilityBroadcastBtn" type="button">Broadcast to nearest 30km</button>
+  </div>
   <div id="list" class="grid"></div>
   <div class="resultsActionBar" style="margin-bottom:10px;">
     <button class="btn coralGlow" data-broadcast-action="nearby" type="button">Broadcast to nearest 30km</button>
@@ -611,6 +628,25 @@
       document.querySelectorAll(".resultsActionBar").forEach((bar) => {
         bar.classList.toggle("hidden", favoriteBroadcastActive);
       });
+    }
+
+    function getUnavailableNoticeMessage() {
+      if (favoriteBroadcastActive && favoriteBroadcastIds.size === 1) {
+        return "this nanny is not currently available, please broadcast your booking to the nearest 30km";
+      }
+      if (favoriteBroadcastActive && favoriteBroadcastIds.size > 1) {
+        return "niether of your favorite nannies are available, please broadcast your booking to the nearest 30km";
+      }
+      return "the selected nannies are not available, please broadcast your booking to the nearest 30km";
+    }
+
+    function renderEmptyAvailabilityNotice(resultCount) {
+      const notice = document.getElementById("emptyAvailabilityNotice");
+      const text = document.getElementById("emptyAvailabilityText");
+      if (!notice || !text) return;
+      const shouldShow = Number(resultCount) === 0;
+      notice.classList.toggle("show", shouldShow);
+      text.textContent = shouldShow ? getUnavailableNoticeMessage() : "";
     }
 
     function renderResultsSchedule() {
@@ -1557,6 +1593,7 @@
       currentFilteredResults = filtered;
       const label = favoriteBroadcastActive ? "selected favourite nannies available" : "nannies found";
       document.getElementById("status").textContent = `${filtered.length} ${label}`;
+      renderEmptyAvailabilityNotice(filtered.length);
       renderResults(filtered, profileComplete, canBook);
     }
 
@@ -1633,6 +1670,12 @@
           }
         });
       });
+      const emptyBroadcastBtn = document.getElementById("emptyAvailabilityBroadcastBtn");
+      if (emptyBroadcastBtn) {
+        emptyBroadcastBtn.addEventListener("click", () => {
+          broadcastToNearby(false);
+        });
+      }
     }
 
     async function runSearch(){

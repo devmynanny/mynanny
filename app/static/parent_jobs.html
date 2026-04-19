@@ -4,7 +4,7 @@
   <link rel="stylesheet" href="/static/theme.css" />
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>My Bookings</title>
+  <title>My Bookings & Calendar</title>
   <style>
     body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0 auto;padding:24px;max-width:1120px}
     .topbar{display:flex;align-items:center;justify-content:space-between;margin: 10px 0 20px 0;}
@@ -35,6 +35,7 @@
     .bookingCard{border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff}
     .bookingCardTitle{font-weight:700}
     .bookingCardMeta{color:#666;font-size:14px;margin-top:4px}
+    .bookingStatusBadge{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;border:1px solid #9fd0f2;background:#eef7ff;color:#1f5f8b;font-size:12px;font-weight:700;margin-top:8px}
     .calendarWrap{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#fff}
     .monthNav{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
     .monthLabel{font-weight:700;font-size:18px}
@@ -44,6 +45,9 @@
     .calendarDayNumber{font-size:12px;color:#555;margin-bottom:4px}
     .calendarBooking{font-size:12px;line-height:1.25;border-left:3px solid #1f7a4d;padding-left:5px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}
     .calendarMore{font-size:12px;color:#666;margin-top:4px}
+    .calendarFilterBar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0 14px;padding:12px 14px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff}
+    .calendarFilterLabel{font-weight:700;color:#1e3a8a}
+    .calendarFilterBar select{min-width:220px;padding:10px 12px;border:1px solid #93c5fd;border-radius:10px;background:#fff;font:inherit}
     @media (max-width:760px){
       .bookingGlance{grid-template-columns:1fr}
       .monthNav{flex-wrap:wrap}
@@ -55,7 +59,7 @@
 <body>
   <div id="topbar" class="topbar"></div>
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-    <h1>My Bookings</h1>
+    <h1>My Bookings &amp; Calendar</h1>
     <button class="btn back-btn" id="backBtn" type="button">Back to home</button>
   </div>
 
@@ -63,6 +67,16 @@
     <div style="margin-bottom:12px;">
       <div style="font-size:22px;font-weight:700;">Your calendar</div>
       <div class="muted">Your current work schedule, including bookings in progress and upcoming bookings.</div>
+    </div>
+    <div class="calendarFilterBar">
+      <label class="calendarFilterLabel" for="statusFilter">Filter bookings</label>
+      <select id="statusFilter">
+        <option value="all">All</option>
+        <option value="upcoming">Upcoming bookings</option>
+        <option value="in_progress">In progress</option>
+        <option value="past">Past bookings</option>
+        <option value="cancelled">Cancelations</option>
+      </select>
     </div>
     <div class="bookingGlance">
       <div class="bookingStack">
@@ -88,17 +102,6 @@
         <div id="parentBookingsCalendar"></div>
       </div>
     </div>
-  </div>
-
-  <div style="margin:12px 0; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-    <label class="muted">Filter</label>
-    <select id="statusFilter">
-      <option value="all">All</option>
-      <option value="upcoming">Upcoming bookings</option>
-      <option value="in_progress">In progress</option>
-      <option value="past">Past bookings</option>
-      <option value="cancelled">Cancelations</option>
-    </select>
   </div>
 
   <div id="jobsList"></div>
@@ -232,12 +235,14 @@
       }
       container.innerHTML = list.map((item) => `
         <div class="bookingCard">
-          <div class="bookingCardTitle">${escapeHtml(bookingDisplayName(item))}</div>
-          <div class="bookingCardMeta">Job ID: ${escapeHtml(item.job_id || "-")}</div>
+          <div class="bookingCardTitle">${item.accepted_nanny_name ? `<strong>Nanny:</strong> ${escapeHtml(item.accepted_nanny_name)}` : escapeHtml(bookingDisplayName(item))}</div>
+          <div class="bookingCardMeta">${item.accepted_nanny_name ? `Accepted booking` : `Job ID: ${escapeHtml(item.job_id || "-")}`}</div>
+          <div class="bookingStatusBadge">Job status: ${escapeHtml(mapStatus(item.status || "-"))}</div>
           <div class="bookingCardMeta">${escapeHtml(formatDayDateLabel(item.start_dt))}${item.end_dt && item.end_dt !== item.start_dt ? ` to ${escapeHtml(formatDayDateLabel(item.end_dt))}` : ""}</div>
           <div class="bookingCardMeta">${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(item.start_dt) : (item.start_dt || "-"))} to ${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(item.end_dt) : (item.end_dt || "-"))}</div>
           <div class="actions">
             <button class="btn dashboardViewBtn" type="button" data-id="${escapeHtml(item.job_id || "")}">View details</button>
+            ${item.accepted_nanny_id ? `<button class="btn dashboardViewProfileBtn" type="button" data-job-id="${escapeHtml(item.job_id || "")}" data-nanny-id="${escapeHtml(item.accepted_nanny_id || "")}">View profile</button>` : ""}
           </div>
         </div>
       `).join("");
@@ -248,6 +253,23 @@
           if (card) {
             openJobDetails(card);
             card.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        });
+      });
+      container.querySelectorAll(".dashboardViewProfileBtn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const jobId = btn.dataset.jobId || "";
+          const nannyId = btn.dataset.nannyId || "";
+          const card = document.querySelector(`.cancelBtn[data-id="${jobId}"]`)?.closest(".card")
+            || document.querySelector(`.editJobBtn[data-id="${jobId}"]`)?.closest(".card")
+            || document.querySelector(`.viewNannyProfileBtn[data-id="${nannyId}"]`)?.closest(".card");
+          if (card) {
+            openJobDetails(card);
+            card.scrollIntoView({ behavior: "smooth", block: "start" });
+            const profileBtn = card.querySelector(`.viewNannyProfileBtn[data-id="${nannyId}"]`);
+            if (profileBtn) {
+              profileBtn.click();
+            }
           }
         });
       });

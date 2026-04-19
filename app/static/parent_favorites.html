@@ -34,6 +34,10 @@
     .previewTitle{font-weight:700;font-size:20px}
     .previewSection{margin-top:12px}
     .previewSectionTitle{font-weight:600;margin-bottom:6px}
+    .previewSectionToggle{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0;border:none;background:transparent;cursor:pointer;font:inherit;text-align:left}
+    .previewChevron{font-size:16px;color:#666;transition:transform .18s ease}
+    .previewChevron.open{transform:rotate(180deg)}
+    .previewSectionBody.collapsed{display:none}
     .trustPills{display:flex;flex-wrap:wrap;gap:8px}
     .trustPill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px}
     .infoGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
@@ -91,8 +95,13 @@
         <div id="previewDetails" class="infoGrid"></div>
       </div>
       <div class="previewSection">
-        <div class="previewSectionTitle">Work history</div>
-        <div id="previewWorkHistory" class="workList muted"></div>
+        <button id="previewWorkHistoryToggle" class="previewSectionToggle" type="button" aria-expanded="false" aria-controls="previewWorkHistoryWrap">
+          <span class="previewSectionTitle">Work history</span>
+          <span id="previewWorkHistoryChevron" class="previewChevron">▾</span>
+        </button>
+        <div id="previewWorkHistoryWrap" class="previewSectionBody collapsed">
+          <div id="previewWorkHistory" class="workList muted"></div>
+        </div>
       </div>
       <div class="previewSection">
         <div class="previewSectionTitle">Proficiencies</div>
@@ -288,6 +297,9 @@
             </div>
           `).join("")
         : "No previous positions listed yet.";
+      document.getElementById("previewWorkHistoryWrap").classList.add("collapsed");
+      document.getElementById("previewWorkHistoryToggle").setAttribute("aria-expanded", "false");
+      document.getElementById("previewWorkHistoryChevron").classList.remove("open");
 
       const proficiencies = [
         ...(n.tags || []).map((tag) => tag.name).filter(Boolean),
@@ -417,6 +429,13 @@
       location.href = "/static/parent_candidates.html?mode=all&favorite_broadcast=1";
     });
     document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
+    document.getElementById("previewWorkHistoryToggle").addEventListener("click", () => {
+      const wrap = document.getElementById("previewWorkHistoryWrap");
+      const chevron = document.getElementById("previewWorkHistoryChevron");
+      const isCollapsed = wrap.classList.toggle("collapsed");
+      document.getElementById("previewWorkHistoryToggle").setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      chevron.classList.toggle("open", !isCollapsed);
+    });
     document.getElementById("previewModal").addEventListener("click", (e) => {
       if (e.target.id === "previewModal") closePreview();
     });
