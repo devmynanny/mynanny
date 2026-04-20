@@ -591,6 +591,105 @@ def _parse_iso_dt(value: Union[str, datetime]) -> datetime:
     return datetime.fromisoformat(s)
 
 
+def _booking_status_key(value: Optional[str]) -> str:
+    return str(value or "").strip().lower()
+
+
+def _booking_time_state(
+    *,
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+    status: Optional[str],
+    check_in_at: Optional[datetime] = None,
+    check_out_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> str:
+    current = now or datetime.utcnow()
+    status_key = _booking_status_key(status)
+
+    if status_key in {"cancelled", "rejected", "completed"}:
+        return "past"
+    if check_in_at and not check_out_at:
+        return "in_progress"
+    if end_dt and end_dt <= current:
+        return "past"
+    if start_dt and end_dt and start_dt <= current < end_dt:
+        return "in_progress"
+    return "upcoming"
+
+
+def _booking_group_time_state(bookings: List[object], *, now: Optional[datetime] = None) -> str:
+    current = now or datetime.utcnow()
+    states = []
+    for booking in bookings:
+        states.append(
+            _booking_time_state(
+                start_dt=getattr(booking, "starts_at", None),
+                end_dt=getattr(booking, "ends_at", None),
+                status=getattr(booking, "status", None),
+                check_in_at=getattr(booking, "check_in_at", None),
+                check_out_at=getattr(booking, "check_out_at", None),
+                now=current,
+            )
+        )
+    if "in_progress" in states:
+        return "in_progress"
+    if "upcoming" in states:
+        return "upcoming"
+    return "past"
+
+
+def _group_dashboard_booking_items(items: List[dict]) -> List[dict]:
+    groups = {}
+    for item in items:
+        key = str(item.get("request_id") or f"booking:{item.get('booking_id') or item.get('id') or ''}")
+        if key not in groups:
+            groups[key] = {
+                **item,
+                "booking_ids": [item.get("booking_id")] if item.get("booking_id") is not None else [],
+                "_states": {item.get("booking_state") or "upcoming"},
+                "_matches_tomorrow": bool(item.get("matches_tomorrow")),
+            }
+            continue
+        group = groups[key]
+        if item.get("booking_id") is not None and item.get("booking_id") not in group["booking_ids"]:
+            group["booking_ids"].append(item.get("booking_id"))
+        if item.get("start_dt") and (not group.get("start_dt") or str(item.get("start_dt")) < str(group.get("start_dt"))):
+            group["start_dt"] = item.get("start_dt")
+        if item.get("end_dt") and (not group.get("end_dt") or str(item.get("end_dt")) > str(group.get("end_dt"))):
+            group["end_dt"] = item.get("end_dt")
+        if item.get("check_in_at") and (not group.get("check_in_at") or str(item.get("check_in_at")) < str(group.get("check_in_at"))):
+            group["check_in_at"] = item.get("check_in_at")
+        if item.get("check_out_at") and (not group.get("check_out_at") or str(item.get("check_out_at")) > str(group.get("check_out_at"))):
+            group["check_out_at"] = item.get("check_out_at")
+        if not group.get("location_label") and item.get("location_label"):
+            group["location_label"] = item.get("location_label")
+        if not group.get("reason") and item.get("reason"):
+            group["reason"] = item.get("reason")
+        if item.get("google_calendar_event_id"):
+            group["google_calendar_event_id"] = item.get("google_calendar_event_id")
+        if item.get("google_calendar_synced_at"):
+            group["google_calendar_synced_at"] = item.get("google_calendar_synced_at")
+        if item.get("google_calendar_sync_error"):
+            group["google_calendar_sync_error"] = item.get("google_calendar_sync_error")
+        group["_states"].add(item.get("booking_state") or "upcoming")
+        group["_matches_tomorrow"] = bool(group["_matches_tomorrow"] or item.get("matches_tomorrow"))
+
+    grouped = []
+    for group in groups.values():
+        states = group.pop("_states", set())
+        matches_tomorrow = bool(group.pop("_matches_tomorrow", False))
+        if "in_progress" in states:
+            group["booking_category"] = "in_progress"
+        elif "upcoming" in states:
+            group["booking_category"] = "upcoming"
+        else:
+            group["booking_category"] = "past"
+        group["matches_tomorrow"] = matches_tomorrow
+        grouped.append(group)
+    return grouped
+
+
 def _to_iso_z(dt: datetime) -> str:
     if dt.tzinfo is None:
         return dt.isoformat()
@@ -4654,14 +4753,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             related_bookings = _find_related_bookings_for_request(db, req)
             booking_category = "upcoming"
             if related_bookings:
-                if any(getattr(b, "check_in_at", None) and not getattr(b, "check_out_at", None) for b in related_bookings):
-                    booking_category = "in_progress"
-                elif all(
-                    getattr(b, "status", None) in ("completed", "cancelled", "rejected")
-                    or (getattr(b, "ends_at", None) and getattr(b, "ends_at", None) < datetime.utcnow())
-                    for b in related_bookings
-                ):
-                    booking_category = "past"
+                booking_category = _booking_group_time_state(related_bookings)
             elif status in ("cancelled", "rejected", "completed"):
                 booking_category = "past"
             windows = _booking_request_windows(db, req)
@@ -7149,12 +7241,21 @@ def list_admin_bookings_overview(
         end_dt = booking.ends_at
         related_request = request_by_id.get(getattr(booking, "booking_request_id", None))
         nanny_response_status = (getattr(related_request, "nanny_response_status", None) or "").lower() if related_request else ""
-        is_live_booking = booking.status not in ("cancelled", "rejected", "completed")
+        booking_state = _booking_time_state(
+            start_dt=start_dt,
+            end_dt=end_dt,
+            status=booking.status,
+            check_in_at=getattr(booking, "check_in_at", None),
+            check_out_at=getattr(booking, "check_out_at", None),
+            now=now,
+        )
+        is_live_booking = booking_state in {"upcoming", "in_progress"}
         item = {
             "source": "booking",
             "request_id": getattr(booking, "booking_request_id", None),
             "booking_id": booking.id,
             "status": booking.status,
+            "booking_state": booking_state,
             "nanny_response_status": nanny_response_status or None,
             "confirmed": bool(is_live_booking),
             "parent_name": parent.name,
@@ -7171,12 +7272,14 @@ def list_admin_bookings_overview(
             "google_calendar_event_id": getattr(booking, "google_calendar_event_id", None),
             "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
             "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),
+            "matches_tomorrow": False,
         }
         if is_live_booking:
             confirmed_bookings.append(item)
         if is_live_booking and start_dt:
             local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
             if local_start.date() == tomorrow:
+                item["matches_tomorrow"] = True
                 bookings_tomorrow.append(item)
             if month_start <= local_start.date() <= month_end:
                 month_confirmed_bookings.append(item)
@@ -7187,16 +7290,13 @@ def list_admin_bookings_overview(
         if booking.status == "rejected":
             unsuccessful_bookings.append(item)
             continue
-        if booking.status == "completed" or (end_dt and end_dt < now):
+        if booking_state == "past":
             past_bookings.append(item)
-            continue
-        if booking.check_in_at and not booking.check_out_at:
-            bookings_in_progress.append(item)
-            continue
-        if booking.status in ("approved", "accepted", "pending"):
-            upcoming_bookings.append(item)
-            continue
-        past_bookings.append(item)
+
+    grouped_live_bookings = _group_dashboard_booking_items(confirmed_bookings)
+    bookings_in_progress = [item for item in grouped_live_bookings if item.get("booking_category") == "in_progress"]
+    upcoming_bookings = [item for item in grouped_live_bookings if item.get("booking_category") == "upcoming"]
+    bookings_tomorrow = [item for item in grouped_live_bookings if item.get("matches_tomorrow")]
 
     def _sort_desc(items: List[dict]) -> List[dict]:
         return sorted(items, key=lambda row: row.get("start_dt") or row.get("created_at") or "", reverse=True)

@@ -283,6 +283,27 @@
       return String(item?.status || "").toLowerCase();
     }
 
+    function isTerminalBookingStatus(value) {
+      return ["completed", "cancelled", "rejected"].includes(String(value || "").toLowerCase());
+    }
+
+    function parseBookingDate(value) {
+      const dt = value ? new Date(value) : null;
+      return dt && !Number.isNaN(dt.getTime()) ? dt : null;
+    }
+
+    function bookingSlotState(item) {
+      const status = bookingStatusKey(item);
+      const now = new Date();
+      const start = parseBookingDate(item?.start_dt);
+      const end = parseBookingDate(item?.end_dt);
+      if (isTerminalBookingStatus(status)) return "past";
+      if (item?.check_in_at && !item?.check_out_at) return "in_progress";
+      if (end && end <= now) return "past";
+      if (start && end && start <= now && now < end) return "in_progress";
+      return "upcoming";
+    }
+
     function bookingGroupKey(item) {
       return String(item?.booking_request_id || item?.booking_id || item?.request_id || "");
     }
@@ -350,14 +371,14 @@
     }
 
     function isInProgressBooking(item) {
-      const status = bookingStatusKey(item);
-      return status === "active" || (item?.check_in_at && !item?.check_out_at);
+      const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [item];
+      return slots.some((slot) => bookingSlotState(slot) === "in_progress");
     }
 
     function isUpcomingBooking(item) {
-      const status = bookingStatusKey(item);
-      if (["completed", "cancelled", "rejected"].includes(status)) return false;
-      return !isInProgressBooking(item);
+      const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [item];
+      if (isInProgressBooking(item)) return false;
+      return slots.some((slot) => bookingSlotState(slot) === "upcoming");
     }
 
     function renderBookingPanel(containerId, items, emptyText) {
