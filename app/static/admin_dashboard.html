@@ -562,13 +562,7 @@
             ...(Array.isArray(data?.bookings_in_progress) ? data.bookings_in_progress : []),
             ...(Array.isArray(data?.past_bookings) ? data.past_bookings : []),
           ];
-      const deduped = new Map();
-      combined.forEach((item) => {
-        const key = String(item?.booking_id || item?.request_id || item?.id || "");
-        if (!key) return;
-        if (!deduped.has(key)) deduped.set(key, item);
-      });
-      return Array.from(deduped.values()).filter((item) => !["cancelled", "rejected"].includes(String(item?.status || "").toLowerCase()));
+      return combined.filter((item) => !["cancelled", "rejected"].includes(String(item?.status || "").toLowerCase()));
     }
 
     function renderMonthCalendar(monthDate, items) {
