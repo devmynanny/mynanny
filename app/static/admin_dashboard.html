@@ -730,9 +730,10 @@
           </div>
           <div class="detailSection">
             <strong>Timer by booking day</strong>
+            <div class="detailRow" style="margin-bottom:8px;"><strong>Booking ID:</strong> ${escapeHtml(data?.group_id || data?.request_id || "-")}</div>
             ${days.length ? days.map((day) => `
               <div class="detailDay">
-                <div class="detailRow"><strong>Booking #${escapeHtml(day.booking_id)}</strong> • ${escapeHtml(day.status || "-")}</div>
+                <div class="detailRow"><strong>Booking day:</strong> ${escapeHtml(formatAdminBookingRange(day.start_dt, day.end_dt))} • ${escapeHtml(day.status || "-")}</div>
                 <div class="detailRow">Scheduled: ${escapeHtml(formatDt(day.start_dt))} to ${escapeHtml(formatDt(day.end_dt))}</div>
                 <div class="detailRow">Arrived: ${escapeHtml(formatDt(day.check_in_at))}</div>
                 <div class="detailRow">Finished: ${escapeHtml(formatDt(day.check_out_at))}</div>
