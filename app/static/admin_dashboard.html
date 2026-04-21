@@ -754,16 +754,7 @@
         const now = new Date();
         currentAdminCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       }
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowParts = toAdminLocalDateParts(tomorrow);
-      const bookingsTomorrow = adminCalendarItems.filter((item) => {
-        const dt = item?.start_dt ? new Date(item.start_dt) : null;
-        if (!dt || Number.isNaN(dt.getTime())) return false;
-        const parts = toAdminLocalDateParts(dt);
-        return parts.year === tomorrowParts.year && parts.month === tomorrowParts.month && parts.day === tomorrowParts.day;
-      });
-      renderBookingCollection("tomorrowBookingsList", bookingsTomorrow, { emptyText: "No confirmed bookings tomorrow." });
+      renderBookingCollection("tomorrowBookingsList", data?.bookings_tomorrow || [], { emptyText: "No confirmed bookings tomorrow." });
       renderBookingCollection("bookingRequestsList", data?.pending_requests || [], { showActions: true, emptyText: "No pending booking requests." });
       renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { emptyText: "No upcoming bookings." });
       renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { emptyText: "No bookings currently in progress." });

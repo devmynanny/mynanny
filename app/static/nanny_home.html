@@ -304,6 +304,21 @@
       return "upcoming";
     }
 
+    function groupBookingState(item) {
+      const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [item];
+      const now = new Date();
+      let earliestStart = null;
+      let allPast = true;
+      slots.forEach((slot) => {
+        const start = parseBookingDate(slot?.start_dt);
+        if (start && (!earliestStart || start < earliestStart)) earliestStart = start;
+        if (bookingSlotState(slot) !== "past") allPast = false;
+      });
+      if (allPast) return "past";
+      if (earliestStart && earliestStart <= now) return "in_progress";
+      return "upcoming";
+    }
+
     function bookingGroupKey(item) {
       return String(item?.booking_request_id || item?.booking_id || item?.request_id || "");
     }
@@ -371,14 +386,11 @@
     }
 
     function isInProgressBooking(item) {
-      const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [item];
-      return slots.some((slot) => bookingSlotState(slot) === "in_progress");
+      return groupBookingState(item) === "in_progress";
     }
 
     function isUpcomingBooking(item) {
-      const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [item];
-      if (isInProgressBooking(item)) return false;
-      return slots.some((slot) => bookingSlotState(slot) === "upcoming");
+      return groupBookingState(item) === "upcoming";
     }
 
     function renderBookingPanel(containerId, items, emptyText) {

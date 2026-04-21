@@ -620,23 +620,95 @@ def _booking_time_state(
 
 def _booking_group_time_state(bookings: List[object], *, now: Optional[datetime] = None) -> str:
     current = now or datetime.utcnow()
-    states = []
+    earliest_start: Optional[datetime] = None
+    all_past = True
     for booking in bookings:
-        states.append(
-            _booking_time_state(
-                start_dt=getattr(booking, "starts_at", None),
-                end_dt=getattr(booking, "ends_at", None),
-                status=getattr(booking, "status", None),
-                check_in_at=getattr(booking, "check_in_at", None),
-                check_out_at=getattr(booking, "check_out_at", None),
-                now=current,
-            )
+        start_dt = getattr(booking, "starts_at", None)
+        if start_dt and (earliest_start is None or start_dt < earliest_start):
+            earliest_start = start_dt
+        state = _booking_time_state(
+            start_dt=start_dt,
+            end_dt=getattr(booking, "ends_at", None),
+            status=getattr(booking, "status", None),
+            check_in_at=getattr(booking, "check_in_at", None),
+            check_out_at=getattr(booking, "check_out_at", None),
+            now=current,
         )
-    if "in_progress" in states:
+        if state != "past":
+            all_past = False
+    if all_past:
+        return "past"
+    if earliest_start and earliest_start <= current:
         return "in_progress"
-    if "upcoming" in states:
-        return "upcoming"
-    return "past"
+    return "upcoming"
+
+
+def _booking_group_time_state_from_items(items: List[dict], *, now: Optional[datetime] = None) -> str:
+    current = now or datetime.utcnow()
+    earliest_start: Optional[datetime] = None
+    all_past = True
+    for item in items:
+        start_dt = None
+        end_dt = None
+        check_in_at = None
+        check_out_at = None
+        try:
+            if item.get("start_dt"):
+                start_dt = _parse_iso_dt(item.get("start_dt"))
+        except Exception:
+            start_dt = None
+        try:
+            if item.get("end_dt"):
+                end_dt = _parse_iso_dt(item.get("end_dt"))
+        except Exception:
+            end_dt = None
+        try:
+            if item.get("check_in_at"):
+                check_in_at = _parse_iso_dt(item.get("check_in_at"))
+        except Exception:
+            check_in_at = None
+        try:
+            if item.get("check_out_at"):
+                check_out_at = _parse_iso_dt(item.get("check_out_at"))
+        except Exception:
+            check_out_at = None
+        if start_dt and (earliest_start is None or start_dt < earliest_start):
+            earliest_start = start_dt
+        state = _booking_time_state(
+            start_dt=start_dt,
+            end_dt=end_dt,
+            status=item.get("status"),
+            check_in_at=check_in_at,
+            check_out_at=check_out_at,
+            now=current,
+        )
+        if state != "past":
+            all_past = False
+    if all_past:
+        return "past"
+    if earliest_start and earliest_start <= current:
+        return "in_progress"
+    return "upcoming"
+
+
+def _booking_group_matches_tomorrow(items: List[dict], *, tomorrow: date, now: Optional[datetime] = None, local_tz: Optional[ZoneInfo] = None) -> bool:
+    current = now or datetime.utcnow()
+    tz = local_tz or ZoneInfo("Africa/Johannesburg")
+    earliest_start: Optional[datetime] = None
+    for item in items:
+        try:
+            if item.get("start_dt"):
+                parsed = _parse_iso_dt(item.get("start_dt"))
+                if earliest_start is None or parsed < earliest_start:
+                    earliest_start = parsed
+        except Exception:
+            continue
+    if earliest_start is None:
+        return False
+    if _booking_group_time_state_from_items(items, now=current) != "upcoming":
+        return False
+    local_start = earliest_start.replace(tzinfo=timezone.utc).astimezone(tz) if earliest_start.tzinfo is None else earliest_start.astimezone(tz)
+    return local_start.date() == tomorrow
 
 
 def _group_dashboard_booking_items(items: List[dict]) -> List[dict]:
@@ -647,11 +719,11 @@ def _group_dashboard_booking_items(items: List[dict]) -> List[dict]:
             groups[key] = {
                 **item,
                 "booking_ids": [item.get("booking_id")] if item.get("booking_id") is not None else [],
-                "_states": {item.get("booking_state") or "upcoming"},
-                "_matches_tomorrow": bool(item.get("matches_tomorrow")),
+                "_items": [item],
             }
             continue
         group = groups[key]
+        group["_items"].append(item)
         if item.get("booking_id") is not None and item.get("booking_id") not in group["booking_ids"]:
             group["booking_ids"].append(item.get("booking_id"))
         if item.get("start_dt") and (not group.get("start_dt") or str(item.get("start_dt")) < str(group.get("start_dt"))):
@@ -672,20 +744,11 @@ def _group_dashboard_booking_items(items: List[dict]) -> List[dict]:
             group["google_calendar_synced_at"] = item.get("google_calendar_synced_at")
         if item.get("google_calendar_sync_error"):
             group["google_calendar_sync_error"] = item.get("google_calendar_sync_error")
-        group["_states"].add(item.get("booking_state") or "upcoming")
-        group["_matches_tomorrow"] = bool(group["_matches_tomorrow"] or item.get("matches_tomorrow"))
 
     grouped = []
     for group in groups.values():
-        states = group.pop("_states", set())
-        matches_tomorrow = bool(group.pop("_matches_tomorrow", False))
-        if "in_progress" in states:
-            group["booking_category"] = "in_progress"
-        elif "upcoming" in states:
-            group["booking_category"] = "upcoming"
-        else:
-            group["booking_category"] = "past"
-        group["matches_tomorrow"] = matches_tomorrow
+        items_in_group = group.pop("_items", [])
+        group["booking_category"] = _booking_group_time_state_from_items(items_in_group)
         grouped.append(group)
     return grouped
 
@@ -7272,14 +7335,12 @@ def list_admin_bookings_overview(
             "google_calendar_event_id": getattr(booking, "google_calendar_event_id", None),
             "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
             "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),
-            "matches_tomorrow": False,
         }
         if is_live_booking:
             confirmed_bookings.append(item)
         if is_live_booking and start_dt:
             local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
             if local_start.date() == tomorrow:
-                item["matches_tomorrow"] = True
                 bookings_tomorrow.append(item)
             if month_start <= local_start.date() <= month_end:
                 month_confirmed_bookings.append(item)
@@ -7296,7 +7357,22 @@ def list_admin_bookings_overview(
     grouped_live_bookings = _group_dashboard_booking_items(confirmed_bookings)
     bookings_in_progress = [item for item in grouped_live_bookings if item.get("booking_category") == "in_progress"]
     upcoming_bookings = [item for item in grouped_live_bookings if item.get("booking_category") == "upcoming"]
-    bookings_tomorrow = [item for item in grouped_live_bookings if item.get("matches_tomorrow")]
+    grouped_by_key = {
+        str(item.get("request_id") or f"booking:{item.get('booking_id') or item.get('id') or ''}"): []
+        for item in confirmed_bookings
+    }
+    for item in confirmed_bookings:
+        grouped_by_key[str(item.get("request_id") or f"booking:{item.get('booking_id') or item.get('id') or ''}")].append(item)
+    bookings_tomorrow = [
+        item
+        for item in grouped_live_bookings
+        if _booking_group_matches_tomorrow(
+            grouped_by_key.get(str(item.get("request_id") or f"booking:{item.get('booking_id') or item.get('id') or ''}"), []),
+            tomorrow=tomorrow,
+            now=now,
+            local_tz=local_tz,
+        )
+    ]
 
     def _sort_desc(items: List[dict]) -> List[dict]:
         return sorted(items, key=lambda row: row.get("start_dt") or row.get("created_at") or "", reverse=True)
