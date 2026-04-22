@@ -755,8 +755,21 @@ def _group_dashboard_booking_items(items: List[dict]) -> List[dict]:
 
 def _to_iso_z(dt: datetime) -> str:
     if dt.tzinfo is None:
-        return dt.isoformat()
+        return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _booking_request_start_end_iso(req: models.BookingRequest) -> tuple[Optional[str], Optional[str]]:
+    try:
+        start_raw = req.start_dt or req.requested_starts_at
+        end_raw = req.end_dt or req.requested_ends_at
+        start = _parse_iso_dt(start_raw) if start_raw else None
+        end = _parse_iso_dt(end_raw) if end_raw else None
+        return (_to_iso_z(start) if start else None, _to_iso_z(end) if end else None)
+    except Exception:
+        start_fallback = req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None)
+        end_fallback = req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None)
+        return start_fallback, end_fallback
 
 
 def _existing_availability_dates(
@@ -959,6 +972,16 @@ def _normalize_booking_slots(
         if windows[idx][0] < windows[idx - 1][1]:
             raise HTTPException(status_code=400, detail="Selected date slots cannot overlap")
     return windows
+
+
+def _validate_booking_windows_not_in_past(windows: List[tuple]) -> None:
+    now_utc = datetime.utcnow()
+    for slot_start, _slot_end in (windows or []):
+        if _naive_utc(slot_start) <= now_utc:
+            raise HTTPException(
+                status_code=409,
+                detail="The selected booking start time has already passed. Please choose a future time.",
+            )
 
 
 EXTRA_CHILD_SURCHARGE_CENTS = 5000
@@ -2178,12 +2201,7 @@ def _nanny_location_snapshot(profile: models.NannyProfile) -> dict:
 
 
 def _parent_profile_snapshot(prof: models.ParentProfile) -> dict:
-    kids_ages = []
-    if prof.kids_ages_json:
-        try:
-            kids_ages = json.loads(prof.kids_ages_json) or []
-        except Exception:
-            kids_ages = []
+    kids_ages = _normalize_parent_kids_ages(getattr(prof, "kids_ages_json", None))
 
     desired_tag_ids = []
     if prof.desired_tag_ids_json:
@@ -2210,6 +2228,46 @@ def _parent_profile_snapshot(prof: models.ParentProfile) -> dict:
         "family_photo_url": prof.family_photo_url,
         "access_flags": access_flags,
     }
+
+
+def _coerce_int_or_none(value: object) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _normalize_parent_kids_ages(raw: object) -> List[dict]:
+    parsed = raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(parsed, list):
+        return []
+    normalized: List[dict] = []
+    for item in parsed:
+        years: Optional[int] = None
+        months: Optional[int] = None
+        if hasattr(item, "model_dump"):
+            item = item.model_dump()
+        if isinstance(item, dict):
+            years = _coerce_int_or_none(item.get("years"))
+            months = _coerce_int_or_none(item.get("months"))
+        else:
+            years = _coerce_int_or_none(item)
+        if years is not None and (years < 0 or years > 18):
+            years = None
+        if months is not None and (months < 0 or months > 11):
+            months = None
+        normalized.append({
+            "years": years,
+            "months": months,
+        })
+    return normalized
 
 
 def _parent_location_snapshot(loc: models.ParentLocation) -> dict:
@@ -3551,6 +3609,7 @@ def list_nanny_me_booking_requests(
                 distance_km = round(haversine_km(float(nanny_lat), float(nanny_lng), float(location_lat), float(location_lng)), 1)
             except Exception:
                 distance_km = None
+        request_start_dt, request_end_dt = _booking_request_start_end_iso(req)
         results.append({
             "id": req.id,
             "group_id": req.group_id or req.id,
@@ -3565,8 +3624,8 @@ def list_nanny_me_booking_requests(
                 if (req.status == "approved" or (getattr(req, "nanny_response_status", None) or "").lower() == "accepted")
                 else None
             ),
-            "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
-            "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            "start_dt": request_start_dt,
+            "end_dt": request_end_dt,
             "notes": req.client_notes,
             "location_label": loc.label if loc else None,
             "location_address": (getattr(loc, "formatted_address", None) if loc else None) or getattr(prof, "formatted_address", None),
@@ -3627,14 +3686,15 @@ def list_nanny_me_bookings(
         booking_fee_cents = int(getattr(req, "booking_fee_cents", None) or 0)
         total_wage_cents = int(getattr(req, "wage_cents", None) or max(0, total_cents - booking_fee_cents))
         daily_wage_cents = int(round(total_wage_cents / max(day_count, 1))) if total_wage_cents else 0
+        request_start_dt, request_end_dt = _booking_request_start_end_iso(req)
         results.append({
             "id": req.id,
             "group_id": req.group_id or req.id,
             "status": req.status,
             "parent_name": parent.name,
             "parent_email": parent.email,
-            "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
-            "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            "start_dt": request_start_dt,
+            "end_dt": request_end_dt,
             "notes": req.client_notes,
             "location_label": loc.label if loc else None,
             "location_address": (getattr(loc, "formatted_address", None) if loc else None) or getattr(prof, "formatted_address", None),
@@ -4718,20 +4778,17 @@ def _is_profile_complete(db: Session, user_id: int) -> bool:
     except Exception:
         return False
 
-    kids_ages = []
-    if prof.kids_ages_json:
-        try:
-            kids_ages = json.loads(prof.kids_ages_json) or []
-        except Exception:
-            return False
+    kids_ages = _normalize_parent_kids_ages(getattr(prof, "kids_ages_json", None))
     if len(kids_ages) != kids_count:
         return False
-    for a in kids_ages:
-        try:
-            ai = int(a)
-        except Exception:
+    for age in kids_ages:
+        years = _coerce_int_or_none(age.get("years"))
+        months = _coerce_int_or_none(age.get("months"))
+        if years is None and months is None:
             return False
-        if ai < 0 or ai > 18:
+        if years is not None and (years < 0 or years > 18):
+            return False
+        if months is not None and (months < 0 or months > 11):
             return False
 
     if not prof.desired_tag_ids_json:
@@ -4787,12 +4844,7 @@ def get_parent_profile(authorization: Optional[str] = Header(default=None), db: 
     if not prof:
         return {"exists": False}
 
-    kids_ages = []
-    if prof.kids_ages_json:
-        try:
-            kids_ages = json.loads(prof.kids_ages_json) or []
-        except Exception:
-            kids_ages = []
+    kids_ages = _normalize_parent_kids_ages(getattr(prof, "kids_ages_json", None))
 
     desired_tag_ids = []
     if prof.desired_tag_ids_json:
@@ -5184,6 +5236,7 @@ def update_parent_booking_request_schedule(
         end_dt_value=payload.end_dt,
         slot_items=payload.slots,
     )
+    _validate_booking_windows_not_in_past(windows)
     settings = _get_pricing_settings(db)
     questionnaire = _booking_questionnaire_from_notes(editable_rows[0].client_notes)
     pricing = _compute_booking_slots_pricing(
@@ -5638,7 +5691,14 @@ def update_parent_profile_details(
         prof.kids_count = payload.kids_count
 
     if payload.kids_ages is not None:
-        prof.kids_ages_json = json.dumps(payload.kids_ages)
+        normalized_kids_ages = _normalize_parent_kids_ages(payload.kids_ages)
+        expected_count = payload.kids_count if payload.kids_count is not None else prof.kids_count
+        if expected_count not in (None, 0) and len(normalized_kids_ages) != int(expected_count):
+            raise HTTPException(status_code=400, detail="Please provide one age entry per child")
+        for age in normalized_kids_ages:
+            if age.get("years") is None and age.get("months") is None:
+                raise HTTPException(status_code=400, detail="Please enter years or months for each child")
+        prof.kids_ages_json = json.dumps(normalized_kids_ages)
 
     if payload.desired_tag_ids is not None:
         prof.desired_tag_ids_json = json.dumps(payload.desired_tag_ids)
@@ -6218,6 +6278,9 @@ def create_bulk_booking_request(payload: BulkBookingRequest, request: Request, d
         if slot.ends_at <= slot.starts_at:
             errors.append({"index": i, "error": "ends_at must be after starts_at"})
             continue
+        if _naive_utc(slot.starts_at) <= datetime.utcnow():
+            errors.append({"index": i, "error": "start time has already passed"})
+            continue
         existing = (
             db.query(models.BookingRequestSlot)
             .join(models.BookingRequest)
@@ -6305,6 +6368,7 @@ def create_booking_request(
             end_dt_value=payload.end_dt,
             slot_items=payload.slots,
         )
+        _validate_booking_windows_not_in_past(windows)
         start_dt = windows[0][0]
         end_dt = windows[-1][1]
 
@@ -6405,6 +6469,7 @@ def estimate_booking_request(
         end_dt_value=payload.end_dt,
         slot_items=payload.slots,
     )
+    _validate_booking_windows_not_in_past(windows)
 
     selected_count = int(payload.selected_count or 1)
     if selected_count < 1:
@@ -6448,6 +6513,7 @@ def create_booking_request_bulk(
         end_dt_value=payload.end_dt,
         slot_items=payload.slots,
     )
+    _validate_booking_windows_not_in_past(windows)
     start_dt = windows[0][0]
     end_dt = windows[-1][1]
 
@@ -7589,12 +7655,7 @@ def admin_get_parent_profile(
         .filter(models.ParentLocation.parent_user_id == user_id, models.ParentLocation.is_default == True)
         .first()
     )
-    kids_ages = []
-    if profile and getattr(profile, "kids_ages_json", None):
-        try:
-            kids_ages = json.loads(getattr(profile, "kids_ages_json", None)) or []
-        except Exception:
-            kids_ages = []
+    kids_ages = _normalize_parent_kids_ages(getattr(profile, "kids_ages_json", None) if profile else None)
     access_flags = []
     if profile and getattr(profile, "access_flags_json", None):
         try:

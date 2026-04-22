@@ -523,10 +523,15 @@ class ReviewOut(BaseModel):
     created_at: datetime
 
 
+class ChildAgeEntry(BaseModel):
+    years: Optional[int] = None
+    months: Optional[int] = None
+
+
 class ParentProfileDetailsRequest(BaseModel):
     phone: Optional[str] = None
     kids_count: Optional[int] = None
-    kids_ages: Optional[List[int]] = None
+    kids_ages: Optional[List[ChildAgeEntry]] = None
     desired_tag_ids: Optional[List[int]] = None
     home_language_id: Optional[int] = None
     special_notes: Optional[str] = None

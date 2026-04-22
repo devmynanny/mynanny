@@ -18,6 +18,9 @@
     .inp{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;margin-top:6px;box-sizing:border-box}
     .input{width:100%;padding:10px;border:1px solid #ccc;border-radius:10px;margin-top:6px;box-sizing:border-box}
     .hint{color:#666;font-size:13px;margin-top:6px}
+    .kidAgeRow{margin-top:10px}
+    .kidAgeGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .kidAgeLabel{display:block;font-size:13px;color:#555;margin-bottom:4px}
     .checkgrid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -58,6 +61,9 @@
 
     @media (max-width: 720px) {
       .checkgrid {
+        grid-template-columns: 1fr;
+      }
+      .kidAgeGrid {
         grid-template-columns: 1fr;
       }
     }
@@ -137,7 +143,7 @@
     <div id="kidsAgesWrap" style="margin-top:12px;">
       <label class="lbl">Kids ages</label>
       <div id="kidsAgesList"></div>
-      <div class="hint">Select one age per child.</div>
+      <div class="hint">Enter years, months, or both for each child. For a baby, you can use years 0 and months 3.</div>
     </div>
 
     <div style="margin-top:12px;">
@@ -378,8 +384,8 @@
       renderLocations(locs);
     }
 
-    function buildAgeOptions(selectedVal) {
-      const ages = Array.from({ length: 19 }, (_, i) => i);
+    function buildAgeOptions(max, selectedVal) {
+      const ages = Array.from({ length: max + 1 }, (_, i) => i);
       return ages.map(a => {
         const sel = (String(selectedVal) === String(a)) ? "selected" : "";
         return `<option value="${a}" ${sel}>${a}</option>`;
@@ -390,14 +396,27 @@
       const list = document.getElementById("kidsAgesList");
       list.innerHTML = "";
       for (let i = 0; i < count; i++) {
+        const age = normalizeKidAgeEntry(agesArray[i]);
         const row = document.createElement("div");
-        row.style.marginTop = "8px";
+        row.className = "kidAgeRow";
         row.innerHTML = `
           <div class="lbl" style="font-weight:600; margin-bottom:6px;">Child ${i + 1} age</div>
-          <select class="inp kidAge" data-idx="${i}">
-            <option value="">Select age</option>
-            ${buildAgeOptions(agesArray[i] ?? "")}
-          </select>
+          <div class="kidAgeGrid">
+            <div>
+              <label class="kidAgeLabel">Years</label>
+              <select class="inp kidAgeYears" data-idx="${i}">
+                <option value="">Select years</option>
+                ${buildAgeOptions(18, age.years ?? "")}
+              </select>
+            </div>
+            <div>
+              <label class="kidAgeLabel">Months</label>
+              <select class="inp kidAgeMonths" data-idx="${i}">
+                <option value="">Select months</option>
+                ${buildAgeOptions(11, age.months ?? "")}
+              </select>
+            </div>
+          </div>
         `;
         list.appendChild(row);
       }
@@ -405,19 +424,39 @@
 
     function renderKidsAgeDropdowns() {
       const count = parseInt(document.getElementById("kidsCount").value || "0", 10);
-      const existing = Array.from(document.querySelectorAll(".kidAge"))
-        .map(s => s.value)
-        .filter(v => v !== "")
-        .map(v => Number(v));
+      const existing = getKidsAges(true);
       renderKidsAgeSelects(count, existing);
     }
 
-    function getKidsAges() {
-      return Array.from(document.querySelectorAll(".kidAge"))
-        .map(s => s.value)
-        .filter(v => v !== "")
-        .map(v => Number(v))
-        .filter(n => Number.isFinite(n));
+    function normalizeKidAgeEntry(value) {
+      if (value && typeof value === "object") {
+        const years = value.years === "" || value.years == null ? null : Number(value.years);
+        const months = value.months === "" || value.months == null ? null : Number(value.months);
+        return {
+          years: Number.isFinite(years) ? years : null,
+          months: Number.isFinite(months) ? months : null,
+        };
+      }
+      const years = Number(value);
+      return {
+        years: Number.isFinite(years) ? years : null,
+        months: null,
+      };
+    }
+
+    function getKidsAges(includeBlank = false) {
+      const yearsInputs = Array.from(document.querySelectorAll(".kidAgeYears"));
+      return yearsInputs.map((yearsSelect, index) => {
+        const monthsSelect = document.querySelector(`.kidAgeMonths[data-idx="${index}"]`);
+        const years = yearsSelect.value === "" ? null : Number(yearsSelect.value);
+        const months = monthsSelect && monthsSelect.value !== "" ? Number(monthsSelect.value) : null;
+        const entry = {
+          years: Number.isFinite(years) ? years : null,
+          months: Number.isFinite(months) ? months : null,
+        };
+        if (!includeBlank && entry.years === null && entry.months === null) return null;
+        return entry;
+      }).filter(Boolean);
     }
 
     async function loadTags() {
@@ -489,7 +528,7 @@
 
       const kidsCount = Number.isInteger(profile.kids_count) ? profile.kids_count : 0;
       document.getElementById("kidsCount").value = String(kidsCount);
-      const ages = Array.isArray(profile.kids_ages) ? profile.kids_ages.map(a => Number(a)).filter(Number.isFinite) : [];
+      const ages = Array.isArray(profile.kids_ages) ? profile.kids_ages.map(normalizeKidAgeEntry) : [];
       renderKidsAgeSelects(kidsCount, ages);
 
       await loadTags();
@@ -648,8 +687,8 @@
         alert("Please select a residence type");
         return;
       }
-      if (kids_ages.length !== kids_count) {
-        status.textContent = "Please select an age for each child.";
+      if (kids_ages.length !== kids_count || kids_ages.some((age) => age.years == null && age.months == null)) {
+        status.textContent = "Please enter years, months, or both for each child.";
         return;
       }
 

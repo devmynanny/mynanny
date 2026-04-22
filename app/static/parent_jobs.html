@@ -245,11 +245,12 @@
       const end = endValue ? new Date(endValue) : null;
       if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "-";
       const fmt = new Intl.DateTimeFormat("en-ZA", {
-        hour: "numeric",
-        hour12: true,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
         timeZone: "Africa/Johannesburg",
       });
-      const normalize = (value) => fmt.format(value).replace(/\s/g, "").toLowerCase().replace(":00", "");
+      const normalize = (value) => fmt.format(value).replace(/\s/g, "");
       return `${normalize(start)}-${normalize(end)}`;
     }
 
@@ -272,7 +273,7 @@
       if (!startValue || !endValue) return "-";
       const startDate = formatShortBookingDate(startValue);
       const endDate = formatShortBookingDate(endValue);
-      const timeRange = formatCompactTimeRange(startValue, endValue).replace(/am/g, "").replace(/pm/g, "").trim();
+      const timeRange = formatCompactTimeRange(startValue, endValue).trim();
       return `${startDate} - ${endDate}: ${timeRange}`;
     }
 

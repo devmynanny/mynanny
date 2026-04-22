@@ -216,6 +216,19 @@
       return raw;
     }
 
+    function formatChildAge(value) {
+      if (value && typeof value === "object") {
+        const years = Number.isFinite(Number(value.years)) ? Number(value.years) : null;
+        const months = Number.isFinite(Number(value.months)) ? Number(value.months) : null;
+        const parts = [];
+        if (years !== null) parts.push(`${years} year${years === 1 ? "" : "s"}`);
+        if (months !== null) parts.push(`${months} month${months === 1 ? "" : "s"}`);
+        return parts.length ? parts.join(" ") : "-";
+      }
+      const years = Number(value);
+      return Number.isFinite(years) ? `${years} year${years === 1 ? "" : "s"}` : "-";
+    }
+
     function renderProfileView(user, profile) {
       const card = document.getElementById("profileViewCard");
       const body = document.getElementById("profileViewBody");
@@ -233,7 +246,7 @@
       }
 
       const kidsAges = Array.isArray(profile?.kids_ages) && profile.kids_ages.length
-        ? profile.kids_ages.join(", ")
+        ? profile.kids_ages.map(formatChildAge).join(", ")
         : "-";
       const flags = Array.isArray(profile?.access_flags) ? profile.access_flags.filter(Boolean) : [];
       const location = profile?.formatted_address || [profile?.suburb, profile?.city, profile?.province].filter(Boolean).join(", ") || "-";
