@@ -500,6 +500,11 @@ class BookingDutyActionRequest(BaseModel):
     lng: float
 
 
+class BookingTimeConfirmationRequest(BaseModel):
+    confirmed: bool = True
+    corrected_time: Optional[str] = None
+
+
 class ReviewCreate(BaseModel):
     booking_id: int
     stars: int

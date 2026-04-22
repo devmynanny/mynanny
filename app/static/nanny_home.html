@@ -38,6 +38,7 @@
     .bookingItem{border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff}
     .bookingItemTitle{font-weight:700}
     .bookingItemMeta{color:#666;font-size:14px;margin-top:4px}
+    .bookingItemActionMeta{color:#334155;font-size:13px;margin-top:8px}
     .acceptedActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
     .whatsAppBtn{display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}
     .whatsAppIcon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;background:#25d366;color:#fff;font-size:11px;font-weight:700;line-height:1}
@@ -396,22 +397,28 @@
     function renderBookingPanel(containerId, items, emptyText) {
       const container = document.getElementById(containerId);
       if (!container) return;
-      const list = groupDutyBookings(items);
+      const list = Array.isArray(items) ? items : [];
       if (!list.length) {
         container.innerHTML = `<div class="muted">${escapeHtml(emptyText)}</div>`;
         return;
       }
       container.innerHTML = list.map((item) => {
         const whatsappUrl = buildWhatsAppUrl(item.parent_phone, item.parent_name);
+        const todaySlot = findTodayBookingSlot(item);
+        const todayState = dutyActionState(todaySlot);
         return `
           <div class="bookingItem">
             <div class="bookingItemTitle">${escapeHtml(item.parent_name || "Client")}</div>
             <div class="bookingItemMeta">${escapeHtml(formatPreferredBookingRange(item.start_dt, item.end_dt))}</div>
             <div class="bookingItemMeta">${escapeHtml(item.location_address || item.location_label || "-")}</div>
+            ${todaySlot ? `<div class="bookingItemActionMeta">Today's booking day: ${escapeHtml(formatPreferredBookingRange(todaySlot.start_dt, todaySlot.end_dt))}</div>` : ""}
             <div class="acceptedActions">
               <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || "")}">View details</button>
               ${whatsappUrl ? `<a class="btn whatsAppBtn" href="${whatsappUrl}" target="_blank" rel="noopener noreferrer"><span class="whatsAppIcon">W</span><span>WhatsApp</span></a>` : ""}
+              ${todaySlot && todayState === "ready_to_check_in" ? `<button class="btn primarySoft dutyActionBtn" type="button" data-action="check-in" data-booking-id="${escapeHtml(todaySlot.booking_id || "")}">Check in</button>` : ""}
+              ${todaySlot && todayState === "checked_in" ? `<button class="btn primarySoft dutyActionBtn" type="button" data-action="check-out" data-booking-id="${escapeHtml(todaySlot.booking_id || "")}">Check out</button>` : ""}
             </div>
+            ${todaySlot && todayState === "checked_out" ? `<div class="bookingItemActionMeta">Today's booking day has been checked out.</div>` : ""}
           </div>
         `;
       }).join("");
@@ -421,13 +428,19 @@
           location.href = id ? `/static/nanny_requests.html?request_id=${encodeURIComponent(id)}` : "/static/nanny_requests.html";
         });
       });
+      container.querySelectorAll(".dutyActionBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          handleDutyAction(btn);
+        });
+      });
     }
 
     function renderDutyBookingPanels(items) {
       const normalized = Array.isArray(items) ? items.slice() : [];
       normalized.sort((a, b) => String(a.start_dt || "").localeCompare(String(b.start_dt || "")));
-      const inProgress = normalized.filter(isInProgressBooking);
-      const upcoming = normalized.filter(isUpcomingBooking);
+      const grouped = groupDutyBookings(normalized);
+      const inProgress = grouped.filter(isInProgressBooking);
+      const upcoming = grouped.filter(isUpcomingBooking);
       renderBookingPanel("inProgressBookings", inProgress, "No bookings in progress.");
       renderBookingPanel("upcomingBookings", upcoming, "No upcoming bookings.");
     }
@@ -444,6 +457,66 @@
       const month = parts.find((part) => part.type === "month")?.value;
       const day = parts.find((part) => part.type === "day")?.value;
       return { year: Number(year), month: Number(month), day: Number(day) };
+    }
+
+    function toLocalDateKey(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "";
+      const parts = toLocalDateParts(dt);
+      return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+    }
+
+    function todayLocalDateKey() {
+      return toLocalDateKey(new Date().toISOString());
+    }
+
+    function findTodayBookingSlot(item) {
+      const slots = Array.isArray(item?.slots) ? item.slots : [];
+      const todayKey = todayLocalDateKey();
+      return slots.find((slot) => toLocalDateKey(slot?.start_dt) === todayKey) || null;
+    }
+
+    function dutyActionState(slot) {
+      if (!slot) return "none";
+      if (slot.check_in_at && slot.check_out_at) return "checked_out";
+      if (slot.check_in_at) return "checked_in";
+      return "ready_to_check_in";
+    }
+
+    function getCurrentPositionOnce() {
+      return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error("Geolocation is not available on this device"));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (position) => resolve(position),
+          () => reject(new Error("We could not get your location. Please enable location access and try again.")),
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+        );
+      });
+    }
+
+    async function handleDutyAction(btn) {
+      const bookingId = btn?.dataset?.bookingId || "";
+      const action = btn?.dataset?.action || "";
+      if (!bookingId || !action) return;
+      btn.disabled = true;
+      try {
+        const position = await getCurrentPositionOnce();
+        await fetchJson(`/nannies/me/bookings/${encodeURIComponent(bookingId)}/${action}`, {
+          method: "POST",
+          body: JSON.stringify({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          }),
+        });
+        await loadDutyBookings();
+      } catch (error) {
+        alert(error.message || `Failed to ${action.replace("-", " ")}`);
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     function renderBookingsCalendar(monthDate, items) {

@@ -3674,6 +3674,17 @@ def _nanny_owned_booking_or_404(db: Session, booking_id: int, user_id: int) -> m
     return booking
 
 
+def _parent_owned_booking_or_404(db: Session, booking_id: int, user_id: int) -> models.Booking:
+    booking = (
+        db.query(models.Booking)
+        .filter(models.Booking.id == booking_id, models.Booking.client_user_id == user_id)
+        .first()
+    )
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return booking
+
+
 @router.get("/nannies/me/duty-bookings")
 def list_nanny_me_duty_bookings(
     authorization: Optional[str] = Header(default=None),
@@ -3711,10 +3722,12 @@ def list_nanny_me_duty_bookings(
                 "check_in_lat": getattr(b, "check_in_lat", None),
                 "check_in_lng": getattr(b, "check_in_lng", None),
                 "check_in_distance_m": getattr(b, "check_in_distance_m", None),
+                "check_in_confirmed_at": b.check_in_confirmed_at.isoformat() if getattr(b, "check_in_confirmed_at", None) else None,
                 "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
                 "check_out_lat": getattr(b, "check_out_lat", None),
                 "check_out_lng": getattr(b, "check_out_lng", None),
                 "check_out_distance_m": getattr(b, "check_out_distance_m", None),
+                "check_out_confirmed_at": b.check_out_confirmed_at.isoformat() if getattr(b, "check_out_confirmed_at", None) else None,
                 "wage_cents": int(getattr(req, "wage_cents", None) or 0) if req else 0,
                 "daily_wage_cents": (
                     int(round((int(getattr(req, "wage_cents", None) or 0)) / max(len(_booking_request_windows(db, req)) or 1, 1)))
@@ -3822,6 +3835,72 @@ def nanny_check_out_booking(
         "booking_id": booking.id,
         "check_out_at": booking.check_out_at.isoformat() if booking.check_out_at else None,
         "check_out_distance_m": booking.check_out_distance_m,
+    }
+
+
+@router.post("/parents/me/bookings/{booking_id}/confirm-check-in")
+def parent_confirm_booking_check_in(
+    booking_id: int,
+    payload: schemas.BookingTimeConfirmationRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _parent_owned_booking_or_404(db, booking_id, user.id)
+    if not booking.check_in_at:
+        raise HTTPException(status_code=409, detail="The nanny has not checked in for this booking day yet")
+    confirmed_time = booking.check_in_at
+    if not payload.confirmed:
+        try:
+            corrected_time = _parse_iso_dt((payload.corrected_time or "").strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="Please provide the corrected arrival time")
+        confirmed_time = corrected_time
+    booking.check_in_at = confirmed_time
+    booking.check_in_confirmed_at = datetime.utcnow()
+    booking.check_in_confirmed_by_user_id = user.id
+    db.commit()
+    db.refresh(booking)
+    return {
+        "ok": True,
+        "booking_id": booking.id,
+        "check_in_at": booking.check_in_at.isoformat() if booking.check_in_at else None,
+        "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if booking.check_in_confirmed_at else None,
+    }
+
+
+@router.post("/parents/me/bookings/{booking_id}/confirm-check-out")
+def parent_confirm_booking_check_out(
+    booking_id: int,
+    payload: schemas.BookingTimeConfirmationRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _parent_owned_booking_or_404(db, booking_id, user.id)
+    if not booking.check_out_at:
+        raise HTTPException(status_code=409, detail="The nanny has not checked out for this booking day yet")
+    confirmed_time = booking.check_out_at
+    if not payload.confirmed:
+        try:
+            corrected_time = _parse_iso_dt((payload.corrected_time or "").strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="Please provide the corrected completion time")
+        confirmed_time = corrected_time
+    booking.check_out_at = confirmed_time
+    booking.check_out_confirmed_at = datetime.utcnow()
+    booking.check_out_confirmed_by_user_id = user.id
+    db.commit()
+    db.refresh(booking)
+    return {
+        "ok": True,
+        "booking_id": booking.id,
+        "check_out_at": booking.check_out_at.isoformat() if booking.check_out_at else None,
+        "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if booking.check_out_confirmed_at else None,
     }
 
 
@@ -4853,6 +4932,19 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 "accepted_nanny_phone_alt": None,
                 "requested_nannies": [],
                 "booking_form": booking_form,
+                "booking_days": [
+                    {
+                        "booking_id": booking.id,
+                        "status": booking.status,
+                        "start_dt": booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None),
+                        "end_dt": booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None),
+                        "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
+                        "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if getattr(booking, "check_in_confirmed_at", None) else None,
+                        "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+                        "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if getattr(booking, "check_out_confirmed_at", None) else None,
+                    }
+                    for booking in related_bookings
+                ],
             }
             entry = grouped[gid]
         entry["requested_nannies"].append({"id": req.nanny_id, "name": nanny_u.name})

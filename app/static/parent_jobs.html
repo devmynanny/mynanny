@@ -35,6 +35,7 @@
     .bookingCard{border:1px solid #e5e7eb;border-radius:10px;padding:12px;background:#fff}
     .bookingCardTitle{font-weight:700}
     .bookingCardMeta{color:#666;font-size:14px;margin-top:4px}
+    .bookingCardNote{color:#334155;font-size:13px;margin-top:8px}
     .bookingStatusBadge{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;border:1px solid #9fd0f2;background:#eef7ff;color:#1f5f8b;font-size:12px;font-weight:700;margin-top:8px}
     .calendarWrap{border:1px solid #e5e7eb;border-radius:12px;padding:14px;background:#fff}
     .monthNav{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
@@ -289,6 +290,98 @@
       return { year: Number(year), month: Number(month), day: Number(day) };
     }
 
+    function toLocalDateKey(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "";
+      const parts = toLocalDateParts(dt);
+      return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+    }
+
+    function todayLocalDateKey() {
+      return toLocalDateKey(new Date().toISOString());
+    }
+
+    function toLocalDateInputValue(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "";
+      const parts = toLocalDateParts(dt);
+      return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+    }
+
+    function toLocalTimeInputValue(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "08:00";
+      return new Intl.DateTimeFormat("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Africa/Johannesburg",
+      }).format(dt);
+    }
+
+    function findTodayBookingDay(item) {
+      const bookingDays = Array.isArray(item?.booking_days) ? item.booking_days : [];
+      const todayKey = todayLocalDateKey();
+      return bookingDays.find((day) => toLocalDateKey(day?.start_dt) === todayKey) || null;
+    }
+
+    function renderConfirmationButtons(item, todayDay, compact = false) {
+      if (!todayDay) return "";
+      const pieces = [];
+      if (todayDay.check_in_at && !todayDay.check_in_confirmed_at) {
+        pieces.push(`<button class="btn confirmTimeBtn" type="button" data-booking-id="${escapeHtml(todayDay.booking_id || "")}" data-kind="check-in" data-start-dt="${escapeHtml(todayDay.start_dt || "")}" data-current-time="${escapeHtml(todayDay.check_in_at || "")}">Confirm arrival</button>`);
+      }
+      if (todayDay.check_out_at && !todayDay.check_out_confirmed_at) {
+        pieces.push(`<button class="btn confirmTimeBtn" type="button" data-booking-id="${escapeHtml(todayDay.booking_id || "")}" data-kind="check-out" data-start-dt="${escapeHtml(todayDay.start_dt || "")}" data-current-time="${escapeHtml(todayDay.check_out_at || "")}">Confirm completion</button>`);
+      }
+      if (!pieces.length) {
+        if (todayDay.check_out_confirmed_at) {
+          return compact ? `<div class="bookingCardNote">Today's arrival and completion have been confirmed.</div>` : "";
+        }
+        if (todayDay.check_in_confirmed_at) {
+          return compact ? `<div class="bookingCardNote">Today's arrival has been confirmed.</div>` : "";
+        }
+        return "";
+      }
+      return pieces.join("");
+    }
+
+    async function handleParentTimeConfirmation(btn) {
+      const bookingId = btn?.dataset?.bookingId || "";
+      const kind = btn?.dataset?.kind || "";
+      const startDt = btn?.dataset?.startDt || "";
+      const currentTime = btn?.dataset?.currentTime || "";
+      if (!bookingId || !kind || !currentTime) return;
+      const noun = kind === "check-in" ? "arrival" : "completion";
+      const confirmed = window.confirm(`Please confirm the nanny's ${noun} time.\n\nClick OK if ${formatDateTimeZA(currentTime)} is correct.\nClick Cancel to capture the correct time.`);
+      let correctedTime = null;
+      if (!confirmed) {
+        const entered = (window.prompt(`Enter the correct ${noun} time in HH:MM format`, toLocalTimeInputValue(currentTime)) || "").trim();
+        if (!entered) return;
+        if (!/^\d{2}:\d{2}$/.test(entered)) {
+          alert("Please enter the time in HH:MM format, for example 06:00.");
+          return;
+        }
+        const localDate = toLocalDateInputValue(startDt || currentTime);
+        correctedTime = window.toIsoFromZA ? window.toIsoFromZA(localDate, entered) : new Date(`${localDate}T${entered}:00+02:00`).toISOString();
+      }
+      btn.disabled = true;
+      try {
+        await fetchJson(`/parents/me/bookings/${encodeURIComponent(bookingId)}/confirm-${kind}`, {
+          method: "POST",
+          body: JSON.stringify({
+            confirmed,
+            corrected_time: correctedTime,
+          }),
+        });
+        await loadJobs();
+      } catch (error) {
+        alert(error.message || `Failed to confirm ${noun} time`);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     function bookingDisplayName(item) {
       return item?.accepted_nanny_name || (String(item?.status || "").toLowerCase() === "approved" ? "Confirmed nanny" : "Requested booking");
     }
@@ -316,18 +409,23 @@
         container.innerHTML = `<div class="muted">${escapeHtml(emptyText)}</div>`;
         return;
       }
-      container.innerHTML = list.map((item) => `
+      container.innerHTML = list.map((item) => {
+        const todayDay = findTodayBookingDay(item);
+        return `
         <div class="bookingCard">
           <div class="bookingCardTitle">${item.accepted_nanny_name ? `<strong>Nanny:</strong> ${escapeHtml(item.accepted_nanny_name)}` : escapeHtml(bookingDisplayName(item))}</div>
           <div class="bookingCardMeta">${item.accepted_nanny_name ? `Accepted booking` : `Job ID: ${escapeHtml(item.job_id || "-")}`}</div>
           <div class="bookingStatusBadge">Job status: ${escapeHtml(mapStatus(item.status || "-"))}</div>
           <div class="bookingCardMeta">${escapeHtml(formatBookingDateTimeRange(item.start_dt, item.end_dt))}</div>
+          ${todayDay ? `<div class="bookingCardNote">Today's booking day: ${escapeHtml(formatBookingDateTimeRange(todayDay.start_dt, todayDay.end_dt))}</div>` : ""}
           <div class="actions">
             <button class="btn dashboardViewBtn" type="button" data-id="${escapeHtml(item.job_id || "")}">View details</button>
             ${item.accepted_nanny_id ? `<button class="btn dashboardViewProfileBtn" type="button" data-job-id="${escapeHtml(item.job_id || "")}" data-nanny-id="${escapeHtml(item.accepted_nanny_id || "")}">View profile</button>` : ""}
+            ${renderConfirmationButtons(item, todayDay)}
           </div>
         </div>
-      `).join("");
+      `;
+      }).join("");
       container.querySelectorAll(".dashboardViewBtn").forEach((btn) => {
         btn.addEventListener("click", () => {
           const card = document.querySelector(`.cancelBtn[data-id="${btn.dataset.id}"]`)?.closest(".card")
@@ -353,6 +451,11 @@
               profileBtn.click();
             }
           }
+        });
+      });
+      container.querySelectorAll(".confirmTimeBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          handleParentTimeConfirmation(btn);
         });
       });
     }
@@ -585,18 +688,21 @@
         const showActiveNannyContacts = r.status === "approved" && category !== "past";
         const whatsappUrl = toWhatsappUrl(r.accepted_nanny_phone_alt);
         const callUrl = toTelUrl(r.accepted_nanny_phone);
+        const todayDay = findTodayBookingDay(r);
         const cardHtml = `
           <div class="card">
           <div><strong>Job ID:</strong> ${escapeHtml(r.job_id)}</div>
           <div class="muted">${escapeHtml(bookingRange)}</div>
           <div class="muted">Status: ${escapeHtml(status)}</div>
           <div class="muted">${escapeHtml(nannyLine)}</div>
+          ${todayDay ? `<div class="bookingCardNote">Today's booking day: ${escapeHtml(formatBookingDateTimeRange(todayDay.start_dt, todayDay.end_dt))}</div>` : ""}
           <div class="actions">
             ${r.status !== "cancelled" ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
             ${canEditJob ? `<button class="btn editJobBtn" data-id="${r.job_id}">Edit job</button>` : ""}
             ${showActiveNannyContacts && whatsappUrl ? `<a class="btn" data-contact-action="whatsapp" href="${escapeHtml(whatsappUrl)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
             ${showActiveNannyContacts && callUrl ? `<a class="btn" data-contact-action="call" href="${escapeHtml(callUrl)}">Call nanny</a>` : ""}
             ${r.accepted_nanny_id ? `<button class="btn viewNannyProfileBtn" data-id="${r.accepted_nanny_id}">View nanny profile</button>` : ""}
+            ${renderConfirmationButtons(r, todayDay, true)}
           </div>
           <div class="job-details">
             <div><strong>Requested times:</strong> ${escapeHtml(bookingRange)}</div>
@@ -708,6 +814,11 @@
           } finally {
             btn.disabled = false;
           }
+        });
+      });
+      list.querySelectorAll(".confirmTimeBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          handleParentTimeConfirmation(btn);
         });
       });
       list.querySelectorAll(".saveScheduleBtn").forEach(btn => {
