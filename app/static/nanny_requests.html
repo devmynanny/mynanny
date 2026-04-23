@@ -188,11 +188,14 @@
     }
 
     async function loadBookingRequests() {
-      const data = await fetchJson("/nannies/me/booking-requests");
-      const list = document.getElementById("bookingRequestsList");
-      list.innerHTML = "";
       const params = new URLSearchParams(window.location.search);
       const requestedId = String(params.get("request_id") || "").trim();
+      const endpoint = requestedId
+        ? "/nannies/me/booking-requests?include_accepted=true"
+        : "/nannies/me/booking-requests";
+      const data = await fetchJson(endpoint);
+      const list = document.getElementById("bookingRequestsList");
+      list.innerHTML = "";
       const rawItems = data.results || [];
       const items = requestedId
         ? rawItems.filter((item) => String(item.id || "") === requestedId || String(item.group_id || "") === requestedId)

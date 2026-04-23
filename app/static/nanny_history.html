@@ -49,16 +49,65 @@
       return "Awaiting response";
     }
 
+    function bookingSlotIsPast(slot, nowMs) {
+      const status = String(slot?.status || "").toLowerCase();
+      if (["completed", "cancelled", "rejected"].includes(status)) return true;
+      if (slot?.check_out_at) return true;
+      const endMs = slot?.end_dt ? new Date(slot.end_dt).getTime() : NaN;
+      return Number.isFinite(endMs) && endMs < nowMs;
+    }
+
+    function bookingGroupStatus(item, nowMs) {
+      const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [];
+      if (!slots.length) return String(item?.status || "-");
+      const statuses = slots.map((slot) => String(slot?.status || "").toLowerCase());
+      if (slots.every((slot) => bookingSlotIsPast(slot, nowMs))) {
+        if (statuses.every((status) => status === "completed") || slots.some((slot) => slot?.check_out_at)) return "completed";
+        if (statuses.every((status) => status === "cancelled")) return "cancelled";
+        if (statuses.every((status) => status === "rejected")) return "rejected";
+      }
+      return String(item?.status || "-");
+    }
+
     async function loadBookingHistory() {
-      const data = await fetchJson("/nannies/me/booking-requests");
+      const [bookingData, requestData] = await Promise.all([
+        fetchJson("/nannies/me/bookings").catch(() => ({ results: [] })),
+        fetchJson("/nannies/me/booking-requests").catch(() => ({ results: [] })),
+      ]);
       const list = document.getElementById("bookingHistoryList");
       list.innerHTML = "";
       const now = Date.now();
-      const items = (data.results || []).filter((r) => {
+      const bookingItems = (bookingData.results || []).filter((r) => {
+        const slots = Array.isArray(r?.slots) && r.slots.length ? r.slots : [];
+        return slots.length && slots.every((slot) => bookingSlotIsPast(slot, now));
+      }).map((r) => ({
+        type: "booking",
+        id: r.id,
+        detail_id: r.request_id || r.id,
+        job_id: r.group_id || r.request_id || r.id,
+        parent_name: r.parent_name,
+        start_dt: r.start_dt,
+        end_dt: r.end_dt,
+        response_status: r.nanny_response_status || "accepted",
+        booking_status: bookingGroupStatus(r, now),
+      }));
+      const requestItems = (requestData.results || []).filter((r) => {
         const response = String(r.nanny_response_status || "").toLowerCase();
         const endMs = r.end_dt ? new Date(r.end_dt).getTime() : NaN;
         return ["accepted", "declined", "deciding"].includes(response) && Number.isFinite(endMs) && endMs < now;
-      }).sort((a, b) => String(b.end_dt || "").localeCompare(String(a.end_dt || "")));
+      }).map((r) => ({
+        type: "request",
+        id: r.id,
+        detail_id: r.id,
+        job_id: r.group_id || r.id,
+        parent_name: r.parent_name,
+        start_dt: r.start_dt,
+        end_dt: r.end_dt,
+        response_status: r.nanny_response_status,
+        booking_status: r.status,
+      }));
+      const items = [...bookingItems, ...requestItems]
+        .sort((a, b) => String(b.end_dt || "").localeCompare(String(a.end_dt || "")));
       if (!items.length) {
         list.innerHTML = "<div class=\"muted\">No historical bookings yet.</div>";
         return;
@@ -67,17 +116,17 @@
         const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
         const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
         const parentName = formatName(r.parent_name || "Parent");
-        const jobId = r.group_id || r.id;
+        const jobId = r.job_id || r.id;
         const card = document.createElement("div");
         card.className = "card";
         card.innerHTML = `
           <div><strong>${escapeHtml(parentName || "Parent")}</strong></div>
           <div class="muted">Job ID: ${escapeHtml(jobId)}</div>
           <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
-          <div class="muted statusLine">Your response: ${escapeHtml(responseMeta(r.nanny_response_status))}</div>
-          <div class="muted">Booking status: ${escapeHtml(r.status || "-")}</div>
+          <div class="muted statusLine">Your response: ${escapeHtml(responseMeta(r.response_status))}</div>
+          <div class="muted">Booking status: ${escapeHtml(r.booking_status || "-")}</div>
           <div class="actions">
-            <button class="btn viewHistoryBookingBtn" data-id="${escapeHtml(r.id || "")}" type="button">View details</button>
+            ${r.detail_id ? `<button class="btn viewHistoryBookingBtn" data-id="${escapeHtml(r.detail_id || "")}" type="button">View details</button>` : ""}
           </div>
         `;
         list.appendChild(card);

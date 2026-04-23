@@ -1809,6 +1809,53 @@ def notify_parent_nanny_checked_in(db: Session, booking: models.Booking, nanny_u
     return {"email": email_sent, "whatsapp": whatsapp_sent}
 
 
+def notify_admin_parent_denied_booking_time(
+    db: Session,
+    booking: models.Booking,
+    *,
+    parent_user: Optional[models.User],
+    kind: str,
+    reported_time: Optional[datetime] = None,
+    corrected_time: Optional[datetime] = None,
+) -> None:
+    admins = admin_emails()
+    if not admins:
+        return
+    client = get_email_client()
+    nanny_user = None
+    if getattr(booking, "nanny_id", None):
+        try:
+            nanny = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
+            if nanny:
+                nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first()
+        except Exception:
+            nanny_user = None
+    request_row = None
+    if getattr(booking, "booking_request_id", None):
+        request_row = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+    noun = "arrival" if kind == "check-in" else "completion"
+    subject = f"Parent denied nanny {noun} time"
+    body = "\n".join(
+        [
+            f"A parent denied the nanny's {noun} time and admin attention may be required.",
+            f"booking_id: {booking.id}",
+            f"booking_request_id: {getattr(booking, 'booking_request_id', None) or '-'}",
+            f"parent: {getattr(parent_user, 'name', None) or '-'} ({getattr(parent_user, 'email', None) or '-'})",
+            f"nanny: {getattr(nanny_user, 'name', None) or '-'}",
+            f"scheduled_start: {getattr(booking, 'start_dt', None) or (booking.starts_at.isoformat() if getattr(booking, 'starts_at', None) else '-')}",
+            f"scheduled_end: {getattr(booking, 'end_dt', None) or (booking.ends_at.isoformat() if getattr(booking, 'ends_at', None) else '-')}",
+            f"reported_time: {(_to_iso_z(reported_time) if reported_time else '-')}",
+            f"corrected_time: {(_to_iso_z(corrected_time) if corrected_time else '-')}",
+            f"request_status: {getattr(request_row, 'status', None) or '-'}",
+            f"admin_link: {app_base_url()}/static/admin_dashboard.html",
+        ]
+    )
+    try:
+        client.send(EmailMessage(to=admins, subject=subject, body=body))
+    except Exception as e:
+        print(f"[EMAIL][PARENT_DENIED_TIME_NOTIFY_FAIL] {e!r}")
+
+
 @router.get("/qualifications")
 def list_qualifications(db: Session = Depends(get_db)):
     rows = db.query(models.Qualification).order_by(models.Qualification.name.asc()).all()
@@ -3554,6 +3601,7 @@ def set_nanny_inactive(
 
 @router.get("/nannies/me/booking-requests")
 def list_nanny_me_booking_requests(
+    include_accepted: bool = False,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
@@ -3606,6 +3654,8 @@ def list_nanny_me_booking_requests(
             )
         windows = _booking_request_windows(db, req)
         current_response = (getattr(req, "nanny_response_status", None) or "pending").lower()
+        if current_response == "accepted" and not include_accepted:
+            continue
         sibling_winner_exists = False
         if (req.group_id or req.id):
             sibling_winner_exists = (
@@ -3689,64 +3739,64 @@ def list_nanny_me_bookings(
 ):
     user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
     parent_user = aliased(models.User)
-    location = aliased(models.ParentLocation)
     parent_profile = aliased(models.ParentProfile)
     rows = (
-        db.query(models.BookingRequest, parent_user, location, parent_profile)
-        .join(parent_user, parent_user.id == models.BookingRequest.parent_user_id)
-        .outerjoin(location, location.id == models.BookingRequest.location_id)
-        .outerjoin(parent_profile, parent_profile.user_id == models.BookingRequest.parent_user_id)
-        .filter(
-            models.BookingRequest.nanny_id == nanny.id,
-            models.BookingRequest.status.in_(["approved", "rejected", "cancelled"]),
-        )
-        .order_by(models.BookingRequest.created_at.desc())
+        db.query(models.Booking, parent_user, models.BookingRequest, parent_profile)
+        .join(parent_user, parent_user.id == models.Booking.client_user_id)
+        .outerjoin(models.BookingRequest, models.BookingRequest.id == models.Booking.booking_request_id)
+        .outerjoin(parent_profile, parent_profile.user_id == models.Booking.client_user_id)
+        .filter(models.Booking.nanny_id == nanny.id)
+        .order_by(models.Booking.starts_at.desc(), models.Booking.id.desc())
         .all()
     )
-    results = []
-    for req, parent, loc, prof in rows:
-        if not loc:
-            loc = (
-                db.query(models.ParentLocation)
-                .filter(models.ParentLocation.parent_user_id == parent.id)
-                .order_by(models.ParentLocation.is_default.desc(), models.ParentLocation.id.desc())
-                .first()
-            )
-        windows = _booking_request_windows(db, req)
-        slots = [
-            {
-                "start_dt": _to_iso_z(w[0]),
-                "end_dt": _to_iso_z(w[1]),
-                "date": w[0].date().isoformat(),
+    grouped = {}
+    for booking, parent, req, prof in rows:
+        request_id = getattr(req, "id", None) or getattr(booking, "booking_request_id", None)
+        group_id = getattr(req, "group_id", None) or request_id or booking.id
+        group_key = str(group_id)
+        start_dt = getattr(booking, "start_dt", None) or (booking.starts_at.isoformat() if getattr(booking, "starts_at", None) else None)
+        end_dt = getattr(booking, "end_dt", None) or (booking.ends_at.isoformat() if getattr(booking, "ends_at", None) else None)
+        if group_key not in grouped:
+            grouped[group_key] = {
+                "id": request_id or booking.id,
+                "request_id": request_id,
+                "group_id": group_id,
+                "status": getattr(req, "status", None) or booking.status,
+                "nanny_response_status": (getattr(req, "nanny_response_status", None) or "accepted"),
+                "parent_name": parent.name,
+                "parent_email": parent.email,
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+                "notes": getattr(req, "client_notes", None),
+                "location_label": getattr(booking, "location_label", None),
+                "location_address": getattr(booking, "formatted_address", None) or getattr(prof, "formatted_address", None),
+                "location_lat": getattr(booking, "lat", None),
+                "location_lng": getattr(booking, "lng", None),
+                "slots": [],
+                "created_at": (
+                    req.created_at.isoformat()
+                    if getattr(req, "created_at", None)
+                    else booking.starts_at.isoformat() if getattr(booking, "starts_at", None)
+                    else None
+                ),
             }
-            for w in windows
-        ]
-        day_count = len({w[0].date().isoformat() for w in windows}) if windows else 1
-        total_cents = int(getattr(req, "total_cents", None) or 0)
-        booking_fee_cents = int(getattr(req, "booking_fee_cents", None) or 0)
-        total_wage_cents = int(getattr(req, "wage_cents", None) or max(0, total_cents - booking_fee_cents))
-        daily_wage_cents = int(round(total_wage_cents / max(day_count, 1))) if total_wage_cents else 0
-        request_start_dt, request_end_dt = _booking_request_start_end_iso(req)
-        results.append({
-            "id": req.id,
-            "group_id": req.group_id or req.id,
-            "status": req.status,
-            "parent_name": parent.name,
-            "parent_email": parent.email,
-            "start_dt": request_start_dt,
-            "end_dt": request_end_dt,
-            "notes": req.client_notes,
-            "location_label": loc.label if loc else None,
-            "location_address": (getattr(loc, "formatted_address", None) if loc else None) or getattr(prof, "formatted_address", None),
-            "location_lat": (getattr(loc, "lat", None) if loc else None) if (loc and getattr(loc, "lat", None) is not None) else getattr(prof, "lat", None),
-            "location_lng": (getattr(loc, "lng", None) if loc else None) if (loc and getattr(loc, "lng", None) is not None) else getattr(prof, "lng", None),
-            "slots": slots,
-            "days_required": day_count,
-            "wage_cents": total_wage_cents,
-            "booking_fee_cents": booking_fee_cents,
-            "daily_wage_cents": daily_wage_cents,
-            "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
+        group = grouped[group_key]
+        group["slots"].append({
+            "booking_id": booking.id,
+            "start_dt": start_dt,
+            "end_dt": end_dt,
+            "status": booking.status,
+            "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
+            "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
         })
+        if start_dt and (not group["start_dt"] or str(start_dt) < str(group["start_dt"])):
+            group["start_dt"] = start_dt
+        if end_dt and (not group["end_dt"] or str(end_dt) > str(group["end_dt"])):
+            group["end_dt"] = end_dt
+    results = list(grouped.values())
+    for item in results:
+        item["slots"].sort(key=lambda slot: str(slot.get("start_dt") or ""))
+    results.sort(key=lambda item: str(item.get("end_dt") or ""), reverse=True)
     return {"results": results}
 
 
@@ -3951,23 +4001,46 @@ def parent_confirm_booking_check_in(
     booking = _parent_owned_booking_or_404(db, booking_id, user.id)
     if not booking.check_in_at:
         raise HTTPException(status_code=409, detail="The nanny has not checked in for this booking day yet")
-    confirmed_time = booking.check_in_at
-    if not payload.confirmed:
+    original_time = booking.check_in_at
+    corrected_time = None
+    if not payload.confirmed and (payload.corrected_time or "").strip():
         try:
             corrected_time = _parse_iso_dt((payload.corrected_time or "").strip())
         except Exception:
             raise HTTPException(status_code=400, detail="Please provide the corrected arrival time")
-        confirmed_time = corrected_time
-    booking.check_in_at = confirmed_time
-    booking.check_in_confirmed_at = datetime.utcnow()
-    booking.check_in_confirmed_by_user_id = user.id
+    if payload.confirmed:
+        booking.check_in_confirmed_at = datetime.utcnow()
+        booking.check_in_confirmed_by_user_id = user.id
+    elif corrected_time is not None:
+        booking.check_in_at = corrected_time
+        booking.check_in_confirmed_at = datetime.utcnow()
+        booking.check_in_confirmed_by_user_id = user.id
+    else:
+        booking.check_in_at = None
+        booking.check_in_lat = None
+        booking.check_in_lng = None
+        booking.check_in_distance_m = None
+        booking.check_in_confirmed_at = None
+        booking.check_in_confirmed_by_user_id = None
+        if booking.status in ("accepted", "in_progress"):
+            booking.status = "approved"
     db.commit()
     db.refresh(booking)
+    if not payload.confirmed:
+        notify_admin_parent_denied_booking_time(
+            db,
+            booking,
+            parent_user=user,
+            kind="check-in",
+            reported_time=original_time,
+            corrected_time=corrected_time,
+        )
     return {
         "ok": True,
         "booking_id": booking.id,
         "check_in_at": booking.check_in_at.isoformat() if booking.check_in_at else None,
         "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if booking.check_in_confirmed_at else None,
+        "original_check_in_at": original_time.isoformat() if original_time else None,
     }
 
 
@@ -3984,23 +4057,46 @@ def parent_confirm_booking_check_out(
     booking = _parent_owned_booking_or_404(db, booking_id, user.id)
     if not booking.check_out_at:
         raise HTTPException(status_code=409, detail="The nanny has not checked out for this booking day yet")
-    confirmed_time = booking.check_out_at
-    if not payload.confirmed:
+    original_time = booking.check_out_at
+    corrected_time = None
+    if not payload.confirmed and (payload.corrected_time or "").strip():
         try:
             corrected_time = _parse_iso_dt((payload.corrected_time or "").strip())
         except Exception:
             raise HTTPException(status_code=400, detail="Please provide the corrected completion time")
-        confirmed_time = corrected_time
-    booking.check_out_at = confirmed_time
-    booking.check_out_confirmed_at = datetime.utcnow()
-    booking.check_out_confirmed_by_user_id = user.id
+    if payload.confirmed:
+        booking.check_out_confirmed_at = datetime.utcnow()
+        booking.check_out_confirmed_by_user_id = user.id
+    elif corrected_time is not None:
+        booking.check_out_at = corrected_time
+        booking.check_out_confirmed_at = datetime.utcnow()
+        booking.check_out_confirmed_by_user_id = user.id
+    else:
+        booking.check_out_at = None
+        booking.check_out_lat = None
+        booking.check_out_lng = None
+        booking.check_out_distance_m = None
+        booking.check_out_confirmed_at = None
+        booking.check_out_confirmed_by_user_id = None
+        if booking.status == "completed":
+            booking.status = "accepted"
     db.commit()
     db.refresh(booking)
+    if not payload.confirmed:
+        notify_admin_parent_denied_booking_time(
+            db,
+            booking,
+            parent_user=user,
+            kind="check-out",
+            reported_time=original_time,
+            corrected_time=corrected_time,
+        )
     return {
         "ok": True,
         "booking_id": booking.id,
         "check_out_at": booking.check_out_at.isoformat() if booking.check_out_at else None,
         "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if booking.check_out_confirmed_at else None,
+        "original_check_out_at": original_time.isoformat() if original_time else None,
     }
 
 

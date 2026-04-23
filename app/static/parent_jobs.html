@@ -71,6 +71,13 @@
     .modalBack{position:fixed;inset:0;background:rgba(0,0,0,0.35);display:none;align-items:center;justify-content:center;padding:20px;z-index:9999}
     .summaryText{margin-top:10px;line-height:1.45;color:#374151}
     .previewPills .pill{margin:6px 6px 0 0}
+    .confirmModal{background:#fff;border-radius:12px;width:min(540px,100%);border:1px solid #ddd;padding:18px;position:relative}
+    .confirmModalTitle{font-weight:700;font-size:22px;margin:0 0 8px 0}
+    .confirmModalText{color:#374151;line-height:1.5}
+    .confirmModalMeta{margin-top:10px;padding:10px 12px;border:1px solid #dbeafe;border-radius:10px;background:#eff6ff;color:#1e3a8a}
+    .confirmModalField{margin-top:12px;display:none;flex-direction:column;gap:6px}
+    .confirmModalField input{padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit}
+    .confirmModalActions{margin-top:16px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
     @media (max-width:760px){
       .bookingGlance{grid-template-columns:1fr}
       .monthNav{flex-wrap:wrap}
@@ -166,12 +173,32 @@
     </div>
   </div>
 
+  <div id="timeConfirmModal" class="modalBack">
+    <div class="confirmModal">
+      <div id="timeConfirmTitle" class="confirmModalTitle"></div>
+      <div id="timeConfirmText" class="confirmModalText"></div>
+      <div id="timeConfirmMeta" class="confirmModalMeta"></div>
+      <label id="timeConfirmField" class="confirmModalField">
+        <span>Enter the correct time in HH:MM</span>
+        <input id="timeConfirmInput" type="time" />
+      </label>
+      <div class="confirmModalActions">
+        <button class="btn secondary" id="timeConfirmCloseBtn" type="button">Close</button>
+        <button class="btn secondary" id="timeConfirmDenyBtn" type="button">Deny</button>
+        <button class="btn secondary" id="timeConfirmDifferentBtn" type="button">Choose different time</button>
+        <button class="btn" id="timeConfirmApproveBtn" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/static/app.js?v=2"></script>
   <script>
     let cancellationWindowHours = 15;
     let currentCalendarMonth = null;
     let parentBookingsCache = [];
     let previewNanny = null;
+    let pendingConfirmationQueue = [];
+    let activeConfirmation = null;
 
     function escapeHtml(value) {
       return String(value == null ? "" : value)
@@ -328,23 +355,13 @@
 
     function renderConfirmationButtons(item, todayDay, compact = false) {
       if (!todayDay) return "";
-      const pieces = [];
-      if (todayDay.check_in_at && !todayDay.check_in_confirmed_at) {
-        pieces.push(`<button class="btn confirmTimeBtn" type="button" data-booking-id="${escapeHtml(todayDay.booking_id || "")}" data-kind="check-in" data-start-dt="${escapeHtml(todayDay.start_dt || "")}" data-current-time="${escapeHtml(todayDay.check_in_at || "")}">Confirm arrival</button>`);
+      if (todayDay.check_out_confirmed_at) {
+        return compact ? `<div class="bookingCardNote">Today's arrival and completion have been confirmed.</div>` : "";
       }
-      if (todayDay.check_out_at && !todayDay.check_out_confirmed_at) {
-        pieces.push(`<button class="btn confirmTimeBtn" type="button" data-booking-id="${escapeHtml(todayDay.booking_id || "")}" data-kind="check-out" data-start-dt="${escapeHtml(todayDay.start_dt || "")}" data-current-time="${escapeHtml(todayDay.check_out_at || "")}">Confirm completion</button>`);
+      if (todayDay.check_in_confirmed_at) {
+        return compact ? `<div class="bookingCardNote">Today's arrival has been confirmed.</div>` : "";
       }
-      if (!pieces.length) {
-        if (todayDay.check_out_confirmed_at) {
-          return compact ? `<div class="bookingCardNote">Today's arrival and completion have been confirmed.</div>` : "";
-        }
-        if (todayDay.check_in_confirmed_at) {
-          return compact ? `<div class="bookingCardNote">Today's arrival has been confirmed.</div>` : "";
-        }
-        return "";
-      }
-      return pieces.join("");
+      return "";
     }
 
     async function handleParentTimeConfirmation(btn) {
@@ -380,6 +397,89 @@
         alert(error.message || `Failed to confirm ${noun} time`);
       } finally {
         btn.disabled = false;
+      }
+    }
+
+    function closeTimeConfirmModal() {
+      activeConfirmation = null;
+      document.getElementById("timeConfirmModal").style.display = "none";
+      document.getElementById("timeConfirmField").style.display = "none";
+      document.getElementById("timeConfirmInput").value = "";
+    }
+
+    function collectPendingConfirmations(items) {
+      const queue = [];
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        const bookingDays = Array.isArray(item?.booking_days) ? item.booking_days : [];
+        bookingDays.forEach((day) => {
+          if (day?.check_in_at && !day?.check_in_confirmed_at) {
+            queue.push({
+              kind: "check-in",
+              bookingId: day.booking_id,
+              currentTime: day.check_in_at,
+              startDt: day.start_dt,
+              item,
+              day,
+            });
+          }
+          if (day?.check_out_at && !day?.check_out_confirmed_at) {
+            queue.push({
+              kind: "check-out",
+              bookingId: day.booking_id,
+              currentTime: day.check_out_at,
+              startDt: day.start_dt,
+              item,
+              day,
+            });
+          }
+        });
+      });
+      queue.sort((a, b) => String(a.currentTime || "").localeCompare(String(b.currentTime || "")));
+      return queue;
+    }
+
+    function openPendingConfirmationModal(entry) {
+      if (!entry) return;
+      activeConfirmation = entry;
+      const noun = entry.kind === "check-in" ? "clocked in for service" : "clocked out from service";
+      const title = entry.kind === "check-in" ? "Confirm nanny arrival" : "Confirm nanny completion";
+      const nannyName = formatName(entry?.item?.accepted_nanny_name || "Nanny");
+      document.getElementById("timeConfirmTitle").textContent = title;
+      document.getElementById("timeConfirmText").textContent = `Nanny ${nannyName} has ${noun} at ${formatDateTimeZA(entry.currentTime)}. Confirm, deny, or choose a different time.`;
+      document.getElementById("timeConfirmMeta").textContent = `Booking day: ${formatBookingDateTimeRange(entry.day?.start_dt, entry.day?.end_dt)}`;
+      document.getElementById("timeConfirmField").style.display = "none";
+      document.getElementById("timeConfirmInput").value = toLocalTimeInputValue(entry.currentTime);
+      document.getElementById("timeConfirmModal").style.display = "flex";
+    }
+
+    function maybeShowNextPendingConfirmation() {
+      if (activeConfirmation) return;
+      if (!pendingConfirmationQueue.length) return;
+      openPendingConfirmationModal(pendingConfirmationQueue[0]);
+    }
+
+    async function submitPendingConfirmation({ confirmed, correctedTime = null }) {
+      if (!activeConfirmation) return;
+      const entry = activeConfirmation;
+      const kind = entry.kind;
+      const noun = kind === "check-in" ? "arrival" : "completion";
+      let correctedIso = null;
+      if (correctedTime) {
+        const localDate = toLocalDateInputValue(entry.startDt || entry.currentTime);
+        correctedIso = window.toIsoFromZA ? window.toIsoFromZA(localDate, correctedTime) : new Date(`${localDate}T${correctedTime}:00+02:00`).toISOString();
+      }
+      try {
+        await fetchJson(`/parents/me/bookings/${encodeURIComponent(entry.bookingId)}/confirm-${kind}`, {
+          method: "POST",
+          body: JSON.stringify({
+            confirmed,
+            corrected_time: correctedIso,
+          }),
+        });
+        closeTimeConfirmModal();
+        await loadJobs();
+      } catch (error) {
+        alert(error.message || `Failed to confirm ${noun} time`);
       }
     }
 
@@ -452,11 +552,6 @@
               profileBtn.click();
             }
           }
-        });
-      });
-      container.querySelectorAll(".confirmTimeBtn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          handleParentTimeConfirmation(btn);
         });
       });
     }
@@ -650,7 +745,9 @@
       list.innerHTML = "";
       const items = data.results || [];
       parentBookingsCache = items.slice();
+      pendingConfirmationQueue = collectPendingConfirmations(parentBookingsCache);
       renderBookingsDashboard(parentBookingsCache);
+      maybeShowNextPendingConfirmation();
       if (!items.length) {
         list.innerHTML = "<div class=\"muted\">No jobs yet.</div>";
         return;
@@ -902,6 +999,31 @@
     document.getElementById("closePreviewBtn").addEventListener("click", closePreview);
     document.getElementById("previewModal").addEventListener("click", (e) => {
       if (e.target.id === "previewModal") closePreview();
+    });
+    document.getElementById("timeConfirmCloseBtn").addEventListener("click", closeTimeConfirmModal);
+    document.getElementById("timeConfirmModal").addEventListener("click", (e) => {
+      if (e.target.id === "timeConfirmModal") closeTimeConfirmModal();
+    });
+    document.getElementById("timeConfirmApproveBtn").addEventListener("click", () => {
+      submitPendingConfirmation({ confirmed: true });
+    });
+    document.getElementById("timeConfirmDenyBtn").addEventListener("click", () => {
+      submitPendingConfirmation({ confirmed: false });
+    });
+    document.getElementById("timeConfirmDifferentBtn").addEventListener("click", () => {
+      const field = document.getElementById("timeConfirmField");
+      const input = document.getElementById("timeConfirmInput");
+      if (field.style.display === "flex") {
+        const entered = (input.value || "").trim();
+        if (!/^\d{2}:\d{2}$/.test(entered)) {
+          alert("Please enter the time in HH:MM format, for example 06:00.");
+          return;
+        }
+        submitPendingConfirmation({ confirmed: false, correctedTime: entered });
+        return;
+      }
+      field.style.display = "flex";
+      input.focus();
     });
     document.getElementById("previewWorkHistoryToggle").addEventListener("click", () => {
       const wrap = document.getElementById("previewWorkHistoryWrap");
