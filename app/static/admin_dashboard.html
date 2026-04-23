@@ -500,8 +500,7 @@
           </div>
           <div>
             <button class="btn viewBookingBtn" data-id="${r.request_id || r.id}">View</button>
-            ${options.showActions ? `<button class="btn approveRequestBtn" data-id="${r.request_id || r.id}">Approve</button>
-            <button class="btn rejectRequestBtn" data-id="${r.request_id || r.id}">Reject</button>
+            ${options.showActions ? `<button class="btn cancelRequestBtn" data-id="${r.request_id || r.id}">Cancel</button>
             <button class="btn assignBookingBtn" data-id="${r.request_id || r.id}">Assign nanny</button>` : ""}
           </div>
         `;
@@ -755,10 +754,10 @@
         const now = new Date();
         currentAdminCalendarMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       }
-      renderBookingCollection("tomorrowBookingsList", data?.bookings_tomorrow || [], { emptyText: "No confirmed bookings tomorrow." });
+      renderBookingCollection("tomorrowBookingsList", data?.bookings_tomorrow || [], { showActions: true, emptyText: "No confirmed bookings tomorrow." });
       renderBookingCollection("bookingRequestsList", data?.pending_requests || [], { showActions: true, emptyText: "No pending booking requests." });
-      renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { emptyText: "No upcoming bookings." });
-      renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { emptyText: "No bookings currently in progress." });
+      renderBookingCollection("upcomingBookingsList", data?.upcoming_bookings || [], { showActions: true, emptyText: "No upcoming bookings." });
+      renderBookingCollection("inProgressBookingsList", data?.bookings_in_progress || [], { showActions: true, emptyText: "No bookings currently in progress." });
       renderBookingCollection("pastBookingsList", data?.past_bookings || [], { emptyText: "No past bookings yet." });
       renderBookingCollection("cancelledBookingsList", data?.cancelled_bookings || [], { emptyText: "No cancelations yet." });
       renderBookingCollection("unsuccessfulBookingsList", data?.unsuccessful_bookings || [], { emptyText: "No unsuccessful bookings yet." });
@@ -863,47 +862,35 @@
       window.location.href = `/static/admin_user.html?user_id=${encodeURIComponent(userId)}`;
     });
 
-    document.getElementById("bookingRequestsList").addEventListener("click", (e) => {
-      const view = e.target.closest(".viewBookingBtn");
-      const approve = e.target.closest(".approveRequestBtn");
-      const reject = e.target.closest(".rejectRequestBtn");
-      const assign = e.target.closest(".assignBookingBtn");
-      if (view) {
-        loadBookingDetail(view.dataset.id).catch(err => { document.getElementById("authMsg").textContent = err.message; });
-        return;
-      }
-      const btn = approve || reject || assign;
-      if (!btn) return;
-      const requestId = btn.dataset.id;
-      if (assign) {
-        openAssignNannyModal(requestId).catch(err => { document.getElementById("authMsg").textContent = err.message; });
-        return;
-      }
-      const path = approve ? "approve" : "reject";
-      const payload = {};
-      if (reject) {
-        const reason = (prompt("Why are you rejecting this booking request?") || "").trim();
-        if (!reason) {
-          document.getElementById("authMsg").textContent = "A rejection reason is required.";
-          return;
-        }
-        payload.reason = reason;
-      }
-      fetchJson(`/admin/booking-requests/${requestId}/${path}`, {
-        method: "POST",
-        body: Object.keys(payload).length ? JSON.stringify(payload) : undefined
-      })
-        .then(() => Promise.all([loadBookingRequests(), refreshCounts()]))
-        .catch(err => { document.getElementById("authMsg").textContent = err.message; });
-    });
-
-    ["tomorrowBookingsList", "upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "cancelledBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
+    ["bookingRequestsList", "tomorrowBookingsList", "upcomingBookingsList", "inProgressBookingsList", "pastBookingsList", "cancelledBookingsList", "unsuccessfulBookingsList"].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener("click", (e) => {
         const view = e.target.closest(".viewBookingBtn");
-        if (!view) return;
-        loadBookingDetail(view.dataset.id).catch(err => { document.getElementById("authMsg").textContent = err.message; });
+        const cancel = e.target.closest(".cancelRequestBtn");
+        const assign = e.target.closest(".assignBookingBtn");
+        if (view) {
+          loadBookingDetail(view.dataset.id).catch(err => { document.getElementById("authMsg").textContent = err.message; });
+          return;
+        }
+        const btn = cancel || assign;
+        if (!btn) return;
+        const requestId = btn.dataset.id;
+        if (assign) {
+          openAssignNannyModal(requestId).catch(err => { document.getElementById("authMsg").textContent = err.message; });
+          return;
+        }
+        const reason = (prompt("Why are you cancelling this booking?") || "").trim();
+        if (!reason) {
+          document.getElementById("authMsg").textContent = "A cancellation reason is required.";
+          return;
+        }
+        fetchJson(`/admin/booking-requests/${requestId}/cancel`, {
+          method: "POST",
+          body: JSON.stringify({ reason })
+        })
+          .then(() => Promise.all([loadBookingRequests(), refreshCounts()]))
+          .catch(err => { document.getElementById("authMsg").textContent = err.message; });
       });
     });
 

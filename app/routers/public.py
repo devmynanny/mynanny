@@ -1686,6 +1686,31 @@ def _cancel_related_bookings_for_request(
     return cancelled
 
 
+def _clear_admin_blocked_availability_for_request(
+    db: Session,
+    *,
+    nanny_id: int,
+    windows: List[tuple],
+) -> int:
+    removed = 0
+    for slot_start, slot_end in (windows or []):
+        rows = (
+            db.query(models.NannyAvailability)
+            .filter(
+                models.NannyAvailability.nanny_id == nanny_id,
+                models.NannyAvailability.type == "blocked",
+                models.NannyAvailability.created_by == "admin",
+                models.NannyAvailability.start_dt == _to_iso_z(slot_start),
+                models.NannyAvailability.end_dt == _to_iso_z(slot_end),
+            )
+            .all()
+        )
+        for row in rows:
+            db.delete(row)
+            removed += 1
+    return removed
+
+
 def _send_whatsapp_message(phone: Optional[str], message: str) -> bool:
     to = (phone or "").strip()
     if not to:
@@ -3581,6 +3606,21 @@ def list_nanny_me_booking_requests(
             )
         windows = _booking_request_windows(db, req)
         current_response = (getattr(req, "nanny_response_status", None) or "pending").lower()
+        sibling_winner_exists = False
+        if (req.group_id or req.id):
+            sibling_winner_exists = (
+                db.query(models.BookingRequest.id)
+                .filter(
+                    models.BookingRequest.group_id == (req.group_id or req.id),
+                    models.BookingRequest.id != req.id,
+                    models.BookingRequest.status == "approved",
+                    models.BookingRequest.nanny_response_status == "accepted",
+                )
+                .first()
+                is not None
+            )
+        if sibling_winner_exists:
+            continue
         if current_response != "accepted" and windows:
             overlaps_accepted_booking = any(
                 booked_request_id != req.id and any(_overlaps(slot_start, slot_end, booked_start, booked_end) for slot_start, slot_end in windows)
@@ -4054,6 +4094,18 @@ def accept_nanny_booking_request(
     if not req.group_id:
         req.group_id = req.id
     group_id = req.group_id
+    sibling_winner = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.group_id == group_id,
+            models.BookingRequest.id != req.id,
+            models.BookingRequest.status == "approved",
+            models.BookingRequest.nanny_response_status == "accepted",
+        )
+        .first()
+    )
+    if sibling_winner:
+        raise HTTPException(status_code=409, detail="Another nanny has already been selected for this job")
 
     def _resolve_group_acceptance(group_id_value: int):
         accepted_reqs = (
@@ -6899,8 +6951,8 @@ def assign_booking_request_nanny(
     req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
     if not req:
         raise HTTPException(status_code=404, detail="Booking request not found")
-    if req.status not in ("pending_admin", "tbc"):
-        raise HTTPException(status_code=400, detail="Booking request is not pending")
+    if req.status in ("cancelled", "completed"):
+        raise HTTPException(status_code=400, detail="Booking request can no longer be reassigned")
 
     selected_nanny_id = int(payload.assign_nanny_id or 0)
     if selected_nanny_id <= 0:
@@ -6931,6 +6983,35 @@ def assign_booking_request_nanny(
     previous_nanny_id = req.nanny_id
     created_bookings = []
 
+    related_group_rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            or_(models.BookingRequest.group_id == (req.group_id or req.id), models.BookingRequest.id == (req.group_id or req.id)),
+        )
+        .all()
+    )
+    for group_req in related_group_rows:
+        if group_req.id == req.id:
+            continue
+        if group_req.status not in ("cancelled", "completed"):
+            group_req.status = "rejected"
+            group_req.admin_reason = "filled"
+            group_req.admin_decided_at = datetime.utcnow()
+
+    if previous_nanny_id and previous_nanny_id != selected_nanny_id:
+        _cancel_related_bookings_for_request(
+            db,
+            req,
+            actor_role="admin",
+            actor_user_id=admin.id,
+            reason=reason or "Reassigned by admin",
+        )
+        _clear_admin_blocked_availability_for_request(
+            db,
+            nanny_id=previous_nanny_id,
+            windows=windows,
+        )
+
     req.nanny_id = selected_nanny_id
     req.status = "approved"
     req.admin_reason = reason
@@ -6939,26 +7020,36 @@ def assign_booking_request_nanny(
     req.admin_user_id = admin.id
     req.admin_decided_at = datetime.utcnow()
 
-    for slot_start, slot_end in windows:
-        booking = models.Booking(
-            booking_request_id=req.id,
-            nanny_id=selected_nanny_id,
-            client_user_id=req.parent_user_id,
-            day=slot_start.date(),
-            status="approved",
-            price_cents=0,
-            starts_at=slot_start,
-            ends_at=slot_end,
-            start_dt=_to_iso_z(slot_start),
-            end_dt=_to_iso_z(slot_end),
-            lat=location.lat if location else None,
-            lng=location.lng if location else None,
-            location_mode="saved" if location else None,
-            location_label=(location.label or "Location").strip() if location else None,
-            formatted_address=getattr(location, "formatted_address", None) if location else None,
-        )
-        db.add(booking)
-        created_bookings.append(booking)
+    existing_bookings = _find_related_bookings_for_request(db, req)
+    reusable_bookings = [b for b in existing_bookings if b.status not in ("cancelled", "rejected", "completed")]
+    if reusable_bookings:
+        for booking in reusable_bookings:
+            booking.nanny_id = selected_nanny_id
+            booking.status = "approved"
+            booking.start_dt = booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None)
+            booking.end_dt = booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None)
+            created_bookings.append(booking)
+    else:
+        for slot_start, slot_end in windows:
+            booking = models.Booking(
+                booking_request_id=req.id,
+                nanny_id=selected_nanny_id,
+                client_user_id=req.parent_user_id,
+                day=slot_start.date(),
+                status="approved",
+                price_cents=0,
+                starts_at=slot_start,
+                ends_at=slot_end,
+                start_dt=_to_iso_z(slot_start),
+                end_dt=_to_iso_z(slot_end),
+                lat=location.lat if location else None,
+                lng=location.lng if location else None,
+                location_mode="saved" if location else None,
+                location_label=(location.label or "Location").strip() if location else None,
+                formatted_address=getattr(location, "formatted_address", None) if location else None,
+            )
+            db.add(booking)
+            created_bookings.append(booking)
 
     db.commit()
 
@@ -7036,6 +7127,113 @@ def assign_booking_request_nanny_post(
         request_id=request_id,
         request=request,
         payload=payload,
+        authorization=authorization,
+        db=db,
+    )
+
+
+@router.patch("/admin/booking-requests/{request_id}/cancel")
+def cancel_admin_booking_request(
+    request_id: int,
+    payload: schemas.BookingCancellationRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = _require_admin_user(authorization, db)
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for cancelling this booking")
+
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Booking request not found")
+
+    group_key = req.group_id or req.id
+    rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            or_(models.BookingRequest.group_id == group_key, models.BookingRequest.id == group_key),
+        )
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Booking request not found")
+
+    settings = _get_pricing_settings(db)
+    cancellation_window_hours = max(15, int(settings.get("cancellation_fee_window_hours") or 15))
+
+    for group_req in rows:
+        if group_req.status == "cancelled":
+            continue
+        windows = _booking_request_windows(db, group_req)
+        _cancel_related_bookings_for_request(
+            db,
+            group_req,
+            actor_role="admin",
+            actor_user_id=admin.id,
+            reason=reason,
+        )
+        _clear_admin_blocked_availability_for_request(
+            db,
+            nanny_id=group_req.nanny_id,
+            windows=windows,
+        )
+        group_req.status = "cancelled"
+        group_req.admin_reason = reason
+        group_req.admin_user_id = admin.id
+        group_req.admin_decided_at = datetime.utcnow()
+        group_req.cancelled_at = datetime.utcnow()
+
+        if group_req.payment_status == "paid":
+            wage = group_req.wage_cents or 0
+            fee = group_req.booking_fee_cents or 0
+            within_fee_window = False
+            try:
+                start_dt = _parse_iso_dt(group_req.start_dt or group_req.requested_starts_at)
+                within_fee_window = (start_dt - datetime.utcnow()) < timedelta(hours=cancellation_window_hours)
+            except Exception:
+                within_fee_window = False
+            if within_fee_window:
+                company_retained = int(round(fee * 1.0))
+                nanny_retained = int(round(wage * 0.40))
+            else:
+                company_retained = int(round(fee * 0.80))
+                nanny_retained = 0
+            refund = max(0, (wage + fee) - (company_retained + nanny_retained))
+            group_req.company_retained_cents = company_retained
+            group_req.nanny_retained_cents = nanny_retained
+            group_req.refund_cents = refund
+            group_req.refund_status = "pending_review"
+
+    db.commit()
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=req.parent_user_id,
+        entity="booking_requests",
+        entity_id=group_key,
+        action="cancel",
+        before_obj={},
+        after_obj={"status": "cancelled", "reason": reason},
+        changed_fields=None,
+        request=request,
+    )
+    return {"ok": True, "request_id": request_id, "group_id": group_key, "reason": reason}
+
+
+@router.post("/admin/booking-requests/{request_id}/cancel")
+def cancel_admin_booking_request_post(
+    request_id: int,
+    payload: schemas.BookingCancellationRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    return cancel_admin_booking_request(
+        request_id=request_id,
+        payload=payload,
+        request=request,
         authorization=authorization,
         db=db,
     )
@@ -7433,84 +7631,91 @@ def list_admin_bookings_overview(
     confirmed_bookings = []
 
     for req, parent, nanny in request_rows:
-        item = {
-            "source": "request",
-            "request_id": req.id,
-            "booking_id": None,
-            "status": req.status,
-            "parent_name": parent.name,
-            "parent_email": parent.email,
-            "nanny_name": nanny.name,
-            "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
-            "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
-            "location_label": None,
-            "reason": _booking_request_reason_label(req.admin_reason),
-            "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
-            "updated_at": req.updated_at.isoformat() if getattr(req, "updated_at", None) else None,
-            "is_overdue": bool(getattr(req, "created_at", None) and (now - req.created_at) >= timedelta(hours=6)),
-        }
-        if req.status in ("tbc", "pending_admin"):
-            pending_requests.append(item)
-        elif req.status == "cancelled" and req.id not in booking_request_ids:
-            cancelled_bookings.append(item)
-            unsuccessful_bookings.append(item)
-        elif req.status == "rejected" and req.id not in booking_request_ids:
-            unsuccessful_bookings.append(item)
+        try:
+            request_start_dt, request_end_dt = _booking_request_start_end_iso(req)
+            item = {
+                "source": "request",
+                "request_id": req.id,
+                "booking_id": None,
+                "status": req.status,
+                "parent_name": parent.name,
+                "parent_email": parent.email,
+                "nanny_name": nanny.name,
+                "start_dt": request_start_dt,
+                "end_dt": request_end_dt,
+                "location_label": None,
+                "reason": _booking_request_reason_label(req.admin_reason),
+                "created_at": req.created_at.isoformat() if getattr(req, "created_at", None) else None,
+                "updated_at": req.updated_at.isoformat() if getattr(req, "updated_at", None) else None,
+                "is_overdue": bool(getattr(req, "created_at", None) and (now - req.created_at) >= timedelta(hours=6)),
+            }
+            if req.status in ("tbc", "pending_admin"):
+                pending_requests.append(item)
+            elif req.status == "cancelled" and req.id not in booking_request_ids:
+                cancelled_bookings.append(item)
+                unsuccessful_bookings.append(item)
+            elif req.status == "rejected" and req.id not in booking_request_ids:
+                unsuccessful_bookings.append(item)
+        except Exception:
+            continue
 
     for booking, parent, nanny in booking_rows:
-        start_dt = booking.starts_at
-        end_dt = booking.ends_at
-        related_request = request_by_id.get(getattr(booking, "booking_request_id", None))
-        nanny_response_status = (getattr(related_request, "nanny_response_status", None) or "").lower() if related_request else ""
-        booking_state = _booking_time_state(
-            start_dt=start_dt,
-            end_dt=end_dt,
-            status=booking.status,
-            check_in_at=getattr(booking, "check_in_at", None),
-            check_out_at=getattr(booking, "check_out_at", None),
-            now=now,
-        )
-        is_live_booking = booking_state in {"upcoming", "in_progress"}
-        item = {
-            "source": "booking",
-            "request_id": getattr(booking, "booking_request_id", None),
-            "booking_id": booking.id,
-            "status": booking.status,
-            "booking_state": booking_state,
-            "nanny_response_status": nanny_response_status or None,
-            "confirmed": bool(is_live_booking),
-            "parent_name": parent.name,
-            "parent_email": parent.email,
-            "nanny_name": nanny.name,
-            "start_dt": booking.start_dt or (start_dt.isoformat() if start_dt else None),
-            "end_dt": booking.end_dt or (end_dt.isoformat() if end_dt else None),
-            "location_label": getattr(booking, "location_label", None) or getattr(booking, "formatted_address", None),
-            "reason": getattr(booking, "cancellation_reason", None),
-            "created_at": None,
-            "updated_at": getattr(booking, "cancelled_at", None).isoformat() if getattr(booking, "cancelled_at", None) else None,
-            "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
-            "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
-            "google_calendar_event_id": getattr(booking, "google_calendar_event_id", None),
-            "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
-            "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),
-        }
-        if is_live_booking:
-            confirmed_bookings.append(item)
-        if is_live_booking and start_dt:
-            local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
-            if local_start.date() == tomorrow:
-                bookings_tomorrow.append(item)
-            if month_start <= local_start.date() <= month_end:
-                month_confirmed_bookings.append(item)
-        if booking.status == "cancelled":
-            cancelled_bookings.append(item)
-            unsuccessful_bookings.append(item)
+        try:
+            start_dt = booking.starts_at
+            end_dt = booking.ends_at
+            related_request = request_by_id.get(getattr(booking, "booking_request_id", None))
+            nanny_response_status = (getattr(related_request, "nanny_response_status", None) or "").lower() if related_request else ""
+            booking_state = _booking_time_state(
+                start_dt=start_dt,
+                end_dt=end_dt,
+                status=booking.status,
+                check_in_at=getattr(booking, "check_in_at", None),
+                check_out_at=getattr(booking, "check_out_at", None),
+                now=now,
+            )
+            is_live_booking = booking_state in {"upcoming", "in_progress"}
+            item = {
+                "source": "booking",
+                "request_id": getattr(booking, "booking_request_id", None),
+                "booking_id": booking.id,
+                "status": booking.status,
+                "booking_state": booking_state,
+                "nanny_response_status": nanny_response_status or None,
+                "confirmed": bool(is_live_booking),
+                "parent_name": parent.name,
+                "parent_email": parent.email,
+                "nanny_name": nanny.name,
+                "start_dt": booking.start_dt or (start_dt.isoformat() if start_dt else None),
+                "end_dt": booking.end_dt or (end_dt.isoformat() if end_dt else None),
+                "location_label": getattr(booking, "location_label", None) or getattr(booking, "formatted_address", None),
+                "reason": getattr(booking, "cancellation_reason", None),
+                "created_at": None,
+                "updated_at": getattr(booking, "cancelled_at", None).isoformat() if getattr(booking, "cancelled_at", None) else None,
+                "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
+                "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+                "google_calendar_event_id": getattr(booking, "google_calendar_event_id", None),
+                "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
+                "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),
+            }
+            if is_live_booking:
+                confirmed_bookings.append(item)
+            if is_live_booking and start_dt:
+                local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
+                if local_start.date() == tomorrow:
+                    bookings_tomorrow.append(item)
+                if month_start <= local_start.date() <= month_end:
+                    month_confirmed_bookings.append(item)
+            if booking.status == "cancelled":
+                cancelled_bookings.append(item)
+                unsuccessful_bookings.append(item)
+                continue
+            if booking.status == "rejected":
+                unsuccessful_bookings.append(item)
+                continue
+            if booking_state == "past":
+                past_bookings.append(item)
+        except Exception:
             continue
-        if booking.status == "rejected":
-            unsuccessful_bookings.append(item)
-            continue
-        if booking_state == "past":
-            past_bookings.append(item)
 
     grouped_live_bookings = _group_dashboard_booking_items(confirmed_bookings)
     bookings_in_progress = [item for item in grouped_live_bookings if item.get("booking_category") == "in_progress"]
