@@ -40,11 +40,19 @@
     .estimateBox{margin-top:10px;padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
     .bookingQuestionGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}
     .bookingQuestionGrid .full{grid-column:1 / -1}
-    .bookingQuestionGrid label{display:block;font-size:12px;color:#555}
+    .bookingQuestionGrid label{display:block;font-size:12px;color:#555;line-height:1.35;min-height:2.7em}
+    .bookingQuestionGrid input,
+    .bookingQuestionGrid select{
+      min-height:44px;
+      box-sizing:border-box;
+    }
     .bookingDisclaimer{padding:10px;border:1px solid #e5e7eb;border-radius:10px;background:#f9fafb}
     .bookingDisclaimer label{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:#374151}
     .bookingDisclaimer input{width:auto;margin:2px 0 0;padding:0}
     .bookingCheckLabelText{font-weight:700}
+    .bookingCheckRow{margin-top:8px;display:flex;align-items:flex-start;justify-content:flex-start;gap:10px}
+    .bookingCheckRow input[type="checkbox"]{width:auto;flex:0 0 auto;margin:2px 0 0;padding:0}
+    .bookingCheckRow .bookingCheckLabelText{line-height:1.3}
     /* The calendar itself is the primary way to select a time range, so the manual
        date/time search bar can remain hidden while still allowing scripts to use it */
     .search-bar{display:none;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:14px}
@@ -231,13 +239,13 @@
 
       <label class="muted" style="margin-top:8px; display:block;">Location</label>
       <select id="bookingLocation"></select>
-      <label class="muted" style="margin-top:8px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
-        <input id="bookingLocationConfirm" type="checkbox" style="margin:0;" />
+      <label class="muted bookingCheckRow">
+        <input id="bookingLocationConfirm" type="checkbox" />
         <span class="bookingCheckLabelText">I confirm this is the correct location</span>
       </label>
 
-      <label class="muted" style="margin-top:8px; display:flex; align-items:center; gap:10px; justify-content:flex-start;">
-        <input id="bookingSleepover" type="checkbox" style="margin:0;" />
+      <label class="muted bookingCheckRow">
+        <input id="bookingSleepover" type="checkbox" />
         <span class="bookingCheckLabelText">Sleepover required (adds R150)</span>
       </label>
 
@@ -1264,6 +1272,8 @@
 
     async function submitBookingRequest() {
       const status = document.getElementById("bookingStatus");
+      status.style.color = "";
+      status.style.fontStyle = "";
       const slotError = validateSlotRange(bookingState.slots);
       if (slotError) {
         status.textContent = slotError;
@@ -1273,6 +1283,8 @@
       const locConfirm = document.getElementById("bookingLocationConfirm");
       if (locConfirm && !locConfirm.checked) {
         status.textContent = "Please confirm the location.";
+        status.style.color = "#b91c1c";
+        status.style.fontStyle = "italic";
         return;
       }
       const locSelect = document.getElementById("bookingLocation");

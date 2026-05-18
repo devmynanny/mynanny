@@ -55,6 +55,16 @@
     .monthLabel{font-weight:700;font-size:18px}
     .btn.primarySoft{background:#ecfdf5;border-color:#86efac;color:#166534}
     .btn.isDisabled{opacity:.55;cursor:not-allowed;pointer-events:none}
+    .dutyFeedback{
+      display:none;
+      margin:12px 0 0;
+      padding:10px 12px;
+      border-radius:10px;
+      font-size:14px;
+      border:1px solid transparent;
+    }
+    .dutyFeedback.success{display:block;background:#ecfdf5;border-color:#86efac;color:#166534}
+    .dutyFeedback.error{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
     @media (max-width:640px){
       .listingRow{grid-template-columns:1fr}
       .listingRow .btn{width:100%}
@@ -68,6 +78,7 @@
 <body>
   <div id="topbar" class="topbar"></div>
   <h1>Nanny Operations</h1>
+  <div id="dutyFeedback" class="dutyFeedback" role="status" aria-live="polite"></div>
 
   <div class="card">
     <div class="row">
@@ -262,6 +273,52 @@
       return `${normalize(start)}-${normalize(end)}`;
     }
 
+    function formatDutyTimestamp(value) {
+      const dt = value ? new Date(value) : null;
+      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      return new Intl.DateTimeFormat("en-ZA", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Africa/Johannesburg",
+      }).format(dt);
+    }
+
+    function minutesBetween(startValue, endValue) {
+      const start = startValue ? new Date(startValue) : null;
+      const end = endValue ? new Date(endValue) : null;
+      if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+      const diffMs = end.getTime() - start.getTime();
+      if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+      return Math.round(diffMs / 60000);
+    }
+
+    function formatMinutesLabel(totalMinutes) {
+      if (!Number.isFinite(totalMinutes) || totalMinutes < 0) return "-";
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      if (hours && mins) return `${hours} hr ${mins} min`;
+      if (hours) return `${hours} hr`;
+      return `${mins} min`;
+    }
+
+    function renderNannyBookingDaySummary(slot) {
+      if (!slot) return "";
+      const scheduledMinutes = minutesBetween(slot.start_dt, slot.end_dt);
+      const workedMinutes = minutesBetween(slot.check_in_at, slot.check_out_at);
+      const extraMinutes = (scheduledMinutes != null && workedMinutes != null)
+        ? Math.max(0, workedMinutes - scheduledMinutes)
+        : null;
+      return `
+        <div class="bookingItemActionMeta"><strong>Booking summary (today)</strong></div>
+        <div class="bookingItemActionMeta">Scheduled time: ${escapeHtml(formatMinutesLabel(scheduledMinutes))}</div>
+        <div class="bookingItemActionMeta">Worked time: ${escapeHtml(formatMinutesLabel(workedMinutes))}</div>
+        <div class="bookingItemActionMeta">Extra time: ${escapeHtml(formatMinutesLabel(extraMinutes))}</div>
+      `;
+    }
+
     function formatCurrencyZar(cents) {
       const value = Number(cents || 0) / 100;
       return new Intl.NumberFormat("en-ZA", {
@@ -406,12 +463,21 @@
         const whatsappUrl = buildWhatsAppUrl(item.parent_phone, item.parent_name);
         const todaySlot = findTodayBookingSlot(item);
         const todayState = dutyActionState(todaySlot);
+        const checkInLine = todaySlot?.check_in_at
+          ? `<div class="bookingItemActionMeta">Checked in: ${escapeHtml(formatDutyTimestamp(todaySlot.check_in_at))}</div>`
+          : "";
+        const checkOutLine = todaySlot?.check_out_at
+          ? `<div class="bookingItemActionMeta">Checked out: ${escapeHtml(formatDutyTimestamp(todaySlot.check_out_at))}</div>`
+          : "";
         return `
           <div class="bookingItem">
             <div class="bookingItemTitle">${escapeHtml(item.parent_name || "Client")}</div>
             <div class="bookingItemMeta">${escapeHtml(formatPreferredBookingRange(item.start_dt, item.end_dt))}</div>
             <div class="bookingItemMeta">${escapeHtml(item.location_address || item.location_label || "-")}</div>
             ${todaySlot ? `<div class="bookingItemActionMeta">Today's booking day: ${escapeHtml(formatPreferredBookingRange(todaySlot.start_dt, todaySlot.end_dt))}</div>` : ""}
+            ${checkInLine}
+            ${checkOutLine}
+            ${todaySlot ? renderNannyBookingDaySummary(todaySlot) : ""}
             <div class="acceptedActions">
               <button class="btn acceptedDetailBtn" type="button" data-id="${escapeHtml(item.booking_request_id || "")}">View details</button>
               ${whatsappUrl ? `<a class="btn whatsAppBtn" href="${whatsappUrl}" target="_blank" rel="noopener noreferrer"><span class="whatsAppIcon">W</span><span>WhatsApp</span></a>` : ""}
@@ -501,6 +567,12 @@
       const bookingId = btn?.dataset?.bookingId || "";
       const action = btn?.dataset?.action || "";
       if (!bookingId || !action) return;
+      if (action === "check-out") {
+        const confirmCheckout = window.confirm(
+          "Checking out will end this booking day.\n\nPlease confirm you have completed your shift. Your final pay may be based on worked and parent-confirmed time."
+        );
+        if (!confirmCheckout) return;
+      }
       btn.disabled = true;
       try {
         const position = await getCurrentPositionOnce();
@@ -512,11 +584,29 @@
           }),
         });
         await loadDutyBookings();
+        showDutyFeedback(
+          action === "check-in"
+            ? "Check-in successful. Your booking is now marked as in progress."
+            : "Check-out successful. Thank you, your booking day has been completed.",
+          "success"
+        );
       } catch (error) {
-        alert(error.message || `Failed to ${action.replace("-", " ")}`);
+        showDutyFeedback(error.message || `Failed to ${action.replace("-", " ")}`, "error");
       } finally {
         btn.disabled = false;
       }
+    }
+
+    function showDutyFeedback(message, type) {
+      const el = document.getElementById("dutyFeedback");
+      if (!el) return;
+      el.classList.remove("success", "error");
+      el.textContent = String(message || "");
+      el.classList.add(type === "error" ? "error" : "success");
+      window.setTimeout(() => {
+        el.classList.remove("success", "error");
+        el.textContent = "";
+      }, 5000);
     }
 
     function renderBookingsCalendar(monthDate, items) {

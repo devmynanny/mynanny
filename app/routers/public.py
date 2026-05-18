@@ -591,6 +591,14 @@ def _parse_iso_dt(value: Union[str, datetime]) -> datetime:
     return datetime.fromisoformat(s)
 
 
+def _as_utc_aware(value: Optional[datetime]) -> Optional[datetime]:
+    if not value:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _booking_status_key(value: Optional[str]) -> str:
     return str(value or "").strip().lower()
 
@@ -604,7 +612,11 @@ def _booking_time_state(
     check_out_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
 ) -> str:
-    current = now or datetime.utcnow()
+    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
+    start_dt = _as_utc_aware(start_dt)
+    end_dt = _as_utc_aware(end_dt)
+    check_in_at = _as_utc_aware(check_in_at)
+    check_out_at = _as_utc_aware(check_out_at)
     status_key = _booking_status_key(status)
 
     if status_key in {"cancelled", "rejected", "completed"}:
@@ -619,11 +631,11 @@ def _booking_time_state(
 
 
 def _booking_group_time_state(bookings: List[object], *, now: Optional[datetime] = None) -> str:
-    current = now or datetime.utcnow()
+    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
     earliest_start: Optional[datetime] = None
     all_past = True
     for booking in bookings:
-        start_dt = getattr(booking, "starts_at", None)
+        start_dt = _as_utc_aware(getattr(booking, "starts_at", None))
         if start_dt and (earliest_start is None or start_dt < earliest_start):
             earliest_start = start_dt
         state = _booking_time_state(
@@ -644,7 +656,7 @@ def _booking_group_time_state(bookings: List[object], *, now: Optional[datetime]
 
 
 def _booking_group_time_state_from_items(items: List[dict], *, now: Optional[datetime] = None) -> str:
-    current = now or datetime.utcnow()
+    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
     earliest_start: Optional[datetime] = None
     all_past = True
     for item in items:
@@ -654,22 +666,22 @@ def _booking_group_time_state_from_items(items: List[dict], *, now: Optional[dat
         check_out_at = None
         try:
             if item.get("start_dt"):
-                start_dt = _parse_iso_dt(item.get("start_dt"))
+                start_dt = _as_utc_aware(_parse_iso_dt(item.get("start_dt")))
         except Exception:
             start_dt = None
         try:
             if item.get("end_dt"):
-                end_dt = _parse_iso_dt(item.get("end_dt"))
+                end_dt = _as_utc_aware(_parse_iso_dt(item.get("end_dt")))
         except Exception:
             end_dt = None
         try:
             if item.get("check_in_at"):
-                check_in_at = _parse_iso_dt(item.get("check_in_at"))
+                check_in_at = _as_utc_aware(_parse_iso_dt(item.get("check_in_at")))
         except Exception:
             check_in_at = None
         try:
             if item.get("check_out_at"):
-                check_out_at = _parse_iso_dt(item.get("check_out_at"))
+                check_out_at = _as_utc_aware(_parse_iso_dt(item.get("check_out_at")))
         except Exception:
             check_out_at = None
         if start_dt and (earliest_start is None or start_dt < earliest_start):
@@ -692,13 +704,13 @@ def _booking_group_time_state_from_items(items: List[dict], *, now: Optional[dat
 
 
 def _booking_group_matches_tomorrow(items: List[dict], *, tomorrow: date, now: Optional[datetime] = None, local_tz: Optional[ZoneInfo] = None) -> bool:
-    current = now or datetime.utcnow()
+    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
     tz = local_tz or ZoneInfo("Africa/Johannesburg")
     earliest_start: Optional[datetime] = None
     for item in items:
         try:
             if item.get("start_dt"):
-                parsed = _parse_iso_dt(item.get("start_dt"))
+                parsed = _as_utc_aware(_parse_iso_dt(item.get("start_dt")))
                 if earliest_start is None or parsed < earliest_start:
                     earliest_start = parsed
         except Exception:
@@ -806,9 +818,42 @@ def _existing_availability_dates(
     return existing
 
 
+def _existing_availability_type_dates(
+    db: Session,
+    nanny_id: int,
+    start_date: date,
+    end_date: date,
+    availability_type: str,
+) -> set[date]:
+    rows = (
+        db.query(models.NannyAvailability.date)
+        .filter(
+            models.NannyAvailability.nanny_id == nanny_id,
+            models.NannyAvailability.date >= start_date,
+            models.NannyAvailability.date <= end_date,
+            models.NannyAvailability.type == availability_type,
+        )
+        .all()
+    )
+    return {row[0] for row in rows if row and row[0]}
+
+
 def _build_availability_range(day: date, start_time_text: str, end_time_text: str) -> tuple[datetime, datetime]:
+    local_tz = ZoneInfo("Africa/Johannesburg")
     start_dt = _parse_iso_dt(f"{day.isoformat()}T{start_time_text}")
     end_dt = _parse_iso_dt(f"{day.isoformat()}T{end_time_text}")
+
+    # Weekly/bulk availability times are entered as South Africa local time.
+    # Attach ZA tz to naive values so UTC storage does not shift midnight to 02:00.
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=local_tz)
+    else:
+        start_dt = start_dt.astimezone(local_tz)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=local_tz)
+    else:
+        end_dt = end_dt.astimezone(local_tz)
+
     if end_dt <= start_dt:
         end_dt = end_dt + timedelta(days=1)
     return start_dt, end_dt
@@ -1258,7 +1303,13 @@ def _booking_request_windows(db: Session, req: models.BookingRequest) -> List[tu
     return [(start, end)]
 
 
-def _is_nanny_available(db: Session, nanny_id: int, start_dt: datetime, end_dt: datetime) -> bool:
+def _is_nanny_available(
+    db: Session,
+    nanny_id: int,
+    start_dt: datetime,
+    end_dt: datetime,
+    request_parent_user_id: Optional[int] = None,
+) -> bool:
     available_rows = (
         db.query(models.NannyAvailability)
         .filter(
@@ -1296,18 +1347,28 @@ def _is_nanny_available(db: Session, nanny_id: int, start_dt: datetime, end_dt: 
         if _overlaps(start_dt, end_dt, window[0], window[1]):
             return False
 
-    active_statuses = ["approved", "active", "pending"]
+    active_statuses = ["approved", "accepted", "active", "in_progress", "pending"]
     bookings = (
         db.query(models.Booking)
         .filter(models.Booking.nanny_id == nanny_id, models.Booking.status.in_(active_statuses))
         .all()
     )
+    pre_booking_buffer = timedelta(hours=5)
     for row in bookings:
         window = _booking_window(row)
         if not window:
             continue
-        if _overlaps(start_dt, end_dt, window[0], window[1]):
+        booking_start, booking_end = window
+        if _overlaps(start_dt, end_dt, booking_start, booking_end):
             return False
+        same_parent = (
+            request_parent_user_id is not None
+            and int(getattr(row, "client_user_id", 0) or 0) == int(request_parent_user_id)
+        )
+        if not same_parent:
+            buffer_start = booking_start - pre_booking_buffer
+            if _overlaps(start_dt, end_dt, buffer_start, booking_start):
+                return False
 
     return True
 
@@ -1415,6 +1476,74 @@ def notify_booking_reassigned(parent_user_id: int, nanny_id: int, request_id: in
             ]
         )
         client.send(EmailMessage(to=[parent.email], subject=subject, body=body))
+    finally:
+        db.close()
+
+
+def notify_nanny_booking_reassigned(
+    *,
+    previous_nanny_id: int,
+    request_id: int,
+    starts_at,
+    ends_at,
+    reason: Optional[str],
+) -> None:
+    client = get_email_client()
+    base = app_base_url()
+    db = SessionLocal()
+    try:
+        previous_nanny = db.query(models.Nanny).filter(models.Nanny.id == previous_nanny_id).first()
+        previous_user = db.query(models.User).filter(models.User.id == previous_nanny.user_id).first() if previous_nanny else None
+        if not previous_user or not previous_user.email:
+            return
+
+        subject = f"Booking request #{request_id} was reassigned"
+        body = "\n".join(
+            [
+                "This booking has been reassigned by admin and removed from your profile.",
+                f"booking_request_id: {request_id}",
+                f"starts_at: {starts_at}",
+                f"ends_at: {ends_at}",
+                f"reason: {reason or '-'}",
+                f"portal: {base}",
+            ]
+        )
+        client.send(EmailMessage(to=[previous_user.email], subject=subject, body=body))
+    except Exception as e:
+        print(f"[EMAIL][NANNY_REASSIGNED_OUT_FAIL] {e!r}")
+    finally:
+        db.close()
+
+
+def notify_nanny_assigned_by_admin(
+    *,
+    nanny_id: int,
+    request_id: int,
+    starts_at,
+    ends_at,
+) -> None:
+    client = get_email_client()
+    base = app_base_url()
+    db = SessionLocal()
+    try:
+        nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
+        nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first() if nanny else None
+        if not nanny_user or not nanny_user.email:
+            return
+
+        subject = f"New booking assigned by admin #{request_id}"
+        body = "\n".join(
+            [
+                "A booking has been assigned to your profile by admin.",
+                f"booking_request_id: {request_id}",
+                f"starts_at: {starts_at}",
+                f"ends_at: {ends_at}",
+                f"portal: {base}",
+            ]
+        )
+        client.send(EmailMessage(to=[nanny_user.email], subject=subject, body=body))
+    except Exception as e:
+        print(f"[EMAIL][NANNY_REASSIGNED_IN_FAIL] {e!r}")
     finally:
         db.close()
 
@@ -1537,8 +1666,9 @@ def _parse_booking_questionnaire_notes(notes: Optional[str]) -> dict:
     if not text:
         return parsed
     for line in [line.strip() for line in text.splitlines() if line.strip()]:
-        if ":" in line:
-            label, value = line.split(":", 1)
+        # Split only on the first label separator ": " to avoid breaking labels like "After-17:00 ..."
+        if ": " in line:
+            label, value = line.split(": ", 1)
             clean_label = label.strip()
             clean_value = value.strip() or "-"
             if clean_label.lower() == "additional notes":
@@ -1774,9 +1904,10 @@ def notify_parent_nanny_checked_in(db: Session, booking: models.Booking, nanny_u
     end_str = booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else "-")
     location = getattr(booking, "formatted_address", None) or getattr(booking, "location_label", None) or "your booking location"
     nanny_name = getattr(nanny_user, "name", None) or "Your nanny"
+    parent_email = (getattr(parent_user, "email", None) or "").strip()
 
     email_sent = False
-    if "email" in channels and getattr(parent_user, "email", None):
+    if "email" in channels and parent_email:
         subject = f"Nanny checked in for booking #{booking.id}"
         body = "\n".join(
             [
@@ -1787,7 +1918,7 @@ def notify_parent_nanny_checked_in(db: Session, booking: models.Booking, nanny_u
             ]
         )
         try:
-            get_email_client().send(EmailMessage(to=[parent_user.email], subject=subject, body=body))
+            get_email_client().send(EmailMessage(to=[parent_email], subject=subject, body=body))
             email_sent = True
         except Exception as e:
             print(f"[EMAIL][CHECKIN_NOTIFY_FAIL] {e!r}")
@@ -1798,13 +1929,42 @@ def notify_parent_nanny_checked_in(db: Session, booking: models.Booking, nanny_u
         whatsapp_phone = parent_profile.phone
     elif getattr(parent_user, "phone", None):
         whatsapp_phone = parent_user.phone
+    whatsapp_phone = (whatsapp_phone or "").strip()
+
+    whatsapp_message = (
+        f"{nanny_name} checked in for booking #{booking.id}. "
+        f"Time: {start_str} to {end_str}. "
+        f"Location: {location}."
+    )
+
     if "whatsapp" in channels and whatsapp_phone:
-        msg = (
-            f"{nanny_name} checked in for booking #{booking.id}. "
-            f"Time: {start_str} to {end_str}. "
-            f"Location: {location}."
-        )
-        whatsapp_sent = _send_whatsapp_message(whatsapp_phone, msg)
+        whatsapp_sent = _send_whatsapp_message(whatsapp_phone, whatsapp_message)
+
+    # Guaranteed-attempt fallback: if preferred channels did not send anything,
+    # try whichever channel is available.
+    if not email_sent and not whatsapp_sent:
+        if parent_email:
+            try:
+                get_email_client().send(
+                    EmailMessage(
+                        to=[parent_email],
+                        subject=f"Nanny checked in for booking #{booking.id}",
+                        body="\n".join(
+                            [
+                                f"{nanny_name} has checked in and started the booking.",
+                                f"Booking ID: {booking.id}",
+                                f"Scheduled time: {start_str} to {end_str}",
+                                f"Location: {location}",
+                            ]
+                        ),
+                    )
+                )
+                email_sent = True
+            except Exception as e:
+                print(f"[EMAIL][CHECKIN_NOTIFY_FALLBACK_FAIL] {e!r}")
+
+        if not email_sent and whatsapp_phone:
+            whatsapp_sent = _send_whatsapp_message(whatsapp_phone, whatsapp_message)
 
     return {"email": email_sent, "whatsapp": whatsapp_sent}
 
@@ -3351,6 +3511,20 @@ def create_nanny_me_availability(
         raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
     if payload.type not in ("available", "blocked"):
         raise HTTPException(status_code=400, detail="Invalid type")
+    existing_same_day = (
+        db.query(models.NannyAvailability.id)
+        .filter(
+            models.NannyAvailability.nanny_id == nanny.id,
+            models.NannyAvailability.date == start_dt.date(),
+            models.NannyAvailability.type == payload.type,
+        )
+        .first()
+    )
+    if existing_same_day:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{payload.type.capitalize()} already set for this day",
+        )
 
     row = models.NannyAvailability(
         nanny_id=nanny.id,
@@ -3405,8 +3579,8 @@ def create_nanny_me_availability_bulk(
     while day <= end_date:
         expected_windows[day] = _build_availability_range(day, start_time, end_time)
         day = day + timedelta(days=1)
-    existing_dates = _existing_availability_dates(
-        db, nanny.id, start_date, end_date, expected_windows, payload.type
+    existing_dates = _existing_availability_type_dates(
+        db, nanny.id, start_date, end_date, payload.type
     )
 
     created = 0
@@ -3476,8 +3650,8 @@ def create_nanny_me_availability_weekly(
         if day.weekday() in weekdays:
             expected_windows[day] = _build_availability_range(day, start_time, end_time)
         day = day + timedelta(days=1)
-    existing_dates = _existing_availability_dates(
-        db, nanny.id, start_date, end_date, expected_windows, payload.type
+    existing_dates = _existing_availability_type_dates(
+        db, nanny.id, start_date, end_date, payload.type
     )
 
     created = 0
@@ -3786,8 +3960,8 @@ def list_nanny_me_bookings(
             "start_dt": start_dt,
             "end_dt": end_dt,
             "status": booking.status,
-            "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
-            "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+            "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
+            "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
         })
         if start_dt and (not group["start_dt"] or str(start_dt) < str(group["start_dt"])):
             group["start_dt"] = start_dt
@@ -3868,12 +4042,12 @@ def list_nanny_me_duty_bookings(
                 "location_address": getattr(b, "formatted_address", None),
                 "location_lat": getattr(b, "lat", None),
                 "location_lng": getattr(b, "lng", None),
-                "check_in_at": b.check_in_at.isoformat() if getattr(b, "check_in_at", None) else None,
+                "check_in_at": _to_iso_z(b.check_in_at) if getattr(b, "check_in_at", None) else None,
                 "check_in_lat": getattr(b, "check_in_lat", None),
                 "check_in_lng": getattr(b, "check_in_lng", None),
                 "check_in_distance_m": getattr(b, "check_in_distance_m", None),
                 "check_in_confirmed_at": b.check_in_confirmed_at.isoformat() if getattr(b, "check_in_confirmed_at", None) else None,
-                "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
+                "check_out_at": _to_iso_z(b.check_out_at) if getattr(b, "check_out_at", None) else None,
                 "check_out_lat": getattr(b, "check_out_lat", None),
                 "check_out_lng": getattr(b, "check_out_lng", None),
                 "check_out_distance_m": getattr(b, "check_out_distance_m", None),
@@ -3907,7 +4081,7 @@ def nanny_check_in_booking(
         return {
             "ok": True,
             "booking_id": booking.id,
-            "check_in_at": booking.check_in_at.isoformat(),
+            "check_in_at": _to_iso_z(booking.check_in_at),
             "check_in_distance_m": booking.check_in_distance_m,
         }
 
@@ -3933,7 +4107,7 @@ def nanny_check_in_booking(
     return {
         "ok": True,
         "booking_id": booking.id,
-        "check_in_at": booking.check_in_at.isoformat() if booking.check_in_at else None,
+        "check_in_at": _to_iso_z(booking.check_in_at) if booking.check_in_at else None,
         "check_in_distance_m": booking.check_in_distance_m,
         "notifications": notifications,
     }
@@ -3959,7 +4133,7 @@ def nanny_check_out_booking(
         return {
             "ok": True,
             "booking_id": booking.id,
-            "check_out_at": booking.check_out_at.isoformat(),
+            "check_out_at": _to_iso_z(booking.check_out_at),
             "check_out_distance_m": booking.check_out_distance_m,
         }
 
@@ -3983,7 +4157,7 @@ def nanny_check_out_booking(
     return {
         "ok": True,
         "booking_id": booking.id,
-        "check_out_at": booking.check_out_at.isoformat() if booking.check_out_at else None,
+        "check_out_at": _to_iso_z(booking.check_out_at) if booking.check_out_at else None,
         "check_out_distance_m": booking.check_out_distance_m,
     }
 
@@ -4038,9 +4212,9 @@ def parent_confirm_booking_check_in(
     return {
         "ok": True,
         "booking_id": booking.id,
-        "check_in_at": booking.check_in_at.isoformat() if booking.check_in_at else None,
+        "check_in_at": _to_iso_z(booking.check_in_at) if booking.check_in_at else None,
         "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if booking.check_in_confirmed_at else None,
-        "original_check_in_at": original_time.isoformat() if original_time else None,
+        "original_check_in_at": _to_iso_z(original_time) if original_time else None,
     }
 
 
@@ -4094,9 +4268,9 @@ def parent_confirm_booking_check_out(
     return {
         "ok": True,
         "booking_id": booking.id,
-        "check_out_at": booking.check_out_at.isoformat() if booking.check_out_at else None,
+        "check_out_at": _to_iso_z(booking.check_out_at) if booking.check_out_at else None,
         "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if booking.check_out_confirmed_at else None,
-        "original_check_out_at": original_time.isoformat() if original_time else None,
+        "original_check_out_at": _to_iso_z(original_time) if original_time else None,
     }
 
 
@@ -4182,7 +4356,7 @@ def accept_nanny_booking_request(
         raise HTTPException(status_code=400, detail="Invalid booking window")
     if not existing_bookings:
         for start_dt, end_dt in windows:
-            if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
+            if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt, req.parent_user_id):
                 raise HTTPException(status_code=409, detail="Requested time is not available")
     start_dt = min(w[0] for w in windows)
     end_dt = max(w[1] for w in windows)
@@ -4337,6 +4511,14 @@ def accept_nanny_booking_request(
         "booking_id": primary_booking_id,
         "booking_ids": [b.id for b in created_bookings],
         "booking_request_id": req.id,
+        "previous_nanny_cancelled": bool(previous_nanny_id and previous_nanny_id != selected_nanny_id and cancelled_previous_bookings),
+        "previous_nanny_id": previous_nanny_id,
+        "assigned_nanny_id": selected_nanny_id,
+        "notifications": {
+            "parent_reassigned_notice_sent": True,
+            "previous_nanny_cancellation_notice_sent": bool(previous_nanny_id and previous_nanny_id != selected_nanny_id and cancelled_previous_bookings),
+            "new_nanny_assignment_notice_sent": True,
+        },
     }
 
 
@@ -4830,7 +5012,7 @@ def search_nannies_by_time(
 
     available = []
     for n in results:
-        if all(_is_nanny_available(db, n.get("nanny_id"), start_dt, end_dt) for start_dt, end_dt in windows):
+        if all(_is_nanny_available(db, n.get("nanny_id"), start_dt, end_dt, user.id) for start_dt, end_dt in windows):
             available.append(n)
 
     return {
@@ -5116,6 +5298,9 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 "booking_category": booking_category,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
+                "wage_cents": int(getattr(req, "wage_cents", None) or 0),
+                "booking_fee_cents": int(getattr(req, "booking_fee_cents", None) or 0),
+                "total_cents": int(getattr(req, "total_cents", None) or 0),
                 "slots": [
                     {"start_dt": _to_iso_z(slot_start), "end_dt": _to_iso_z(slot_end)}
                     for slot_start, slot_end in windows
@@ -5138,9 +5323,9 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                         "status": booking.status,
                         "start_dt": booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None),
                         "end_dt": booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None),
-                        "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
+                        "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
                         "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if getattr(booking, "check_in_confirmed_at", None) else None,
-                        "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+                        "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
                         "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if getattr(booking, "check_out_confirmed_at", None) else None,
                     }
                     for booking in related_bookings
@@ -5151,6 +5336,9 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         if status == "approved":
             entry["status"] = "approved"
             entry["booking_category"] = entry.get("booking_category") or "upcoming"
+            entry["wage_cents"] = int(getattr(req, "wage_cents", None) or entry.get("wage_cents") or 0)
+            entry["booking_fee_cents"] = int(getattr(req, "booking_fee_cents", None) or entry.get("booking_fee_cents") or 0)
+            entry["total_cents"] = int(getattr(req, "total_cents", None) or entry.get("total_cents") or 0)
             entry["accepted_nanny_id"] = req.nanny_id
             entry["accepted_nanny_user_id"] = nanny_u.id
             entry["accepted_nanny_name"] = nanny_u.name
@@ -5278,6 +5466,21 @@ def cancel_parent_booking_request(
     if not rows:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    now_utc = datetime.utcnow()
+    latest_end_times: List[datetime] = []
+    for req in rows:
+        windows = _booking_request_windows(db, req)
+        if windows:
+            latest_end_times.append(max(end for _, end in windows))
+            continue
+        try:
+            fallback_end = _parse_iso_dt(req.end_dt or req.requested_ends_at)
+            latest_end_times.append(fallback_end)
+        except Exception:
+            continue
+    if latest_end_times and max(latest_end_times) <= now_utc:
+        raise HTTPException(status_code=409, detail="Past jobs cannot be cancelled")
+
     settings = _get_pricing_settings(db)
     cancellation_window_hours = max(15, int(settings.get("cancellation_fee_window_hours") or 15))
 
@@ -5398,7 +5601,7 @@ def update_parent_booking_request_schedule(
 
     for req in editable_rows:
         for slot_start, slot_end in windows:
-            if not _is_nanny_available(db, req.nanny_id, slot_start, slot_end):
+            if not _is_nanny_available(db, req.nanny_id, slot_start, slot_end, user.id):
                 raise HTTPException(status_code=409, detail="One or more requested nannies are not available for the new time")
 
     before_obj = {
@@ -6362,9 +6565,9 @@ def list_parent_bookings(
                 "lat": b.lat,
                 "lng": b.lng,
                 "location_label": getattr(b, "location_label", None),
-                "check_in_at": b.check_in_at.isoformat() if getattr(b, "check_in_at", None) else None,
+                "check_in_at": _to_iso_z(b.check_in_at) if getattr(b, "check_in_at", None) else None,
                 "check_in_distance_m": getattr(b, "check_in_distance_m", None),
-                "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
+                "check_out_at": _to_iso_z(b.check_out_at) if getattr(b, "check_out_at", None) else None,
                 "check_out_distance_m": getattr(b, "check_out_distance_m", None),
             }
             for b in rows
@@ -6398,9 +6601,9 @@ def list_nanny_bookings(
                 "lng": b.lng,
                 "location_mode": getattr(b, "location_mode", None),
                 "location_label": getattr(b, "location_label", None),
-                "check_in_at": b.check_in_at.isoformat() if getattr(b, "check_in_at", None) else None,
+                "check_in_at": _to_iso_z(b.check_in_at) if getattr(b, "check_in_at", None) else None,
                 "check_in_distance_m": getattr(b, "check_in_distance_m", None),
-                "check_out_at": b.check_out_at.isoformat() if getattr(b, "check_out_at", None) else None,
+                "check_out_at": _to_iso_z(b.check_out_at) if getattr(b, "check_out_at", None) else None,
                 "check_out_distance_m": getattr(b, "check_out_distance_m", None),
             }
             for b in rows
@@ -6529,7 +6732,7 @@ def create_booking_request(
         if nanny_user and not bool(getattr(nanny_user, "is_active", True)):
             raise HTTPException(status_code=409, detail="Nanny is inactive")
 
-        if not all(_is_nanny_available(db, nanny.id, slot_start, slot_end) for slot_start, slot_end in windows):
+        if not all(_is_nanny_available(db, nanny.id, slot_start, slot_end, user.id) for slot_start, slot_end in windows):
             raise HTTPException(status_code=409, detail="Requested time is not available")
 
         if payload.notes:
@@ -6698,7 +6901,7 @@ def create_booking_request_bulk(
         if nanny_user and not bool(getattr(nanny_user, "is_active", True)):
             errors.append({"nanny_id": nanny_id, "error": "Nanny is inactive"})
             continue
-        if not all(_is_nanny_available(db, nanny.id, slot_start, slot_end) for slot_start, slot_end in windows):
+        if not all(_is_nanny_available(db, nanny.id, slot_start, slot_end, user.id) for slot_start, slot_end in windows):
             errors.append({"nanny_id": nanny_id, "error": "Requested time is not available"})
             continue
 
@@ -6813,7 +7016,7 @@ def approve_booking_request(
     if not windows:
         raise HTTPException(status_code=400, detail="Invalid booking window")
     for start_dt, end_dt in windows:
-        if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt):
+        if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt, req.parent_user_id):
             raise HTTPException(status_code=409, detail="Requested time is not available")
     start_dt = min(w[0] for w in windows)
     end_dt = max(w[1] for w in windows)
@@ -7066,7 +7269,7 @@ def assign_booking_request_nanny(
     if not windows:
         raise HTTPException(status_code=400, detail="Invalid booking window")
     for slot_start, slot_end in windows:
-        if not _is_nanny_available(db, selected_nanny_id, slot_start, slot_end):
+        if not _is_nanny_available(db, selected_nanny_id, slot_start, slot_end, req.parent_user_id):
             raise HTTPException(status_code=409, detail="Selected nanny is no longer available for the requested dates")
 
     location = None
@@ -7078,6 +7281,7 @@ def assign_booking_request_nanny(
     before_status = req.status
     previous_nanny_id = req.nanny_id
     created_bookings = []
+    cancelled_previous_bookings: List[models.Booking] = []
 
     related_group_rows = (
         db.query(models.BookingRequest)
@@ -7095,7 +7299,7 @@ def assign_booking_request_nanny(
             group_req.admin_decided_at = datetime.utcnow()
 
     if previous_nanny_id and previous_nanny_id != selected_nanny_id:
-        _cancel_related_bookings_for_request(
+        cancelled_previous_bookings = _cancel_related_bookings_for_request(
             db,
             req,
             actor_role="admin",
@@ -7167,6 +7371,20 @@ def assign_booking_request_nanny(
 
     _sync_confirmed_booking_request_to_google_calendar(db, req)
     notify_booking_reassigned(req.parent_user_id, selected_nanny_id, req.id, req.requested_starts_at, req.requested_ends_at)
+    if previous_nanny_id and previous_nanny_id != selected_nanny_id and cancelled_previous_bookings:
+        notify_nanny_booking_reassigned(
+            previous_nanny_id=previous_nanny_id,
+            request_id=req.id,
+            starts_at=req.requested_starts_at,
+            ends_at=req.requested_ends_at,
+            reason=reason,
+        )
+    notify_nanny_assigned_by_admin(
+        nanny_id=selected_nanny_id,
+        request_id=req.id,
+        starts_at=req.requested_starts_at,
+        ends_at=req.requested_ends_at,
+    )
     log_booking_request_status_change(
         db,
         actor_user=admin,
@@ -7569,8 +7787,8 @@ def get_admin_booking_request_detail(
                 "status": booking.status,
                 "start_dt": booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None),
                 "end_dt": booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None),
-                "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
-                "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+                "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
+                "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
                 "scheduled_minutes": _booking_scheduled_minutes(booking),
                 "worked_minutes": _booking_elapsed_minutes(booking),
                 "extra_minutes": (
@@ -7638,7 +7856,7 @@ def get_admin_booking_request_available_nannies(
         nanny_id = int(item.get("nanny_id") or 0)
         if nanny_id <= 0:
             continue
-        if all(_is_nanny_available(db, nanny_id, slot_start, slot_end) for slot_start, slot_end in windows):
+        if all(_is_nanny_available(db, nanny_id, slot_start, slot_end, req.parent_user_id) for slot_start, slot_end in windows):
             available.append(
                 {
                     "nanny_id": nanny_id,
@@ -7787,8 +8005,8 @@ def list_admin_bookings_overview(
                 "reason": getattr(booking, "cancellation_reason", None),
                 "created_at": None,
                 "updated_at": getattr(booking, "cancelled_at", None).isoformat() if getattr(booking, "cancelled_at", None) else None,
-                "check_in_at": booking.check_in_at.isoformat() if getattr(booking, "check_in_at", None) else None,
-                "check_out_at": booking.check_out_at.isoformat() if getattr(booking, "check_out_at", None) else None,
+                "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
+                "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
                 "google_calendar_event_id": getattr(booking, "google_calendar_event_id", None),
                 "google_calendar_synced_at": booking.google_calendar_synced_at.isoformat() if getattr(booking, "google_calendar_synced_at", None) else None,
                 "google_calendar_sync_error": getattr(booking, "google_calendar_sync_error", None),

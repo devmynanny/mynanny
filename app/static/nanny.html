@@ -1425,10 +1425,16 @@
         return null;
       }
 
+      let saveStatusTimer = null;
       document.getElementById("saveProfileBtn").addEventListener("click", async () => {
         const saveBtn = document.getElementById("saveProfileBtn");
         const status = document.getElementById("saveStatus");
         const savedMsg = document.getElementById("savedMsg");
+        if (saveStatusTimer) {
+          clearTimeout(saveStatusTimer);
+          saveStatusTimer = null;
+        }
+        savedMsg.style.display = "none";
 
         const fullName = document.getElementById("fullName").value.trim();
         const dob = document.getElementById("dob").value;
@@ -1580,15 +1586,15 @@
               language_ids: languageIds,
             })
           });
-          savedMsg.style.display = "block";
-          setTimeout(() => {
-            location.href = "/static/nanny_availability.html?v=2";
-          }, 800);
+          status.textContent = "Saved";
+          saveStatusTimer = setTimeout(() => {
+            status.textContent = "";
+            saveStatusTimer = null;
+          }, 3000);
         } catch (e) {
           status.textContent = "Save failed: " + (e?.message || String(e));
         } finally {
           saveBtn.disabled = false;
-          status.textContent = "";
         }
       });
 

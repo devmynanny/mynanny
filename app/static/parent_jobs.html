@@ -304,6 +304,53 @@
       return `${startDate} - ${endDate}: ${timeRange}`;
     }
 
+    function formatCurrencyFromCents(cents) {
+      const amount = Number(cents || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return "";
+      return new Intl.NumberFormat("en-ZA", {
+        style: "currency",
+        currency: "ZAR",
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      }).format(amount / 100);
+    }
+
+    function minutesBetween(startValue, endValue) {
+      const start = startValue ? new Date(startValue) : null;
+      const end = endValue ? new Date(endValue) : null;
+      if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+      const diffMs = end.getTime() - start.getTime();
+      if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+      return Math.round(diffMs / 60000);
+    }
+
+    function formatMinutesLabel(totalMinutes) {
+      if (!Number.isFinite(totalMinutes) || totalMinutes < 0) return "-";
+      const hours = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      if (hours && mins) return `${hours} hr ${mins} min`;
+      if (hours) return `${hours} hr`;
+      return `${mins} min`;
+    }
+
+    function renderParentBookingDaySummary(day) {
+      if (!day) return "";
+      const scheduledMinutes = minutesBetween(day.start_dt, day.end_dt);
+      const workedMinutes = minutesBetween(day.check_in_at, day.check_out_at);
+      const extraMinutes = (scheduledMinutes != null && workedMinutes != null)
+        ? Math.max(0, workedMinutes - scheduledMinutes)
+        : null;
+      return `
+        <div class="bookingCardNote"><strong>Booking summary (today)</strong></div>
+        <div class="bookingCardNote">Scheduled: ${escapeHtml(formatBookingDateTimeRange(day.start_dt, day.end_dt))}</div>
+        <div class="bookingCardNote">Arrived: ${escapeHtml(formatDateTimeZA(day.check_in_at))}</div>
+        <div class="bookingCardNote">Finished: ${escapeHtml(formatDateTimeZA(day.check_out_at))}</div>
+        <div class="bookingCardNote">Scheduled time: ${escapeHtml(formatMinutesLabel(scheduledMinutes))}</div>
+        <div class="bookingCardNote">Worked time: ${escapeHtml(formatMinutesLabel(workedMinutes))}</div>
+        <div class="bookingCardNote">Extra time: ${escapeHtml(formatMinutesLabel(extraMinutes))}</div>
+      `;
+    }
+
     function toLocalDateParts(date) {
       const formatter = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Africa/Johannesburg",
@@ -787,15 +834,20 @@
         const whatsappUrl = toWhatsappUrl(r.accepted_nanny_phone_alt);
         const callUrl = toTelUrl(r.accepted_nanny_phone);
         const todayDay = findTodayBookingDay(r);
+        const canCancelJob = r.status !== "cancelled" && category !== "past";
+        const agreedPrice = formatCurrencyFromCents(r.total_cents || 0);
+        const showAgreedPrice = !!agreedPrice && (category === "upcoming" || category === "in_progress");
         const cardHtml = `
           <div class="card">
           <div><strong>Job ID:</strong> ${escapeHtml(r.job_id)}</div>
           <div class="muted">${escapeHtml(bookingRange)}</div>
           <div class="muted">Status: ${escapeHtml(status)}</div>
           <div class="muted">${escapeHtml(nannyLine)}</div>
+          ${showAgreedPrice ? `<div class="muted"><strong>Agreed price:</strong> ${escapeHtml(agreedPrice)}</div>` : ""}
           ${todayDay ? `<div class="bookingCardNote">Today's booking day: ${escapeHtml(formatBookingDateTimeRange(todayDay.start_dt, todayDay.end_dt))}</div>` : ""}
+          ${todayDay ? renderParentBookingDaySummary(todayDay) : ""}
           <div class="actions">
-            ${r.status !== "cancelled" ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
+            ${canCancelJob ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
             ${canEditJob ? `<button class="btn editJobBtn" data-id="${r.job_id}">Edit job</button>` : ""}
             ${showActiveNannyContacts && whatsappUrl ? `<a class="btn" data-contact-action="whatsapp" href="${escapeHtml(whatsappUrl)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
             ${showActiveNannyContacts && callUrl ? `<a class="btn" data-contact-action="call" href="${escapeHtml(callUrl)}">Call nanny</a>` : ""}
@@ -806,6 +858,7 @@
             <div><strong>Requested times:</strong> ${escapeHtml(bookingRange)}</div>
             <div><strong>Requested nannies:</strong> ${escapeHtml(requestedNannies)}</div>
             ${r.accepted_nanny_name ? `<div><strong>Confirmed nanny:</strong> ${escapeHtml(displayName)} (ID ${escapeHtml(r.accepted_nanny_id || "-")})</div>` : ""}
+            ${showAgreedPrice ? `<div><strong>Agreed price:</strong> ${escapeHtml(agreedPrice)}</div>` : ""}
             <div><strong>Job status:</strong> ${escapeHtml(status)}</div>
             <div class="detailSection">
               <h3>Booking form preview</h3>

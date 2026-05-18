@@ -55,6 +55,7 @@
     .assignAvailabilityNote.available{background:#dcfce7;color:#166534}
     .assignAvailabilityNote.manual{background:#ffedd5;color:#9a3412}
     .assignReason{width:100%;min-height:90px;padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;margin-top:10px}
+    .ok{color:#166534}
   </style>
   <script defer src="/static/nav_buttons.js"></script>
 </head>
@@ -65,6 +66,7 @@
   </div>
   <h1>Admin</h1>
   <div id="authMsg" class="err"></div>
+  <div id="actionMsg" class="ok" style="margin-top:8px;"></div>
 
   <div class="card">
     <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -628,6 +630,16 @@
       document.getElementById("assignNannyError").textContent = "";
     }
 
+    function showActionMessage(message) {
+      const el = document.getElementById("actionMsg");
+      if (!el) return;
+      el.textContent = message || "";
+      if (!message) return;
+      setTimeout(() => {
+        if (el.textContent === message) el.textContent = "";
+      }, 3500);
+    }
+
     function renderAssignNannyOptions(data) {
       const summary = document.getElementById("assignNannySummary");
       const list = document.getElementById("assignNannyList");
@@ -922,12 +934,18 @@
       const btn = document.getElementById("confirmAssignNannyBtn");
       btn.disabled = true;
       try {
-        await fetchJson(`/admin/booking-requests/${requestId}/assign-nanny`, {
+        const result = await fetchJson(`/admin/booking-requests/${requestId}/assign-nanny`, {
           method: "POST",
           body: JSON.stringify({ reason, assign_nanny_id: nannyId })
         });
         closeAssignNannyModal();
         await Promise.all([loadBookingRequests(), refreshCounts()]);
+        const cancelledPrevious = Boolean(result?.previous_nanny_cancelled);
+        showActionMessage(
+          cancelledPrevious
+            ? "Reassignment complete: previous nanny cancelled, new nanny assigned, notifications sent."
+            : "Assignment complete: nanny assigned and notifications sent."
+        );
       } catch (err) {
         errorEl.textContent = err.message || "Failed to assign nanny.";
       } finally {

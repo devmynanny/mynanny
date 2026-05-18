@@ -251,6 +251,15 @@
       return endStr;
     }
 
+    const formatDateTimeZa = (value) => {
+      if (!value) return "-";
+      if (window.formatDateTimeZA) return window.formatDateTimeZA(value);
+      const dt = new Date(value);
+      return Number.isNaN(dt.getTime())
+        ? String(value)
+        : dt.toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", dateStyle: "medium", timeStyle: "short" });
+    };
+
     function renderCalendar(entries = []) {
       const calendarEl = document.getElementById("calendar");
       if (!calendarEl) return;
@@ -272,10 +281,7 @@
             const start = new Date(info.startStr);
             const end = new Date(info.endStr);
 
-            const formatDT = (d) => {
-              const dt = new Date(d);
-              return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-            };
+            const formatDT = (d) => formatDateTimeZa(d);
 
             const rangeText = `${formatDT(start)} → ${formatDT(new Date(end.getTime() - 1))}`;
             const type = await showAvailabilityTypePicker(rangeText);
@@ -350,12 +356,14 @@
             }
           },
           eventClick: async (info) => {
-            const formatDT = (d) => {
-              const dt = new Date(d);
-              return dt.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-            };
+            if (info.event.extendedProps && info.event.extendedProps.synthetic) {
+              alert("This unavailable slot is generated from confirmed/pending bookings and cannot be removed here.");
+              return;
+            }
+            const formatDT = (d) => formatDateTimeZa(d);
             const start = info.event.start;
-            const end = info.event.end || info.event.start;
+            const endExclusive = info.event.end || info.event.start;
+            const end = new Date(endExclusive.getTime() - 60 * 1000);
             const title = info.event.title || "availability";
             const confirmed = confirm(
               `Remove ${title} from ${formatDT(start)} to ${formatDT(end)}?`
@@ -401,24 +409,179 @@
         return chunks;
       };
 
-      const events = (entries || [])
-        .flatMap(expandEntry)
-        .map(r => ({
-          id: String(r.id),
-          title: r.type === "blocked" ? "Unavailable" : "Available",
-          start: r.start_dt,
-          end: r.end_dt,
-          color: r.type === "blocked" ? "#f8d7da" : "#d4edda",
+      const expanded = (entries || []).flatMap(expandEntry);
+      const blocked = expanded.filter((r) => r.type === "blocked").map((r) => {
+        const start = new Date(r.start_dt);
+        const end = new Date(r.end_dt);
+        return Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start ? null : {
+          start,
+          end,
+        };
+      }).filter(Boolean);
+
+      const subtractBlocked = (availStart, availEnd) => {
+        let segments = [{ start: availStart, end: availEnd }];
+        for (const b of blocked) {
+          const next = [];
+          for (const seg of segments) {
+            const overlapStart = seg.start > b.start ? seg.start : b.start;
+            const overlapEnd = seg.end < b.end ? seg.end : b.end;
+            if (overlapEnd <= overlapStart) {
+              next.push(seg);
+              continue;
+            }
+            if (seg.start < overlapStart) next.push({ start: seg.start, end: overlapStart });
+            if (overlapEnd < seg.end) next.push({ start: overlapEnd, end: seg.end });
+          }
+          segments = next;
+          if (!segments.length) break;
+        }
+        return segments;
+      };
+
+      const normalized = [];
+      for (const r of expanded) {
+        const start = new Date(r.start_dt);
+        const end = new Date(r.end_dt);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) continue;
+        if (r.type === "available") {
+          const parts = subtractBlocked(start, end);
+          parts.forEach((seg, idx) => {
+            normalized.push({
+              ...r,
+              id: `${r.id}-seg-${idx}-${seg.start.toISOString()}`,
+              start_dt: seg.start.toISOString(),
+              end_dt: seg.end.toISOString(),
+            });
+          });
+        } else {
+          normalized.push(r);
+        }
+      }
+
+      const mergeBlockedForRender = (rows) => {
+        const blockedRows = rows
+          .filter((r) => r.type === "blocked" && !r.hidden)
+          .map((r) => ({
+            start: new Date(r.start_dt),
+            end: new Date(r.end_dt),
+          }))
+          .filter((r) => !Number.isNaN(r.start.getTime()) && !Number.isNaN(r.end.getTime()) && r.end > r.start)
+          .sort((a, b) => a.start - b.start);
+        if (!blockedRows.length) return [];
+        const merged = [blockedRows[0]];
+        for (let i = 1; i < blockedRows.length; i += 1) {
+          const curr = blockedRows[i];
+          const last = merged[merged.length - 1];
+          if (curr.start <= last.end) {
+            if (curr.end > last.end) last.end = curr.end;
+          } else {
+            merged.push(curr);
+          }
+        }
+        return merged.map((m, idx) => ({
+          id: `blocked-merged-${idx}-${m.start.toISOString()}`,
+          title: "Unavailable",
+          start: m.start.toISOString(),
+          end: m.end.toISOString(),
+          color: "#f8d7da",
           textColor: "#000",
+          editable: false,
+          startEditable: false,
+          durationEditable: false,
+          synthetic: true,
         }));
+      };
+
+      const availableEvents = normalized
+        .filter((r) => r.type === "available" && !r.hidden)
+        .map((r) => ({
+        id: String(r.id),
+        title: "Available",
+        start: r.start_dt,
+        end: r.end_dt,
+        color: "#d4edda",
+        textColor: "#000",
+        editable: !r.synthetic,
+        startEditable: !r.synthetic,
+        durationEditable: !r.synthetic,
+        synthetic: !!r.synthetic,
+      }));
+      const blockedEvents = mergeBlockedForRender(normalized);
+      const events = [...availableEvents, ...blockedEvents];
 
       calendarInstance.removeAllEventSources();
       calendarInstance.addEventSource(events);
     }
 
     async function loadAvailability() {
-      const data = await fetchJson("/nannies/me/availability");
-      renderCalendar(data.results || []);
+      const [availabilityData, dutyData] = await Promise.all([
+        fetchJson("/nannies/me/availability"),
+        fetchJson("/nannies/me/duty-bookings").catch(() => ({ results: [] })),
+      ]);
+      const raw = Array.isArray(availabilityData?.results) ? availabilityData.results : [];
+      const duty = Array.isArray(dutyData?.results) ? dutyData.results : [];
+
+      const mergeIntervals = (intervals, opts = {}) => {
+        const valid = intervals
+          .map((i) => ({
+            start: new Date(i.start_dt),
+            end: new Date(i.end_dt),
+          }))
+          .filter((i) => !Number.isNaN(i.start.getTime()) && !Number.isNaN(i.end.getTime()) && i.end > i.start)
+          .sort((a, b) => a.start - b.start);
+        if (!valid.length) return [];
+        const merged = [valid[0]];
+        for (let i = 1; i < valid.length; i += 1) {
+          const curr = valid[i];
+          const last = merged[merged.length - 1];
+          if (curr.start <= last.end) {
+            if (curr.end > last.end) last.end = curr.end;
+          } else {
+            merged.push(curr);
+          }
+        }
+        return merged.map((m, idx) => ({
+          id: `booking-slot-${idx}`,
+          start_dt: m.start.toISOString(),
+          end_dt: m.end.toISOString(),
+          type: "blocked",
+          synthetic: true,
+          hidden: !!opts.hidden,
+        }));
+      };
+
+      const bookingIntervalsRaw = duty
+        .map((b, idx) => {
+          const start = b?.start_dt ? new Date(b.start_dt) : null;
+          const end = b?.end_dt ? new Date(b.end_dt) : null;
+          if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return [];
+          return [
+            {
+              start_dt: start.toISOString(),
+              end_dt: end.toISOString(),
+            },
+            {
+              // Hidden mask only: remove green 5h before booking without rendering a separate pink slot.
+              start_dt: new Date(start.getTime() - 5 * 60 * 60 * 1000).toISOString(),
+              end_dt: start.toISOString(),
+            },
+            {
+              // Hidden mask only: remove green 2h after booking without rendering a separate pink slot.
+              start_dt: end.toISOString(),
+              end_dt: new Date(end.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+            },
+          ];
+        })
+        .flat();
+      const bookingClipMask = mergeIntervals(bookingIntervalsRaw, { hidden: true });
+      const bookingVisibleBlocks = mergeIntervals(
+        duty
+          .map((b) => ({ start_dt: b?.start_dt, end_dt: b?.end_dt }))
+          .filter((r) => r.start_dt && r.end_dt)
+      );
+
+      renderCalendar([...raw, ...bookingClipMask, ...bookingVisibleBlocks]);
     }
 
     const inactiveToggle = document.getElementById("inactiveToggle");
