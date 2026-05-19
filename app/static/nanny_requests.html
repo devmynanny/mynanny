@@ -243,8 +243,14 @@
         const accepted = currentResponse === "accepted";
         const whatsappUrl = accepted ? buildWhatsAppUrl(r.parent_phone, r.parent_name) : "";
         const calendarUrl = buildCalendarUrl(r);
-        const earningsHtml = accepted && Number(r.wage_cents || 0) > 0
-          ? `<div class="earningsRow"><div class="earningsValue">Total earnings after agency booking fee: ${escapeHtml(formatCurrencyZar(r.wage_cents))}</div></div>`
+        const totalWageCents = Number(r.wage_cents || 0);
+        const dailyWageCents = Number(r.daily_wage_cents || 0);
+        const earningsHtml = totalWageCents > 0
+          ? `<div class="earningsRow"><div class="earningsValue">${
+              accepted
+                ? `Total earnings after agency booking fee: ${escapeHtml(formatCurrencyZar(totalWageCents))}`
+                : `Estimated earnings after agency booking fee: ~${escapeHtml(formatCurrencyZar(totalWageCents))}${dailyWageCents > 0 ? ` (about ${escapeHtml(formatCurrencyZar(dailyWageCents))} per day)` : ""}`
+            }</div></div>`
           : "";
         const card = document.createElement("div");
         card.className = "card";

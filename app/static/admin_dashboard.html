@@ -51,6 +51,8 @@
     .assignOption input{margin-top:4px}
     .assignOptionTitle{font-weight:700}
     .assignOptionMeta{color:#666;font-size:14px;margin-top:4px}
+    .assignOptionActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .assignOptionActions .btn[disabled]{opacity:.55;cursor:not-allowed;pointer-events:none}
     .assignAvailabilityNote{display:inline-block;margin-top:6px;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:600}
     .assignAvailabilityNote.available{background:#dcfce7;color:#166534}
     .assignAvailabilityNote.manual{background:#ffedd5;color:#9a3412}
@@ -621,6 +623,20 @@
       return value ? "Yes" : "No";
     }
 
+    function sanitizePhone(value) {
+      return String(value || "").replace(/[^\d+]/g, "");
+    }
+
+    function toWhatsappUrl(phone) {
+      const cleaned = sanitizePhone(phone).replace(/^\+/, "");
+      return cleaned ? `https://wa.me/${cleaned}` : "";
+    }
+
+    function toTelUrl(phone) {
+      const cleaned = sanitizePhone(phone);
+      return cleaned ? `tel:${cleaned}` : "";
+    }
+
     function closeAssignNannyModal() {
       currentAssignRequestId = null;
       document.getElementById("assignNannyModal").style.display = "none";
@@ -646,7 +662,18 @@
       const schedule = Array.isArray(data?.schedule) ? data.schedule : [];
       const locationBits = [data?.location?.label, data?.location?.address].filter(Boolean);
       const locationText = locationBits.length ? locationBits.join(" - ") : "Client address unavailable";
-      const results = Array.isArray(data?.results) ? data.results : [];
+      const results = (Array.isArray(data?.results) ? data.results : []).slice().sort((a, b) => {
+        const distanceA = Number.isFinite(Number(a?.distance_km)) ? Number(a.distance_km) : Number.POSITIVE_INFINITY;
+        const distanceB = Number.isFinite(Number(b?.distance_km)) ? Number(b.distance_km) : Number.POSITIVE_INFINITY;
+        if (distanceA !== distanceB) return distanceA - distanceB;
+        const ratingA = Number.isFinite(Number(a?.average_rating_12m)) ? Number(a.average_rating_12m) : 0;
+        const ratingB = Number.isFinite(Number(b?.average_rating_12m)) ? Number(b.average_rating_12m) : 0;
+        if (ratingA !== ratingB) return ratingB - ratingA;
+        const reviewsA = Number(a?.review_count_12m || 0);
+        const reviewsB = Number(b?.review_count_12m || 0);
+        if (reviewsA !== reviewsB) return reviewsB - reviewsA;
+        return String(a?.name || "").localeCompare(String(b?.name || ""));
+      });
       const count = results.length;
       summary.innerHTML = `
         <div><strong>Radius:</strong> ${escapeHtml(data?.radius_km || 30)}km from ${escapeHtml(locationText)}</div>
@@ -674,6 +701,11 @@
               Job type: ${escapeHtml(item.job_type || "-")}
               • Own car: ${escapeHtml(yesNo(item.has_own_car))}
               • Driver's license: ${escapeHtml(yesNo(item.has_drivers_license))}
+            </div>
+            <div class="assignOptionActions">
+              ${item.user_id ? `<a class="btn" href="/static/admin_user.html?user_id=${encodeURIComponent(item.user_id)}" target="_blank" rel="noopener">View profile</a>` : `<button class="btn" type="button" disabled>View profile</button>`}
+              ${toWhatsappUrl(item.phone || item.phone_alt) ? `<a class="btn" href="${escapeHtml(toWhatsappUrl(item.phone || item.phone_alt))}" target="_blank" rel="noopener">WhatsApp</a>` : `<button class="btn" type="button" disabled>WhatsApp</button>`}
+              ${toTelUrl(item.phone || item.phone_alt) ? `<a class="btn" href="${escapeHtml(toTelUrl(item.phone || item.phone_alt))}">Call</a>` : `<button class="btn" type="button" disabled>Call</button>`}
             </div>
             <div class="assignAvailabilityNote available">Available for all selected dates</div>
           </div>

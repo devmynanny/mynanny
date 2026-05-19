@@ -4369,6 +4369,7 @@ def accept_nanny_booking_request(
     windows = _booking_request_windows(db, req)
     if not windows:
         raise HTTPException(status_code=400, detail="Invalid booking window")
+    _validate_booking_windows_not_in_past(windows)
     if not existing_bookings:
         for start_dt, end_dt in windows:
             if not _is_nanny_available(db, req.nanny_id, start_dt, end_dt, req.parent_user_id):
@@ -7880,6 +7881,10 @@ def get_admin_booking_request_available_nannies(
         if nanny_id <= 0:
             continue
         if all(_is_nanny_available(db, nanny_id, slot_start, slot_end, req.parent_user_id) for slot_start, slot_end in windows):
+            nanny_user = None
+            user_id = item.get("user_id")
+            if user_id is not None:
+                nanny_user = db.query(models.User).filter(models.User.id == int(user_id)).first()
             available.append(
                 {
                     "nanny_id": nanny_id,
@@ -7893,9 +7898,19 @@ def get_admin_booking_request_available_nannies(
                     "job_type": item.get("job_type"),
                     "has_own_car": item.get("has_own_car"),
                     "has_drivers_license": item.get("has_drivers_license"),
+                    "phone": getattr(nanny_user, "phone", None) if nanny_user else None,
+                    "phone_alt": getattr(nanny_user, "phone_alt", None) if nanny_user else None,
                     "fully_available": True,
                 }
             )
+    available.sort(
+        key=lambda row: (
+            float(row.get("distance_km")) if row.get("distance_km") is not None else 999999.0,
+            -float(row.get("average_rating_12m") or 0.0),
+            -(int(row.get("review_count_12m") or 0)),
+            str(row.get("name") or ""),
+        )
+    )
 
     return {
         "request_id": req.id,
