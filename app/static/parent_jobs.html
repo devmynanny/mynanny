@@ -243,9 +243,7 @@
 
     function toDateTimeInputValue(value) {
       if (!value) return "";
-      let raw = value;
-      if (typeof raw === "string" && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) raw = raw.replace(" ", "T") + "+02:00";
-      const date = new Date(raw);
+      const date = parseDateValue(value);
       if (Number.isNaN(date.getTime())) return "";
       return new Date(date.getTime() + (2 * 60 * 60 * 1000)).toISOString().slice(0, 16);
     }
@@ -256,9 +254,21 @@
       return window.toIsoFromZA ? window.toIsoFromZA(date, time) : new Date(`${value}:00+02:00`).toISOString();
     }
 
+    function parseDateValue(value) {
+      if (!value) return null;
+      let raw = value;
+      if (typeof raw === "string") {
+        const hasTz = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw);
+        if (!hasTz) raw = raw.replace(" ", "T") + "+02:00";
+      }
+      const dt = new Date(raw);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt;
+    }
+
     function formatDayDateLabel(value) {
-      const dt = value ? new Date(value) : null;
-      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      const dt = parseDateValue(value);
+      if (!dt) return "-";
       return new Intl.DateTimeFormat("en-ZA", {
         day: "numeric",
         month: "long",
@@ -268,9 +278,9 @@
     }
 
     function formatCompactTimeRange(startValue, endValue) {
-      const start = startValue ? new Date(startValue) : null;
-      const end = endValue ? new Date(endValue) : null;
-      if (!start || Number.isNaN(start.getTime()) || !end || Number.isNaN(end.getTime())) return "-";
+      const start = parseDateValue(startValue);
+      const end = parseDateValue(endValue);
+      if (!start || !end) return "-";
       const fmt = new Intl.DateTimeFormat("en-ZA", {
         hour: "2-digit",
         minute: "2-digit",
@@ -282,8 +292,8 @@
     }
 
     function formatShortBookingDate(value) {
-      const dt = value ? new Date(value) : null;
-      if (!dt || Number.isNaN(dt.getTime())) return "-";
+      const dt = parseDateValue(value);
+      if (!dt) return "-";
       const parts = new Intl.DateTimeFormat("en-ZA", {
         day: "numeric",
         month: "long",
@@ -316,9 +326,9 @@
     }
 
     function minutesBetween(startValue, endValue) {
-      const start = startValue ? new Date(startValue) : null;
-      const end = endValue ? new Date(endValue) : null;
-      if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+      const start = parseDateValue(startValue);
+      const end = parseDateValue(endValue);
+      if (!start || !end) return null;
       const diffMs = end.getTime() - start.getTime();
       if (!Number.isFinite(diffMs) || diffMs < 0) return null;
       return Math.round(diffMs / 60000);
@@ -366,8 +376,8 @@
     }
 
     function toLocalDateKey(value) {
-      const dt = value ? new Date(value) : null;
-      if (!dt || Number.isNaN(dt.getTime())) return "";
+      const dt = parseDateValue(value);
+      if (!dt) return "";
       const parts = toLocalDateParts(dt);
       return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
     }
@@ -377,15 +387,15 @@
     }
 
     function toLocalDateInputValue(value) {
-      const dt = value ? new Date(value) : null;
-      if (!dt || Number.isNaN(dt.getTime())) return "";
+      const dt = parseDateValue(value);
+      if (!dt) return "";
       const parts = toLocalDateParts(dt);
       return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
     }
 
     function toLocalTimeInputValue(value) {
-      const dt = value ? new Date(value) : null;
-      if (!dt || Number.isNaN(dt.getTime())) return "08:00";
+      const dt = parseDateValue(value);
+      if (!dt) return "08:00";
       return new Intl.DateTimeFormat("en-GB", {
         hour: "2-digit",
         minute: "2-digit",
@@ -623,8 +633,8 @@
       (Array.isArray(items) ? items : []).forEach((item) => {
         const slots = Array.isArray(item?.slots) && item.slots.length ? item.slots : [{ start_dt: item.start_dt, end_dt: item.end_dt }];
         slots.forEach((slot) => {
-          const dt = slot?.start_dt ? new Date(slot.start_dt) : null;
-          if (!dt || Number.isNaN(dt.getTime())) return;
+          const dt = parseDateValue(slot?.start_dt);
+          if (!dt) return;
           const parts = toLocalDateParts(dt);
           if (parts.year !== year || (parts.month - 1) !== month) return;
           const key = `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;

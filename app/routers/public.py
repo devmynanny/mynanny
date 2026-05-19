@@ -1040,6 +1040,14 @@ def _sanitize_booking_kids_count(value: Optional[int]) -> int:
     return max(1, kids_count)
 
 
+def _sanitize_requested_nannies_count(value: Optional[int]) -> int:
+    try:
+        requested_count = int(value or 1)
+    except Exception:
+        requested_count = 1
+    return max(1, requested_count)
+
+
 def _compute_booking_slots_pricing(windows: List[tuple], sleepover: bool, settings: dict, kids_count: int = 1) -> dict:
     total_wage_cents = 0
     total_fee_cents = 0
@@ -1120,6 +1128,13 @@ def _build_booking_questionnaire_notes(base_notes: Optional[str], questionnaire:
     ])
     notes = "\n".join(sections).strip()
     return notes or None
+
+
+def _with_requested_nannies_note(notes: Optional[str], requested_nannies_count: int) -> Optional[str]:
+    prefix = f"Nannies requested: {max(1, int(requested_nannies_count or 1))}"
+    if not notes:
+        return prefix
+    return f"{prefix}\n{notes}"
 
 
 def _attach_booking_request_slots(db: Session, req_id: int, windows: List[tuple]) -> None:
@@ -6745,6 +6760,7 @@ def create_booking_request(
             _get_pricing_settings(db),
             questionnaire.get("kids_count", 1),
         )
+        requested_nannies_count = _sanitize_requested_nannies_count(getattr(payload, "requested_nannies_count", 1))
         req = models.BookingRequest(
             id=_next_booking_request_id(db),
             parent_user_id=user.id,
@@ -6761,7 +6777,10 @@ def create_booking_request(
             booking_fee_pct=pricing.get("booking_fee_pct"),
             booking_fee_cents=pricing.get("booking_fee_cents"),
             total_cents=pricing.get("total_cents"),
-            client_notes=_build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
+            client_notes=_with_requested_nannies_note(
+                _build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
+                requested_nannies_count,
+            ),
         )
         req.group_id = req.id
         db.add(req)
@@ -6822,9 +6841,9 @@ def estimate_booking_request(
     )
     _validate_booking_windows_not_in_past(windows)
 
-    selected_count = int(payload.selected_count or 1)
-    if selected_count < 1:
-        selected_count = 1
+    selected_count = _sanitize_requested_nannies_count(
+        payload.requested_nannies_count if payload.requested_nannies_count is not None else payload.selected_count
+    )
 
     pricing = _compute_booking_slots_pricing(
         windows,
@@ -6888,6 +6907,7 @@ def create_booking_request_bulk(
         payload.notes = redact_contact_info(payload.notes)
     questionnaire = _sanitize_booking_questionnaire_payload(payload)
     _validate_booking_questionnaire(questionnaire)
+    requested_nannies_count = _sanitize_requested_nannies_count(getattr(payload, "requested_nannies_count", 1))
 
     for nanny_id in nanny_ids:
         nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
@@ -6927,7 +6947,10 @@ def create_booking_request_bulk(
             booking_fee_pct=pricing.get("booking_fee_pct"),
             booking_fee_cents=pricing.get("booking_fee_cents"),
             total_cents=pricing.get("total_cents"),
-            client_notes=_build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
+            client_notes=_with_requested_nannies_note(
+                _build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
+                requested_nannies_count,
+            ),
         )
         next_id += 1
         db.add(req)

@@ -316,6 +316,9 @@
         <span class="bookingCheckLabelText">Sleepover required (adds R150)</span>
       </label>
 
+      <label class="muted" style="margin-top:8px; display:block;">How many nannies do you need?</label>
+      <input id="requestedNanniesCount" type="number" min="1" step="1" value="1" />
+
       <label class="muted" style="margin-top:8px; display:block;">Notes (optional)</label>
       <input id="bookingNotes" type="text" placeholder="Any notes for the nanny" />
 
@@ -1043,7 +1046,14 @@
       sleepover_expectations: "",
       sleepover_reason: "",
       selectedNannyIds: [],
+      requestedNanniesCount: 1,
     };
+
+    function getRequestedNanniesCount() {
+      const raw = document.getElementById("requestedNanniesCount")?.value;
+      const count = Number.parseInt(String(raw || "1"), 10);
+      return Number.isFinite(count) && count > 0 ? count : 1;
+    }
 
     function renderScheduleSummary(slots) {
       const normalized = computeSlotIsoRange(slots).slots;
@@ -1086,7 +1096,7 @@
         return;
       }
       const slotRange = computeSlotIsoRange(bookingState.slots);
-      const selectedCount = Math.max(1, Array.isArray(bookingState.selectedNannyIds) ? bookingState.selectedNannyIds.length : 1);
+      const requestedCount = getRequestedNanniesCount();
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
       estimateEl.textContent = "Calculating estimate...";
       try {
@@ -1097,13 +1107,13 @@
             end_dt: slotRange.end_dt,
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             sleepover,
-            selected_count: selectedCount,
+            requested_nannies_count: requestedCount,
           }),
         });
         const cur = data?.currency || "ZAR";
         const total = formatCurrencyCents(data?.selected_total_cents, cur);
         estimateEl.innerHTML = `
-          <div><strong>Total${selectedCount > 1 ? ` (${selectedCount} nannies)` : ""}:</strong> ${escapeHtml(total)}</div>
+          <div><strong>Total${requestedCount > 1 ? ` (${requestedCount} nannies requested)` : ""}:</strong> ${escapeHtml(total)}</div>
         `;
       } catch (e) {
         estimateEl.textContent = "Estimate unavailable right now.";
@@ -1114,8 +1124,13 @@
       bookingState.nannyId = nannyId;
       bookingState.nannyName = nannyName;
       bookingState.selectedNannyIds = Array.isArray(selectedIds) ? selectedIds : (nannyId ? [nannyId] : []);
+      bookingState.requestedNanniesCount = 1;
       const count = bookingState.selectedNannyIds.length;
       document.getElementById("bookingNannyName").textContent = count > 1 ? `${count} nannies selected` : nannyName;
+      const requestedNanniesInput = document.getElementById("requestedNanniesCount");
+      if (requestedNanniesInput) {
+        requestedNanniesInput.value = String(bookingState.requestedNanniesCount);
+      }
       document.getElementById("bookingScheduleSummary").innerHTML = renderScheduleSummary(bookingState.slots);
       const locSelect = document.getElementById("bookingLocation");
       const locConfirm = document.getElementById("bookingLocationConfirm");
@@ -1386,6 +1401,7 @@
       const notes = buildSleepoverNotes(document.getElementById("bookingNotes").value || "");
       const locationId = locSelect ? Number(locSelect.value) : null;
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
+      const requestedNanniesCount = getRequestedNanniesCount();
 
       status.textContent = "Submitting...";
       if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length >= 1 && !bookingState.nannyId) {
@@ -1399,7 +1415,8 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
-            sleepover
+            sleepover,
+            requested_nannies_count: requestedNanniesCount
           })
         });
         const displayId = res?.group_id ?? "—";
@@ -1416,7 +1433,8 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
-            sleepover
+            sleepover,
+            requested_nannies_count: requestedNanniesCount
           })
         });
         const displayId = res?.group_id ?? "—";
@@ -1433,7 +1451,8 @@
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             notes,
             location_id: locationId,
-            sleepover
+            sleepover,
+            requested_nannies_count: requestedNanniesCount
           })
         });
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
@@ -1764,6 +1783,9 @@
       renderActiveBookingLocation();
     });
     document.getElementById("bookingSleepover").addEventListener("change", () => {
+      refreshBookingEstimate().catch(() => {});
+    });
+    document.getElementById("requestedNanniesCount").addEventListener("input", () => {
       refreshBookingEstimate().catch(() => {});
     });
 
