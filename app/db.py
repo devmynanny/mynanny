@@ -153,6 +153,8 @@ def ensure_booking_requests_schema() -> None:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN paystack_refund_reference TEXT"))
             if "cancelled_at" not in existing:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN cancelled_at DATETIME"))
+            if "replacement_required" not in existing:
+                conn.execute(text("ALTER TABLE booking_requests ADD COLUMN replacement_required BOOLEAN NOT NULL DEFAULT 0"))
             if "unaccepted_admin_notified_at" not in existing:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN unaccepted_admin_notified_at DATETIME"))
             if "nanny_response_status" not in existing:
@@ -196,6 +198,7 @@ def ensure_booking_requests_schema() -> None:
               paystack_transaction_id TEXT,
               paystack_refund_reference TEXT,
               cancelled_at DATETIME,
+              replacement_required BOOLEAN NOT NULL DEFAULT 0,
               hold_expires_at DATETIME,
               payment_status TEXT NOT NULL DEFAULT 'pending_payment',
               admin_notes TEXT,
@@ -232,7 +235,7 @@ def ensure_booking_requests_schema() -> None:
               refund_status, refund_requested_at, refund_processed_at, refund_failed_at,
               refund_failure_reason, refund_reviewed_at, refund_reviewed_by, refund_review_reason,
               paystack_reference, paystack_transaction_id, paystack_refund_reference,
-              cancelled_at,
+              cancelled_at, replacement_required,
               hold_expires_at, payment_status, admin_notes, client_notes,
               created_by_admin_user_id, requested_starts_at, requested_ends_at,
               location_id, admin_user_id, admin_decided_at, admin_reason, unaccepted_admin_notified_at,
@@ -268,6 +271,7 @@ def ensure_booking_requests_schema() -> None:
               NULL,
               NULL,
               NULL,
+              0,
               hold_expires_at,
               payment_status,
               admin_notes,
@@ -342,6 +346,46 @@ def ensure_bookings_schema() -> None:
         add_col("google_calendar_event_id", "TEXT")
         add_col("google_calendar_synced_at", "DATETIME")
         add_col("google_calendar_sync_error", "TEXT")
+        add_col("overrun_minutes", "INTEGER")
+        add_col("overrun_amount_cents", "INTEGER")
+        add_col("overrun_paystack_ref", "TEXT")
+        add_col("overrun_hold_until", "DATETIME")
+        add_col("overrun_disputed", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("overrun_dispute_raised_at", "DATETIME")
+        add_col("overrun_resolved_at", "DATETIME")
+        add_col("overrun_resolved_by", "INTEGER")
+        add_col("overrun_resolution", "TEXT")
+        add_col("overrun_released_at", "DATETIME")
+        add_col("payout_hold_until", "DATETIME")
+        add_col("payout_released_at", "DATETIME")
+        add_col("payout_disputed", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("payout_dispute_raised_at", "DATETIME")
+        add_col("payout_resolved_at", "DATETIME")
+        add_col("payout_resolved_by", "INTEGER")
+        add_col("payout_resolution", "TEXT")
+
+
+def ensure_nannies_schema() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "nannies"):
+            return
+
+        cols = conn.execute(text("PRAGMA table_info(nannies)"))
+        existing = {row[1] for row in cols.fetchall()}
+
+        def add_col(name: str, col_type: str):
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE nannies ADD COLUMN {name} {col_type}"))
+
+        add_col("rating_demerit_pct", "REAL NOT NULL DEFAULT 0")
+        add_col("cancellation_count", "INTEGER NOT NULL DEFAULT 0")
+        add_col("no_show_count", "INTEGER NOT NULL DEFAULT 0")
+        add_col("admin_review_flagged", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("is_suspended", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("suspended_at", "DATETIME")
+        add_col("suspension_reason", "TEXT")
+        add_col("suspension_lifted_at", "DATETIME")
+        add_col("suspension_lifted_by", "INTEGER")
 
 
 def ensure_nanny_profiles_schema() -> None:
@@ -679,7 +723,11 @@ def ensure_pricing_settings_schema() -> None:
                   booking_fee_pct_1_5 NUMERIC(5,4) NOT NULL DEFAULT 0.30,
                   booking_fee_pct_6_10 NUMERIC(5,4) NOT NULL DEFAULT 0.27,
                   booking_fee_pct_10_plus NUMERIC(5,4) NOT NULL DEFAULT 0.25,
-                  cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 12
+                  cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 15,
+                  overrun_hourly_weekday INTEGER NOT NULL DEFAULT 4500,
+                  overrun_hourly_weekend INTEGER NOT NULL DEFAULT 5000,
+                  overrun_hold_hours INTEGER NOT NULL DEFAULT 24,
+                  payout_hold_hours INTEGER NOT NULL DEFAULT 24
                 );
             """))
             conn.execute(text("""
@@ -703,9 +751,13 @@ def ensure_pricing_settings_schema() -> None:
                   booking_fee_pct_1_5,
                   booking_fee_pct_6_10,
                   booking_fee_pct_10_plus,
-                  cancellation_fee_window_hours
+                  cancellation_fee_window_hours,
+                  overrun_hourly_weekday,
+                  overrun_hourly_weekend,
+                  overrun_hold_hours,
+                  payout_hold_hours
                 ) VALUES (
-                  1, 250, 300, 300, 350, 150, 400, 450, 50, 30, 35, 45, 50, 14, 7, 45, 0.30, 0.27, 0.25, 12
+                  1, 250, 300, 300, 350, 150, 400, 450, 50, 30, 35, 45, 50, 14, 7, 45, 0.30, 0.27, 0.25, 15, 4500, 5000, 24, 24
                 )
             """))
             return
@@ -713,7 +765,15 @@ def ensure_pricing_settings_schema() -> None:
         cols = conn.execute(text("PRAGMA table_info(pricing_settings)"))
         existing = {row[1] for row in cols.fetchall()}
         if "cancellation_fee_window_hours" not in existing:
-            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 12"))
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN cancellation_fee_window_hours INTEGER NOT NULL DEFAULT 15"))
+        if "overrun_hourly_weekday" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN overrun_hourly_weekday INTEGER NOT NULL DEFAULT 4500"))
+        if "overrun_hourly_weekend" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN overrun_hourly_weekend INTEGER NOT NULL DEFAULT 5000"))
+        if "overrun_hold_hours" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN overrun_hold_hours INTEGER NOT NULL DEFAULT 24"))
+        if "payout_hold_hours" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN payout_hold_hours INTEGER NOT NULL DEFAULT 24"))
 
         rows = conn.execute(text("SELECT COUNT(*) FROM pricing_settings")).fetchone()
         if rows and rows[0] == 0:
@@ -737,13 +797,72 @@ def ensure_pricing_settings_schema() -> None:
                 "booking_fee_pct_1_5": 0.30,
                 "booking_fee_pct_6_10": 0.27,
                 "booking_fee_pct_10_plus": 0.25,
-                "cancellation_fee_window_hours": 12,
+                "cancellation_fee_window_hours": 15,
+                "overrun_hourly_weekday": 4500,
+                "overrun_hourly_weekend": 5000,
+                "overrun_hold_hours": 24,
+                "payout_hold_hours": 24,
             }
             insert_columns = [name for name in default_values if name in existing]
             placeholders = ", ".join(f":{name}" for name in insert_columns)
             sql = f"INSERT INTO pricing_settings ({', '.join(insert_columns)}) VALUES ({placeholders})"
             params = {name: default_values[name] for name in insert_columns}
             conn.execute(text(sql), params)
+
+
+def ensure_nanny_demerit_log_schema() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "nanny_demerit_log"):
+            conn.execute(text("""
+                CREATE TABLE nanny_demerit_log (
+                  id INTEGER NOT NULL PRIMARY KEY,
+                  nanny_id INTEGER NOT NULL,
+                  booking_id BIGINT,
+                  reason TEXT NOT NULL,
+                  demerit_pct REAL NOT NULL,
+                  weight REAL NOT NULL DEFAULT 0,
+                  cumulative_demerit_pct REAL NOT NULL,
+                  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  applied_by TEXT NOT NULL,
+                  reversed_at DATETIME,
+                  reversed_by INTEGER,
+                  reversal_reason TEXT,
+                  FOREIGN KEY(nanny_id) REFERENCES nannies (id),
+                  FOREIGN KEY(booking_id) REFERENCES booking_requests (id),
+                  FOREIGN KEY(reversed_by) REFERENCES users (id)
+                )
+            """))
+
+
+def ensure_nanny_bank_accounts_schema() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "nanny_bank_accounts"):
+            conn.execute(text("""
+                CREATE TABLE nanny_bank_accounts (
+                  id INTEGER NOT NULL PRIMARY KEY,
+                  nanny_id INTEGER NOT NULL,
+                  account_name TEXT NOT NULL,
+                  account_number TEXT NOT NULL,
+                  bank_code TEXT NOT NULL,
+                  is_verified BOOLEAN NOT NULL DEFAULT 0,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  FOREIGN KEY(nanny_id) REFERENCES nannies (id)
+                )
+            """))
+            return
+
+        cols = conn.execute(text("PRAGMA table_info(nanny_bank_accounts)"))
+        existing = {row[1] for row in cols.fetchall()}
+
+        def add_col(name: str, col_type: str):
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE nanny_bank_accounts ADD COLUMN {name} {col_type}"))
+
+        add_col("account_name", "TEXT")
+        add_col("account_number", "TEXT")
+        add_col("bank_code", "TEXT")
+        add_col("is_verified", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("created_at", "DATETIME")
 
 
 def ensure_bootstrap_admin() -> None:

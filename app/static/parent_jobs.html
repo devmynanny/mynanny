@@ -822,8 +822,8 @@
           ? "cancelled"
           : String(r.booking_category || "upcoming").toLowerCase();
         if (filter !== "all" && filter !== category) return;
-        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
-        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const start = window.formatDateTimeDisplay(r.start_dt);
+        const end = window.formatDateTimeDisplay(r.end_dt);
         const bookingRange = formatBookingDateTimeRange(r.start_dt, r.end_dt);
         const status = mapStatus(r.status);
         const displayName = formatName(r.accepted_nanny_name || "Nanny");

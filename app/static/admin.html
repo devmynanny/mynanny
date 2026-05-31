@@ -443,6 +443,7 @@
     }
 
     function authHeaders() {
+      if (window.authHeaders) return window.authHeaders();
       const token = sessionStorage.getItem("impersonation_token");
       return token ? { Authorization: `Bearer ${token}` } : {};
     }
@@ -642,6 +643,14 @@
     }
 
     async function fetchJson(url, opts = {}) {
+      if (window.fetchJson) {
+        try {
+          return await window.fetchJson(url, opts);
+        } catch (e) {
+          if (String(e?.message || "").toLowerCase().includes("unauthorized")) logout();
+          throw e;
+        }
+      }
       const method = String(opts.method || "GET").toUpperCase();
       const mergedHeaders = Object.assign({}, opts.headers || {});
       const isUnsafe = ["POST", "PUT", "PATCH", "DELETE"].includes(method);

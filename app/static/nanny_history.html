@@ -113,8 +113,8 @@
         return;
       }
       items.forEach(r => {
-        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
-        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const start = window.formatDateTimeDisplay(r.start_dt);
+        const end = window.formatDateTimeDisplay(r.end_dt);
         const parentName = formatName(r.parent_name || "Parent");
         const jobId = r.job_id || r.id;
         const card = document.createElement("div");

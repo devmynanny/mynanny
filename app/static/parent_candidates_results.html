@@ -419,6 +419,7 @@
     let selectedCalendarDates = new Set();
 
     function formatDateLabel(dateStr) {
+      if (window.formatDateLabelZA) return window.formatDateLabelZA(dateStr);
       const date = new Date(`${dateStr}T00:00:00`);
       if (Number.isNaN(date.getTime())) return dateStr;
       return date.toLocaleDateString("en-ZA", {
@@ -430,6 +431,7 @@
     }
 
     function formatShortDateLabel(dateStr) {
+      if (window.formatShortDateLabelZA) return window.formatShortDateLabelZA(dateStr);
       const date = new Date(`${dateStr}T00:00:00`);
       if (Number.isNaN(date.getTime())) return dateStr;
       return date.toLocaleDateString("en-ZA", {
@@ -440,6 +442,7 @@
     }
 
     function formatDateValue(date) {
+      if (window.formatDateValueZA) return window.formatDateValueZA(date);
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, "0");
       const day = String(date.getDate()).padStart(2, "0");
@@ -447,6 +450,7 @@
     }
 
     function parseDateOnly(dateStr) {
+      if (window.parseDateOnlyZA) return window.parseDateOnlyZA(dateStr);
       if (!dateStr) return null;
       const date = new Date(`${dateStr}T00:00:00`);
       return Number.isNaN(date.getTime()) ? null : date;

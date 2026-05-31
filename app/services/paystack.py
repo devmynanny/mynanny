@@ -45,3 +45,49 @@ def create_refund(transaction: str, amount_kobo: Optional[int] = None) -> Tuple[
     if amount_kobo is not None:
         payload["amount"] = amount_kobo
     return _paystack_request("POST", "/refund", payload)
+
+
+def create_supplementary_charge(
+    authorization_code: str,
+    amount_kobo: int,
+    email: Optional[str] = None,
+) -> Tuple[bool, Dict[str, Any]]:
+    payload: Dict[str, Any] = {
+        "authorization_code": authorization_code,
+        "amount": int(amount_kobo),
+    }
+    if email:
+        payload["email"] = email
+    return _paystack_request("POST", "/transaction/charge_authorization", payload)
+
+
+def create_transfer_recipient(
+    *,
+    account_name: str,
+    account_number: str,
+    bank_code: str,
+) -> Tuple[bool, Dict[str, Any]]:
+    payload: Dict[str, Any] = {
+        "type": "nuban",
+        "name": account_name,
+        "account_number": account_number,
+        "bank_code": bank_code,
+        "currency": "ZAR",
+    }
+    return _paystack_request("POST", "/transferrecipient", payload)
+
+
+def create_transfer(
+    *,
+    amount_kobo: int,
+    recipient_code: str,
+    reason: Optional[str] = None,
+) -> Tuple[bool, Dict[str, Any]]:
+    payload: Dict[str, Any] = {
+        "source": "balance",
+        "amount": int(amount_kobo),
+        "recipient": recipient_code,
+    }
+    if reason:
+        payload["reason"] = reason
+    return _paystack_request("POST", "/transfer", payload)

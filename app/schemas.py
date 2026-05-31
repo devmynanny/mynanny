@@ -624,6 +624,10 @@ class AdminSetNannyApprovalRequest(BaseModel):
     approved: bool
 
 
+class AdminLiftNannySuspensionRequest(BaseModel):
+    reason: str
+
+
 class AdminSetBookingRequestStatusRequest(BaseModel):
     status: Literal["accepted", "rejected"]
 

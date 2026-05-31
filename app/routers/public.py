@@ -25,7 +25,11 @@ from app.schemas import NannyReviewsResponse, SetParentAreaRequest, SetParentDef
 from app.utils.email import EmailMessage, admin_emails, app_base_url, get_email_client
 from app import security
 from app.services.audit import log_audit, log_profile_update, log_booking_request_status_change, log_booking_status_change
+from app.services.cancellation import calculate_cancellation_outcome
+from app.services.demerit import apply_demerit, apply_cancellation_weight, apply_no_show
 from app.services.google_calendar import sync_booking_to_google_calendar
+from app.services.payout import run_scheduled_payouts
+from app.services.paystack import create_supplementary_charge
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
@@ -912,6 +916,10 @@ def _get_pricing_settings(db: Session) -> dict:
             "booking_fee_pct_6_10": 0.27,
             "booking_fee_pct_10_plus": 0.25,
             "cancellation_fee_window_hours": 15,
+            "overrun_hourly_weekday": 4500,
+            "overrun_hourly_weekend": 5000,
+            "overrun_hold_hours": 24,
+            "payout_hold_hours": 24,
         }
     return {
         "weekday_half_day": row.weekday_half_day,
@@ -933,6 +941,10 @@ def _get_pricing_settings(db: Session) -> dict:
         "booking_fee_pct_6_10": float(row.booking_fee_pct_6_10),
         "booking_fee_pct_10_plus": float(row.booking_fee_pct_10_plus),
         "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 15) or 15),
+        "overrun_hourly_weekday": int(getattr(row, "overrun_hourly_weekday", 4500) or 4500),
+        "overrun_hourly_weekend": int(getattr(row, "overrun_hourly_weekend", 5000) or 5000),
+        "overrun_hold_hours": int(getattr(row, "overrun_hold_hours", 24) or 24),
+        "payout_hold_hours": int(getattr(row, "payout_hold_hours", 24) or 24),
     }
 
 
@@ -1424,6 +1436,42 @@ def _safe_send(to_email: str, subject: str, body: str):
     get_email_client().send(msg)
 
 
+def _notification_log_exists(db: Session) -> bool:
+    row = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_log'")).fetchone()
+    return row is not None
+
+
+def _log_notification_best_effort(
+    db: Session,
+    *,
+    user_id: Optional[int],
+    event_type: str,
+    channel: str,
+    status: str,
+    error_message: Optional[str] = None,
+    reference_id: Optional[str] = None,
+) -> None:
+    if not _notification_log_exists(db):
+        return
+    db.execute(
+        text(
+            """
+            INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, created_at)
+            VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :created_at)
+            """
+        ),
+        {
+            "user_id": user_id,
+            "event_type": event_type,
+            "channel": channel,
+            "status": status,
+            "error_message": error_message,
+            "reference_id": reference_id,
+            "created_at": datetime.utcnow(),
+        },
+    )
+
+
 def notify_booking_created(parent_user_id: int, nanny_id: int, booking_id: int, starts_at, ends_at, location_label: Optional[str]):
     client = get_email_client()
     base = app_base_url()
@@ -1829,6 +1877,27 @@ def _cancel_related_bookings_for_request(
         booking.cancellation_actor_user_id = actor_user_id
         cancelled.append(booking)
     return cancelled
+
+
+def _booking_request_starts_at(req: models.BookingRequest) -> Optional[datetime]:
+    try:
+        return _parse_iso_dt(req.start_dt or req.requested_starts_at)
+    except Exception:
+        return None
+
+
+def _send_cancellation_notice(
+    *,
+    to_email: Optional[str],
+    subject: str,
+    lines: List[str],
+) -> None:
+    if not to_email:
+        return
+    try:
+        _safe_send(to_email, subject, "\n".join(lines))
+    except Exception:
+        pass
 
 
 def _clear_admin_blocked_availability_for_request(
@@ -2327,6 +2396,16 @@ def admin_me(authorization: Optional[str] = Header(default=None), db: Session = 
     if not getattr(user, "is_admin", False):
         raise HTTPException(status_code=403, detail="Forbidden")
     return {"ok": True, "email": user.email, "id": user.id}
+
+
+@router.post("/internal/run-payouts")
+def internal_run_payouts(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _ = require_admin(authorization, db)
+    run_scheduled_payouts(db)
+    return {"ok": True}
 
 
 @router.post("/admin/impersonate")
@@ -4153,10 +4232,119 @@ def nanny_check_out_booking(
         }
 
     before_status = booking.status
-    booking.check_out_at = datetime.utcnow()
+    now_utc = datetime.utcnow()
+    booking.check_out_at = now_utc
     booking.check_out_lat = float(payload.lat)
     booking.check_out_lng = float(payload.lng)
     booking.check_out_distance_m = float(round(distance_m, 2))
+
+    settings = _get_pricing_settings(db)
+    payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
+    overrun_hold_hours = max(1, int(settings.get("overrun_hold_hours") or 24))
+
+    actual_minutes = max(0, int((booking.check_out_at - booking.check_in_at).total_seconds() // 60))
+    booked_minutes = 0
+    if getattr(booking, "starts_at", None) and getattr(booking, "ends_at", None):
+        booked_minutes = max(0, int((booking.ends_at - booking.starts_at).total_seconds() // 60))
+
+    booking.payout_hold_until = now_utc + timedelta(hours=payout_hold_hours)
+
+    related_request = None
+    if getattr(booking, "booking_request_id", None):
+        related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+
+    parent_user = db.query(models.User).filter(models.User.id == booking.client_user_id).first()
+    nanny_row = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
+    nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
+
+    if actual_minutes > booked_minutes:
+        overrun_minutes = actual_minutes - booked_minutes
+        booking.overrun_minutes = overrun_minutes
+        booking_date = (booking.starts_at.date() if getattr(booking, "starts_at", None) else (booking.day or now_utc.date()))
+        is_weekend = _is_weekend_or_holiday(booking_date)
+        overrun_hourly_rate = (
+            int(settings.get("overrun_hourly_weekend") or 5000)
+            if is_weekend
+            else int(settings.get("overrun_hourly_weekday") or 4500)
+        )
+        overrun_amount_cents = int(round((overrun_minutes / 60.0) * overrun_hourly_rate))
+        booking.overrun_amount_cents = overrun_amount_cents
+
+        payment_auth = None
+        if related_request:
+            payment_auth = getattr(related_request, "paystack_reference", None) or getattr(related_request, "paystack_transaction_id", None)
+        if not payment_auth:
+            raise HTTPException(status_code=400, detail="Cannot raise overrun charge: missing parent payment authorization reference")
+
+        ok, charge_data = create_supplementary_charge(
+            authorization_code=str(payment_auth),
+            amount_kobo=int(overrun_amount_cents),
+            email=getattr(parent_user, "email", None),
+        )
+        if not ok:
+            message = charge_data.get("message") if isinstance(charge_data, dict) else "Paystack overrun charge failed"
+            raise HTTPException(status_code=400, detail=message or "Paystack overrun charge failed")
+
+        charge_ref = None
+        if isinstance(charge_data, dict):
+            payload_data = charge_data.get("data") or {}
+            charge_ref = payload_data.get("reference") or payload_data.get("id")
+        booking.overrun_paystack_ref = str(charge_ref) if charge_ref is not None else None
+        booking.overrun_hold_until = now_utc + timedelta(hours=overrun_hold_hours)
+
+        # Parent overrun charge notification
+        try:
+            msg = (
+                f"Your nanny worked {overrun_minutes/60.0:.2f} extra hours. "
+                f"R{(overrun_amount_cents/100):.2f} has been charged. "
+                "If you have a query, raise it within 24 hours."
+            )
+            _safe_send(getattr(parent_user, "email", None), "Overrun charge raised", msg)
+            _log_notification_best_effort(
+                db,
+                user_id=getattr(parent_user, "id", None),
+                event_type="overrun_charge_raised_parent",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=getattr(parent_user, "id", None),
+                event_type="overrun_charge_raised_parent",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
+        # Nanny overrun payout hold notification
+        try:
+            msg = (
+                f"You worked {overrun_minutes/60.0:.2f} extra hours. "
+                f"R{(overrun_amount_cents/100):.2f} will be paid to you in 24 hours if no query is raised."
+            )
+            _safe_send(getattr(nanny_user, "email", None), "Overrun payout pending", msg)
+            _log_notification_best_effort(
+                db,
+                user_id=getattr(nanny_user, "id", None),
+                event_type="overrun_charge_raised_nanny",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=getattr(nanny_user, "id", None),
+                event_type="overrun_charge_raised_nanny",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
     booking.status = "completed"
     db.commit()
     db.refresh(booking)
@@ -4169,11 +4357,38 @@ def nanny_check_out_booking(
         after_status=booking.status,
         request=request,
     )
+    try:
+        _safe_send(
+            getattr(parent_user, "email", None),
+            "Booking complete",
+            "Your booking is complete. You can now leave a review.",
+        )
+        _log_notification_best_effort(
+            db,
+            user_id=getattr(parent_user, "id", None),
+            event_type="booking_completed_parent",
+            channel="email",
+            status="sent",
+            reference_id=str(booking.id),
+        )
+    except Exception as exc:
+        _log_notification_best_effort(
+            db,
+            user_id=getattr(parent_user, "id", None),
+            event_type="booking_completed_parent",
+            channel="email",
+            status="failed",
+            error_message=str(exc)[:500],
+            reference_id=str(booking.id),
+        )
+
     return {
         "ok": True,
         "booking_id": booking.id,
         "check_out_at": _to_iso_z(booking.check_out_at) if booking.check_out_at else None,
         "check_out_distance_m": booking.check_out_distance_m,
+        "overrun_minutes": getattr(booking, "overrun_minutes", None),
+        "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),
     }
 
 
@@ -4289,6 +4504,120 @@ def parent_confirm_booking_check_out(
     }
 
 
+@router.post("/bookings/{booking_id}/dispute-overrun")
+def parent_dispute_overrun(
+    booking_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _parent_owned_booking_or_404(db, booking_id, user.id)
+    if not getattr(booking, "overrun_hold_until", None):
+        raise HTTPException(status_code=400, detail="No overrun hold exists for this booking")
+    if datetime.utcnow() >= booking.overrun_hold_until:
+        raise HTTPException(status_code=400, detail="Overrun dispute window has expired")
+
+    booking.overrun_disputed = True
+    booking.overrun_dispute_raised_at = datetime.utcnow()
+    db.commit()
+
+    admins = admin_emails()
+    if admins:
+        try:
+            get_email_client().send(
+                EmailMessage(
+                    to=admins,
+                    subject=f"Overrun dispute raised for booking #{booking.id}",
+                    body="\n".join(
+                        [
+                            "A parent raised an overrun dispute.",
+                            f"booking_id: {booking.id}",
+                            f"parent_user_id: {user.id}",
+                        ]
+                    ),
+                )
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=user.id,
+                event_type="overrun_dispute_raised",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=user.id,
+                event_type="overrun_dispute_raised",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
+    return {"ok": True, "booking_id": booking.id, "overrun_disputed": True}
+
+
+@router.post("/bookings/{booking_id}/dispute-payout")
+def parent_dispute_payout(
+    booking_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _parent_owned_booking_or_404(db, booking_id, user.id)
+    if not getattr(booking, "payout_hold_until", None):
+        raise HTTPException(status_code=400, detail="No payout hold exists for this booking")
+    if datetime.utcnow() >= booking.payout_hold_until:
+        raise HTTPException(status_code=400, detail="Payout dispute window has expired")
+
+    booking.payout_disputed = True
+    booking.payout_dispute_raised_at = datetime.utcnow()
+    db.commit()
+
+    admins = admin_emails()
+    if admins:
+        try:
+            get_email_client().send(
+                EmailMessage(
+                    to=admins,
+                    subject=f"Payout dispute raised for booking #{booking.id}",
+                    body="\n".join(
+                        [
+                            "A parent raised a payout dispute.",
+                            f"booking_id: {booking.id}",
+                            f"parent_user_id: {user.id}",
+                        ]
+                    ),
+                )
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=user.id,
+                event_type="payout_dispute_raised",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=user.id,
+                event_type="payout_dispute_raised",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
+    return {"ok": True, "booking_id": booking.id, "payout_disputed": True}
+
+
 @router.post("/nannies/me/bookings/{booking_id}/cancel")
 def nanny_cancel_booking(
     booking_id: int,
@@ -4317,10 +4646,82 @@ def nanny_cancel_booking(
     if getattr(booking, "booking_request_id", None):
         related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
     if related_request:
+        starts_at = _booking_request_starts_at(related_request)
+        hours_until_start = ((starts_at - datetime.utcnow()).total_seconds() / 3600.0) if starts_at else 9999.0
+        outcome = calculate_cancellation_outcome(
+            total_paid_cents=int((related_request.wage_cents or 0) + (related_request.booking_fee_cents or 0)),
+            wage_cents=int(related_request.wage_cents or 0),
+            booking_fee_cents=int(related_request.booking_fee_cents or 0),
+            cancelled_by="nanny",
+            hours_until_start=hours_until_start,
+        )
+        scenario = outcome["scenario"]
         related_request.status = "cancelled"
         related_request.admin_reason = reason
         related_request.admin_decided_at = datetime.utcnow()
         related_request.cancelled_at = datetime.utcnow()
+        related_request.company_retained_cents = int(outcome["company_retained_cents"])
+        related_request.nanny_retained_cents = int(outcome["nanny_retained_cents"])
+        related_request.refund_cents = int(outcome["parent_refund_cents"])
+        related_request.refund_status = "pending_review"
+        related_request.refund_requested_at = datetime.utcnow()
+
+        if scenario == "A":
+            apply_cancellation_weight(db, int(related_request.nanny_id), 0.5)
+            related_request.replacement_required = True
+        elif scenario == "B":
+            apply_demerit(
+                db=db,
+                nanny_id=int(related_request.nanny_id),
+                reason="scenario_b_cancel",
+                demerit_pct=0.05,
+                weight=0.75,
+                booking_id=int(related_request.id),
+                applied_by="system",
+            )
+            apply_cancellation_weight(db, int(related_request.nanny_id), 0.75)
+        elif scenario == "C":
+            apply_demerit(
+                db=db,
+                nanny_id=int(related_request.nanny_id),
+                reason="scenario_c_cancel",
+                demerit_pct=0.10,
+                weight=1.0,
+                booking_id=int(related_request.id),
+                applied_by="system",
+            )
+            apply_cancellation_weight(db, int(related_request.nanny_id), 1.0)
+
+        parent_user = db.query(models.User).filter(models.User.id == related_request.parent_user_id).first()
+        _send_cancellation_notice(
+            to_email=getattr(parent_user, "email", None),
+            subject=f"Your booking request #{related_request.id} was cancelled by nanny",
+            lines=[
+                "Your nanny cancelled this booking.",
+                f"Refund status: {related_request.refund_status}.",
+                f"Estimated refund: R{(int(related_request.refund_cents or 0)/100):.2f}.",
+            ],
+        )
+        admins = admin_emails()
+        if admins:
+            try:
+                get_email_client().send(
+                    EmailMessage(
+                        to=admins,
+                        subject=f"Refund review pending for booking request #{related_request.id}",
+                        body="\n".join(
+                            [
+                                "A nanny cancellation needs refund review.",
+                                f"booking_request_id: {related_request.id}",
+                                f"scenario: {scenario}",
+                                f"refund_cents: {related_request.refund_cents}",
+                                f"replacement_required: {bool(getattr(related_request, 'replacement_required', False))}",
+                            ]
+                        ),
+                    )
+                )
+            except Exception:
+                pass
 
     db.commit()
     db.refresh(booking)
@@ -4358,6 +4759,15 @@ def accept_nanny_booking_request(
     db: Session = Depends(get_db),
 ):
     user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+    if bool(getattr(nanny, "is_suspended", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is currently suspended. Please contact support.",
+        )
+    meets_docs, _missing_fields = nanny_meets_document_requirements(profile)
+    if not meets_docs:
+        raise HTTPException(status_code=403, detail="Your profile does not meet document requirements.")
 
     req = db.query(models.BookingRequest).filter(models.BookingRequest.id == request_id).first()
     if not req or req.nanny_id != nanny.id:
@@ -4642,6 +5052,35 @@ def compute_age(dob: Optional[date]) -> Optional[int]:
         years -= 1
     return years
 
+def nanny_meets_document_requirements(profile: Optional[models.NannyProfile]) -> tuple[bool, List[str]]:
+    if not profile:
+        return False, ["profile"]
+
+    missing_fields: List[str] = []
+    nationality = str(getattr(profile, "nationality", "") or "").strip().lower()
+
+    if nationality == "south african":
+        if not str(getattr(profile, "sa_id_number", "") or "").strip():
+            missing_fields.append("sa_id_number")
+        if not str(getattr(profile, "sa_id_document_url", "") or "").strip():
+            missing_fields.append("sa_id_document_url")
+    else:
+        if not str(getattr(profile, "passport_number", "") or "").strip():
+            missing_fields.append("passport_number")
+        if not str(getattr(profile, "passport_expiry", "") or "").strip():
+            missing_fields.append("passport_expiry")
+        if not str(getattr(profile, "passport_document_url", "") or "").strip():
+            missing_fields.append("passport_document_url")
+        permit_status = str(getattr(profile, "permit_status", "") or "").strip().lower()
+        if permit_status == "permit":
+            if not str(getattr(profile, "work_permit_expiry", "") or "").strip():
+                missing_fields.append("work_permit_expiry")
+            if not str(getattr(profile, "work_permit_document_url", "") or "").strip():
+                missing_fields.append("work_permit_document_url")
+
+    return len(missing_fields) == 0, missing_fields
+
+
 def _search_nannies_by_area(
     db: Session,
     parent_area_id: Optional[int],
@@ -4660,6 +5099,7 @@ def _search_nannies_by_area(
         .join(models.Nanny, models.Nanny.id == models.NannyProfile.nanny_id)
         .join(models.User, models.User.id == models.Nanny.user_id)
         .filter(models.Nanny.approved == True)
+        .filter(models.Nanny.is_suspended == False)
         .filter(models.User.is_active == True)
     )
 
@@ -4725,6 +5165,9 @@ def _search_nannies_by_area(
     for p in profiles:
         nanny = db.query(models.Nanny).filter(models.Nanny.id == p.nanny_id).first()
         if not nanny:
+            continue
+        meets_docs, _missing_fields = nanny_meets_document_requirements(p)
+        if not meets_docs:
             continue
         nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first()
         if not nanny_user:
@@ -5497,33 +5940,28 @@ def cancel_parent_booking_request(
     if latest_end_times and max(latest_end_times) <= now_utc:
         raise HTTPException(status_code=409, detail="Past jobs cannot be cancelled")
 
-    settings = _get_pricing_settings(db)
-    cancellation_window_hours = max(15, int(settings.get("cancellation_fee_window_hours") or 15))
-
-    # Fee window applies only after a nanny has accepted
-    any_accepted = any(r.status == "approved" for r in rows)
-    if any_accepted:
-        start_times = []
-        for req in rows:
-            try:
-                start_times.append(_parse_iso_dt(req.start_dt or req.requested_starts_at))
-            except Exception:
-                continue
-        if start_times:
-            earliest = min(start_times)
-            if (earliest - datetime.utcnow()) < timedelta(hours=cancellation_window_hours):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Cancellation within {cancellation_window_hours} hours will incur a fee. Please contact support.",
-                )
-
+    admin_recipients = admin_emails()
     for req in rows:
         if req.status == "cancelled":
             continue
+        starts_at = _booking_request_starts_at(req)
+        hours_until_start = ((starts_at - datetime.utcnow()).total_seconds() / 3600.0) if starts_at else 9999.0
+        outcome = calculate_cancellation_outcome(
+            total_paid_cents=int((req.wage_cents or 0) + (req.booking_fee_cents or 0)),
+            wage_cents=int(req.wage_cents or 0),
+            booking_fee_cents=int(req.booking_fee_cents or 0),
+            cancelled_by="parent",
+            hours_until_start=hours_until_start,
+        )
         req.status = "cancelled"
         req.admin_reason = reason
         req.admin_decided_at = datetime.utcnow()
         req.cancelled_at = datetime.utcnow()
+        req.company_retained_cents = int(outcome["company_retained_cents"])
+        req.nanny_retained_cents = int(outcome["nanny_retained_cents"])
+        req.refund_cents = int(outcome["parent_refund_cents"])
+        req.refund_status = "pending_review"
+        req.refund_requested_at = datetime.utcnow()
         _cancel_related_bookings_for_request(
             db,
             req,
@@ -5531,28 +5969,40 @@ def cancel_parent_booking_request(
             actor_user_id=user.id,
             reason=reason,
         )
-
-        # If paid and accepted, compute retention/refund
-        if req.payment_status == "paid":
-            wage = req.wage_cents or 0
-            fee = req.booking_fee_cents or 0
-            within_fee_window = False
+        if hours_until_start < 15.0 and req.nanny_id:
             try:
-                start_dt = _parse_iso_dt(req.start_dt or req.requested_starts_at)
-                within_fee_window = (start_dt - datetime.utcnow()) < timedelta(hours=cancellation_window_hours)
+                apply_cancellation_weight(db, int(req.nanny_id), 0.0)
             except Exception:
-                within_fee_window = False
-            if within_fee_window:
-                company_retained = int(round(fee * 1.0))
-                nanny_retained = int(round(wage * 0.40))
-            else:
-                company_retained = int(round(fee * 0.80))
-                nanny_retained = 0
-            refund = max(0, (wage + fee) - (company_retained + nanny_retained))
-            req.company_retained_cents = company_retained
-            req.nanny_retained_cents = nanny_retained
-            req.refund_cents = refund
-            req.refund_status = "pending_review"
+                pass
+        if admin_recipients:
+            try:
+                get_email_client().send(
+                    EmailMessage(
+                        to=admin_recipients,
+                        subject=f"Refund review pending for booking request #{req.id}",
+                        body="\n".join(
+                            [
+                                "A parent cancellation needs refund review.",
+                                f"booking_request_id: {req.id}",
+                                f"scenario: {outcome['scenario']}",
+                                f"refund_cents: {req.refund_cents}",
+                            ]
+                        ),
+                    )
+                )
+            except Exception:
+                pass
+        if int(outcome["nanny_retained_cents"]) > 0:
+            nanny_row = db.query(models.Nanny).filter(models.Nanny.id == req.nanny_id).first()
+            nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
+            _send_cancellation_notice(
+                to_email=getattr(nanny_user, "email", None),
+                subject=f"Cancellation update for booking request #{req.id}",
+                lines=[
+                    "A parent cancelled this booking.",
+                    f"You retain R{(int(outcome['nanny_retained_cents'])/100):.2f}.",
+                ],
+            )
 
     db.commit()
     log_audit(
@@ -7498,12 +7948,18 @@ def cancel_admin_booking_request(
     if not rows:
         raise HTTPException(status_code=404, detail="Booking request not found")
 
-    settings = _get_pricing_settings(db)
-    cancellation_window_hours = max(15, int(settings.get("cancellation_fee_window_hours") or 15))
-
     for group_req in rows:
         if group_req.status == "cancelled":
             continue
+        starts_at = _booking_request_starts_at(group_req)
+        hours_until_start = ((starts_at - datetime.utcnow()).total_seconds() / 3600.0) if starts_at else 9999.0
+        outcome = calculate_cancellation_outcome(
+            total_paid_cents=int((group_req.wage_cents or 0) + (group_req.booking_fee_cents or 0)),
+            wage_cents=int(group_req.wage_cents or 0),
+            booking_fee_cents=int(group_req.booking_fee_cents or 0),
+            cancelled_by="parent",
+            hours_until_start=hours_until_start,
+        )
         windows = _booking_request_windows(db, group_req)
         _cancel_related_bookings_for_request(
             db,
@@ -7522,27 +7978,32 @@ def cancel_admin_booking_request(
         group_req.admin_user_id = admin.id
         group_req.admin_decided_at = datetime.utcnow()
         group_req.cancelled_at = datetime.utcnow()
+        group_req.company_retained_cents = int(outcome["company_retained_cents"])
+        group_req.nanny_retained_cents = int(outcome["nanny_retained_cents"])
+        group_req.refund_cents = int(outcome["parent_refund_cents"])
+        group_req.refund_status = "pending_review"
+        group_req.refund_requested_at = datetime.utcnow()
 
-        if group_req.payment_status == "paid":
-            wage = group_req.wage_cents or 0
-            fee = group_req.booking_fee_cents or 0
-            within_fee_window = False
-            try:
-                start_dt = _parse_iso_dt(group_req.start_dt or group_req.requested_starts_at)
-                within_fee_window = (start_dt - datetime.utcnow()) < timedelta(hours=cancellation_window_hours)
-            except Exception:
-                within_fee_window = False
-            if within_fee_window:
-                company_retained = int(round(fee * 1.0))
-                nanny_retained = int(round(wage * 0.40))
-            else:
-                company_retained = int(round(fee * 0.80))
-                nanny_retained = 0
-            refund = max(0, (wage + fee) - (company_retained + nanny_retained))
-            group_req.company_retained_cents = company_retained
-            group_req.nanny_retained_cents = nanny_retained
-            group_req.refund_cents = refund
-            group_req.refund_status = "pending_review"
+        parent_user = db.query(models.User).filter(models.User.id == group_req.parent_user_id).first()
+        nanny_row = db.query(models.Nanny).filter(models.Nanny.id == group_req.nanny_id).first()
+        nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
+        _send_cancellation_notice(
+            to_email=getattr(parent_user, "email", None),
+            subject=f"Booking request #{group_req.id} cancelled by admin",
+            lines=[
+                "This booking was cancelled by admin.",
+                f"Refund status: {group_req.refund_status}.",
+                f"Estimated refund: R{(int(group_req.refund_cents or 0)/100):.2f}.",
+            ],
+        )
+        _send_cancellation_notice(
+            to_email=getattr(nanny_user, "email", None),
+            subject=f"Booking request #{group_req.id} cancelled by admin",
+            lines=[
+                "This booking was cancelled by admin.",
+                f"Status: {group_req.status}.",
+            ],
+        )
 
     db.commit()
     log_audit(
@@ -7575,6 +8036,238 @@ def cancel_admin_booking_request_post(
         authorization=authorization,
         db=db,
     )
+
+
+@router.post("/admin/bookings/{booking_id}/mark-no-show")
+def admin_mark_nanny_no_show(
+    booking_id: int,
+    payload: schemas.BookingCancellationRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = _require_admin_user(authorization, db)
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for marking no-show")
+
+    booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.status in ("completed", "cancelled", "rejected"):
+        raise HTTPException(status_code=400, detail="Booking cannot be marked as no-show in its current state")
+
+    before_status = booking.status
+    now_utc = datetime.utcnow()
+    booking.status = "cancelled"
+    booking.cancelled_at = now_utc
+    booking.cancellation_reason = "nanny_no_show"
+    booking.cancellation_actor_role = "admin"
+    booking.cancellation_actor_user_id = admin.id
+
+    related_request = None
+    if getattr(booking, "booking_request_id", None):
+        related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+    if related_request:
+        related_request.status = "cancelled"
+        related_request.cancelled_at = now_utc
+        related_request.admin_reason = reason
+        related_request.admin_user_id = admin.id
+        related_request.admin_decided_at = now_utc
+        related_request.company_retained_cents = 0
+        related_request.nanny_retained_cents = 0
+        related_request.refund_cents = int((related_request.total_cents or 0) or ((related_request.wage_cents or 0) + (related_request.booking_fee_cents or 0)))
+        related_request.refund_status = "pending_review"
+        related_request.refund_requested_at = now_utc
+
+    apply_no_show(
+        db=db,
+        nanny_id=int(booking.nanny_id),
+        booking_id=int(related_request.id if related_request else booking.id),
+    )
+
+    parent_user = db.query(models.User).filter(models.User.id == booking.client_user_id).first()
+    if parent_user and getattr(parent_user, "email", None):
+        try:
+            _safe_send(
+                parent_user.email,
+                "Nanny no-show update",
+                "Your nanny did not arrive. You will receive a full refund. We apologise for the inconvenience.",
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=parent_user.id,
+                event_type="nanny_no_show_parent_notice",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=parent_user.id,
+                event_type="nanny_no_show_parent_notice",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
+    admins = admin_emails()
+    if admins:
+        try:
+            get_email_client().send(
+                EmailMessage(
+                    to=admins,
+                    subject=f"Nanny no-show marked for booking #{booking.id}",
+                    body="\n".join(
+                        [
+                            "A booking has been marked as nanny no-show.",
+                            f"booking_id: {booking.id}",
+                            f"nanny_id: {booking.nanny_id}",
+                            f"parent_user_id: {booking.client_user_id}",
+                            f"reason: {reason}",
+                        ]
+                    ),
+                )
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=admin.id,
+                event_type="nanny_no_show_admin_notice",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=admin.id,
+                event_type="nanny_no_show_admin_notice",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
+    log_booking_status_change(
+        db,
+        actor_user=admin,
+        target_user_id=booking.client_user_id,
+        booking_id=booking.id,
+        before_status=before_status,
+        after_status=booking.status,
+        request=request,
+    )
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=booking.client_user_id,
+        entity="bookings",
+        entity_id=booking.id,
+        action="mark_no_show",
+        before_obj={"status": before_status},
+        after_obj={"status": booking.status, "cancellation_reason": booking.cancellation_reason, "reason": reason},
+        changed_fields=["status", "cancellation_reason"],
+        request=request,
+    )
+    db.commit()
+    return {"ok": True, "booking_id": booking.id, "status": booking.status, "cancellation_reason": booking.cancellation_reason}
+
+
+@router.post("/admin/bookings/{booking_id}/mark-parent-no-show")
+def admin_mark_parent_no_show(
+    booking_id: int,
+    payload: schemas.BookingCancellationRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = _require_admin_user(authorization, db)
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Please provide a reason for marking parent no-show")
+
+    booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking.check_in_at:
+        raise HTTPException(status_code=400, detail="Nanny must have checked in before parent no-show can be marked")
+
+    before_status = booking.status
+    now_utc = datetime.utcnow()
+    settings = _get_pricing_settings(db)
+    payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
+
+    booking.status = "completed"
+    booking.payout_hold_until = now_utc + timedelta(hours=payout_hold_hours)
+    booking.cancellation_reason = "parent_no_show"
+    booking.cancellation_actor_role = "admin"
+    booking.cancellation_actor_user_id = admin.id
+
+    related_request = None
+    if getattr(booking, "booking_request_id", None):
+        related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+    if related_request:
+        related_request.company_retained_cents = int(related_request.booking_fee_cents or 0)
+        related_request.nanny_retained_cents = int(related_request.wage_cents or 0)
+        related_request.refund_cents = 0
+        related_request.admin_reason = reason
+        related_request.admin_user_id = admin.id
+        related_request.admin_decided_at = now_utc
+
+    nanny_row = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
+    nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
+    amount_cents = int((related_request.wage_cents if related_request else 0) or 0)
+    if nanny_user and getattr(nanny_user, "email", None):
+        try:
+            _safe_send(
+                nanny_user.email,
+                "Parent no-show update",
+                f"The parent was not present. You will receive your full wage of R{(amount_cents/100):.2f} in 24 hours.",
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=nanny_user.id,
+                event_type="parent_no_show_nanny_notice",
+                channel="email",
+                status="sent",
+                reference_id=str(booking.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=nanny_user.id,
+                event_type="parent_no_show_nanny_notice",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(booking.id),
+            )
+
+    log_booking_status_change(
+        db,
+        actor_user=admin,
+        target_user_id=booking.client_user_id,
+        booking_id=booking.id,
+        before_status=before_status,
+        after_status=booking.status,
+        request=request,
+    )
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=booking.client_user_id,
+        entity="bookings",
+        entity_id=booking.id,
+        action="mark_parent_no_show",
+        before_obj={"status": before_status},
+        after_obj={"status": booking.status, "reason": reason},
+        changed_fields=["status", "payout_hold_until"],
+        request=request,
+    )
+    db.commit()
+    return {"ok": True, "booking_id": booking.id, "status": booking.status}
 
 
 @router.get("/admin/nannies/pending")
@@ -8447,6 +9140,13 @@ def approve_nanny(
         profile = models.NannyProfile(nanny_id=nanny_id)
         db.add(profile)
 
+    meets_docs, missing_fields = nanny_meets_document_requirements(profile)
+    if not meets_docs:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Profile does not meet document requirements.", "missing_fields": missing_fields},
+        )
+
     profile.is_approved = 1
     profile.approved_at = datetime.utcnow().isoformat()
     nanny.approved = True
@@ -8645,6 +9345,14 @@ def admin_set_nanny_approval(
     nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
     if not nanny:
         raise HTTPException(status_code=404, detail="Nanny not found")
+    if payload.approved:
+        profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+        meets_docs, missing_fields = nanny_meets_document_requirements(profile)
+        if not meets_docs:
+            raise HTTPException(
+                status_code=400,
+                detail={"message": "Profile does not meet document requirements.", "missing_fields": missing_fields},
+            )
     nanny.approved = bool(payload.approved)
     profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
     if profile:
@@ -8657,6 +9365,102 @@ def admin_set_nanny_approval(
     db.commit()
     db.refresh(nanny)
     return {"nanny_id": nanny.id, "approved": nanny.approved}
+
+
+@router.post("/admin/nannies/{nanny_id}/lift-suspension")
+def admin_lift_nanny_suspension(
+    nanny_id: int,
+    payload: schemas.AdminLiftNannySuspensionRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason is required")
+
+    nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first()
+    if not nanny_user:
+        raise HTTPException(status_code=404, detail="Nanny user not found")
+
+    before = {
+        "is_suspended": bool(getattr(nanny, "is_suspended", False)),
+        "suspended_at": getattr(nanny, "suspended_at", None),
+        "suspension_reason": getattr(nanny, "suspension_reason", None),
+        "suspension_lifted_at": getattr(nanny, "suspension_lifted_at", None),
+        "suspension_lifted_by": getattr(nanny, "suspension_lifted_by", None),
+    }
+
+    nanny.is_suspended = False
+    nanny.suspension_lifted_at = datetime.utcnow()
+    nanny.suspension_lifted_by = admin.id
+
+    db.commit()
+    db.refresh(nanny)
+
+    subject = "Your My Nanny account has been reactivated"
+    body = "\n".join(
+        [
+            "Your account has been reactivated and you can now accept bookings again.",
+            "",
+            f"Reason: {reason}",
+        ]
+    )
+    try:
+        if getattr(nanny_user, "email", None):
+            get_email_client().send(EmailMessage(to=[nanny_user.email], subject=subject, body=body))
+            _log_notification_best_effort(
+                db,
+                user_id=nanny_user.id,
+                event_type="nanny_suspension_lifted",
+                channel="email",
+                status="sent",
+                reference_id=str(nanny.id),
+            )
+        else:
+            _log_notification_best_effort(
+                db,
+                user_id=nanny_user.id,
+                event_type="nanny_suspension_lifted",
+                channel="email",
+                status="failed",
+                error_message="missing nanny email",
+                reference_id=str(nanny.id),
+            )
+    except Exception as exc:
+        _log_notification_best_effort(
+            db,
+            user_id=nanny_user.id,
+            event_type="nanny_suspension_lifted",
+            channel="email",
+            status="failed",
+            error_message=str(exc),
+            reference_id=str(nanny.id),
+        )
+
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=nanny.user_id,
+        entity="nannies",
+        entity_id=nanny.id,
+        action="lift_suspension",
+        before_obj=before,
+        after_obj={
+            "is_suspended": bool(getattr(nanny, "is_suspended", False)),
+            "suspension_lifted_at": getattr(nanny, "suspension_lifted_at", None),
+            "suspension_lifted_by": getattr(nanny, "suspension_lifted_by", None),
+            "reason": reason,
+        },
+        changed_fields=["is_suspended", "suspension_lifted_at", "suspension_lifted_by"],
+        request=request,
+    )
+    db.commit()
+    return {"ok": True, "nanny_id": nanny.id, "is_suspended": bool(nanny.is_suspended)}
 
 
 @router.patch("/admin/nannies/{nanny_id}/application")
@@ -9001,6 +9805,41 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         req.refund_status = "failed"
         req.refund_failed_at = datetime.utcnow()
         req.refund_failure_reason = data.get("message") or data.get("gateway_response")
+        admins = admin_emails()
+        if admins:
+            try:
+                get_email_client().send(
+                    EmailMessage(
+                        to=admins,
+                        subject=f"Paystack refund failed for booking {req.id}",
+                        body="\n".join(
+                            [
+                                "Paystack refund failed. Manual intervention required.",
+                                f"booking_request_id: {req.id}",
+                                f"refund_reference: {req.paystack_refund_reference or '-'}",
+                                f"reason: {req.refund_failure_reason or '-'}",
+                            ]
+                        ),
+                    )
+                )
+                _log_notification_best_effort(
+                    db,
+                    user_id=None,
+                    event_type="paystack_refund_failed_admin_notice",
+                    channel="email",
+                    status="sent",
+                    reference_id=str(req.id),
+                )
+            except Exception as exc:
+                _log_notification_best_effort(
+                    db,
+                    user_id=None,
+                    event_type="paystack_refund_failed_admin_notice",
+                    channel="email",
+                    status="failed",
+                    error_message=str(exc)[:500],
+                    reference_id=str(req.id),
+                )
 
     db.commit()
     return {"ok": True}

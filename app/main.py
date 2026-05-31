@@ -8,12 +8,14 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pathlib import Path
 from app.routes import router
-from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_bootstrap_admin
+from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_bootstrap_admin
 from app.routers.public import _decode_access_token, ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app import models
 from app.request_context import auth_token_ctx
+from app.services.payout import run_scheduled_payouts
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -21,6 +23,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI()
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+scheduler = AsyncIOScheduler()
 
 
 def _is_prod_like_env() -> bool:
@@ -87,6 +90,7 @@ ensure_audit_log_schema()
 ensure_booking_requests_schema()
 ensure_nanny_availability_schema()
 ensure_bookings_schema()
+ensure_nannies_schema()
 ensure_nanny_profiles_schema()
 ensure_parent_profiles_schema()
 ensure_admin_invites_schema()
@@ -96,11 +100,35 @@ ensure_qualifications_seed()
 ensure_parent_favorites_schema()
 ensure_app_settings_schema()
 ensure_pricing_settings_schema()
+ensure_nanny_demerit_log_schema()
+ensure_nanny_bank_accounts_schema()
 ensure_bootstrap_admin()
 
 app.include_router(router)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+def run_scheduled_payouts_wrapper() -> None:
+    db = SessionLocal()
+    try:
+        run_scheduled_payouts(db)
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+async def _startup_scheduler() -> None:
+    if not scheduler.get_jobs():
+        scheduler.add_job(run_scheduled_payouts_wrapper, "interval", minutes=30)
+    if not scheduler.running:
+        scheduler.start()
+
+
+@app.on_event("shutdown")
+async def _shutdown_scheduler() -> None:
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 
 @app.get("/")

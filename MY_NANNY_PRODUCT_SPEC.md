@@ -69,6 +69,197 @@ Admins can:
 - View audit logs and operational history.
 - Impersonate users for support/debugging.
 
+## 3A. Onboarding Question Inventory
+
+This section lists the questions/fields currently asked during account creation, profile completion, booking setup, and nanny onboarding. Some questions are asked directly during signup; others are asked shortly after signup as part of profile completion or the first booking flow.
+
+### Shared Account Signup Questions
+
+Asked on the create account screen:
+
+- Role: `I'm a parent` or `I'm a nanny`.
+- Name: full name.
+- Email.
+- Password.
+
+### Parent Onboarding Questions
+
+Parent account creation is currently light; most parent onboarding happens on the parent profile, saved-location, and booking setup screens.
+
+Parent profile questions:
+
+- Phone number.
+- Kids count.
+- Kids ages: years and/or months for each child.
+- What matters most in a nanny?
+- Home language.
+- Special notes.
+- Family photo.
+- Type of residence:
+  Open residential street, gated community, or access required.
+- How should the nanny gain access or let you know they have arrived?
+
+Parent saved-location questions:
+
+- Address.
+- Use current location? This captures current coordinates and reverse-geocoded address.
+- Location label:
+  Home, Work, or Other.
+- Make this my default?
+
+Parent booking setup questions:
+
+- Is this a booking or another request type?
+- Booking date/schedule.
+- Repeat booking on which days?
+- Repeat until which date?
+- Arrival time.
+- Finishing time.
+- Sleepover required?
+- Booking address choice:
+  Default home address or different saved address.
+- Confirm this is the correct location.
+- How many nannies do you need?
+- Notes for the nanny.
+
+Parent booking form/questions shown to the nanny and admin:
+
+- What will the nanny be responsible for?
+- Will you or another adult be present at the chosen address during the booking?
+  Options: I will be present, another adult will be present, no adult will be present.
+- What is the reason for your booking?
+- How many kids will be present during the booking?
+- Should the nanny provide their own meal during the booking?
+  Options: we will provide food, we will provide basics like bread/spread/coffee/tea, or nanny must provide her own meals.
+- Are there certain foods not allowed in your home?
+- Do you have dogs? Specify the breed.
+- Basic upkeep disclaimer:
+  Parent confirms that the nanny is not expected to do whole-family laundry or full-house cleaning, but basic upkeep related to the child is acceptable.
+- Medicine disclaimer:
+  Parent confirms nannies cannot be held accountable for medicine administration unless written instructions and consent are provided.
+- Additional-hours disclaimer:
+  Parent confirms extra hours will be charged if the nanny works longer than stated.
+- After-17:00 transport disclaimer:
+  Parent agrees to help the nanny get safely home if work ends after 17:00/18:00 according to the stated policy.
+
+Parent search/filter questions:
+
+- Only favourites?
+- Rated only?
+- Distance range.
+- Areas of experience.
+- Qualifications.
+- Languages.
+- Job type.
+- Driver's license requirement.
+- Transport preference: own car or public transport.
+- Dogs in the home:
+  small dogs, calm big dogs, pitbull/rottweiler, or no dogs.
+
+### Nanny Onboarding Questions
+
+Nanny signup asks more initial questions than parent signup because approval depends on identity, eligibility, and profile details.
+
+Nanny signup questions:
+
+- Phone number.
+- Alternative phone number.
+- Gender.
+- Nationality.
+- Race.
+- Passport number, if not South African.
+- Passport expiry date.
+- Passport copy upload.
+- South African ID number, if South African.
+- Copy of ID upload.
+- Do you have a valid permit?
+  Options: yes, waiver, receipt, or no permit.
+- Work permit expiry.
+- Work permit copy upload.
+- Do you have your own car?
+- Do you have a driver's license?
+- Job type:
+  Stay in, stay out, or both.
+- Do you have police clearance?
+- Do you have your own kids?
+- If yes, how old are they and where do they stay?
+- Do you have any medical conditions or chronic medications?
+- Have you done training with My Nanny?
+
+Nanny profile completion questions:
+
+- Profile photo.
+- Full name.
+- Phone number.
+- Alternative phone number.
+- Gender.
+- Date of birth.
+- Race.
+- Do you have your own car?
+- Do you have a driver's license?
+- Job type:
+  Stay in, stay out, or both.
+- Have you done training with My Nanny?
+- Are you currently available for jobs?
+  Options: piece jobs and permanent, unavailable for now, piece jobs only, permanent jobs only.
+- Bio, currently present but hidden/temporary.
+- Do you have your own kids?
+- If yes, how old are they and where do they stay?
+- Do you have any medical conditions or chronic medications?
+- Nationality.
+- Passport number.
+- Passport expiry date.
+- Passport copy upload.
+- South African ID number.
+- Copy of ID upload.
+- Permit/waiver/receipt status.
+- Waiver, if no permit.
+- Permit/waiver/receipt copy upload.
+- Police clearance/criminal check upload.
+- Home address.
+- Use current location?
+- Languages.
+- Driver's license document upload.
+- Certificates upload.
+
+Nanny previous-job/reference questions:
+
+- Role.
+- Employer/family.
+- Period.
+- What kind of care did you provide for this family?
+  Options include childcare for toddlers, infant care, elderly care, domestic house cleaning, and disability care.
+- If childcare/infant care: how old were the kids when you started?
+- If disability care: what was the disability?
+- Reference name.
+- Reference phone.
+- Relationship.
+- Written reference upload.
+
+Nanny availability questions:
+
+- Ready for bookings / inactive toggle.
+- Weekly start date.
+- Number of weeks.
+- Weekdays available/unavailable.
+- Start time.
+- End time.
+- Availability type:
+  available or unavailable/blocked.
+- Calendar selection:
+  available, unavailable, cancel.
+
+Admin-completed or admin-locked nanny onboarding fields:
+
+- Qualifications.
+- Areas of experience.
+- Preference with dogs:
+  I prefer small dogs, any dog is fine, not pitbulls or rottweilers, or no dogs.
+- Studying details, when the `Studying` qualification is selected.
+- Application status:
+  approved, declined, hold, or pending.
+- Admin reason for hold/decline/manual decision.
+
 ## 4. Major Screens
 
 ### Parent Screens
@@ -281,8 +472,77 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 
 ### Email/Notifications
 
-- Utility email functions exist.
-- Notifications are used for booking responses, reassignment, overdue unaccepted requests, and admin events.
+- Utility email functions exist in the backend.
+- Current notification delivery is mostly email-based, with some WhatsApp support for check-in notifications.
+- Notification sending is trigger-driven inside route handlers rather than managed through a central notification table, queue, or scheduler.
+
+### Current Notification Trigger Matrix
+
+| Event | Trigger in product flow | Recipient(s) | Current behavior |
+| --- | --- | --- | --- |
+| New booking request created | Parent creates a direct/legacy booking request | Requested nanny and admins | Sends "New booking request" email with booking/request details and admin link. |
+| Admin assigns replacement after rejection | Admin rejects original request and assigns another nanny | Parent, replacement nanny, admins | Sends reassignment/update emails and creates/updates the request path. |
+| Admin manually reassigns a booking | Admin manually assigns/reassigns a booking request | Parent, previous nanny, new nanny | Parent is told the booking was updated; previous nanny is told it was removed; new nanny is told it was assigned. |
+| Nanny accepts, declines, or marks deciding | Nanny responds to a booking request | Parent and admins | Sends nanny response email with request ID, time window, and response note. |
+| Pending request not accepted within 6 hours | Admin pending/list/detail/overview checks mark old pending requests | Admins | Sends one overdue email and stamps the request as notified. This is not currently a background job. |
+| Nanny cancels a booking | Nanny cancellation endpoint | Admins | Sends admin alert saying admin attention is required before contacting the client. |
+| Nanny checks in | Nanny check-in endpoint | Parent | Sends email and/or WhatsApp depending on parent notification preferences, with fallback attempts. |
+| Parent denies nanny check-in/check-out time | Parent denies reported arrival/completion time | Admins | Sends admin email requiring manual review. |
+| Admin invite created | Admin creates invitation | Invited admin email | Sends invite email with signup path. |
+
+### Notification Gaps
+
+- There is no single notification policy table that defines every trigger, recipient, channel, template, fallback, and retry rule.
+- There is no in-app notification center yet.
+- There is no durable notification log for delivery status, retries, or failed messages.
+- Overdue unaccepted booking alerts are triggered when admin routes are viewed, not by a scheduled worker.
+- Parent/admin cancellation, refund approval/denial, payment success/failure, profile approval, document rejection, and booking completion notifications need a formal trigger decision.
+- WhatsApp is not yet a fully generalized notification channel across all critical events.
+
+## 15A. Cancellation and Refund Policy in Code
+
+The app already has cancellation and refund behavior in code, but the business policy still needs to be written clearly for parents, nannies, and admins.
+
+### Current Parent Cancellation Behavior
+
+- Parents can cancel their own booking request/group with a required cancellation reason.
+- Past jobs cannot be cancelled by the parent cancellation endpoint.
+- If a nanny has already accepted the booking and the booking is inside the configured cancellation window, the parent is blocked with a message to contact support.
+- If a paid booking is cancelled, the request is marked for refund review.
+- Current refund retention calculation:
+  - Inside fee window: company retains 100% of the booking fee and nanny retains 40% of wage.
+  - Outside fee window: company retains 80% of the booking fee and nanny retains 0% of wage.
+  - Refund amount is calculated as total paid minus retained amounts.
+
+### Current Admin Cancellation Behavior
+
+- Admin can cancel a booking request/group with a required reason.
+- Related booking rows are cancelled.
+- Admin-blocked availability created for the request is cleared.
+- Paid cancellations use the same retained/refund calculation as parent cancellation.
+- Refunds are placed into `pending_review` before admin approval/denial.
+
+### Current Nanny Cancellation Behavior
+
+- Nannies can cancel their own active/upcoming booking with a required reason unless the booking is already completed, cancelled, or rejected.
+- The related booking request is also marked cancelled.
+- Admins are notified that admin attention is required before the client is contacted.
+- The nanny cancellation path does not yet define a parent refund/credit outcome or nanny penalty policy.
+
+### Current Refund Review Behavior
+
+- Admin can list refund review items.
+- Admin can approve a refund, which calls Paystack refund creation when a transaction reference exists.
+- Admin can deny a refund with a reason.
+- Paystack webhook handling updates refund status for processed/failed refund events.
+
+### Cancellation Policy Gaps
+
+- The user-facing cancellation policy is not documented yet.
+- The configured cancellation window is inconsistent in code: database/admin defaults use 12 hours in places, while public cancellation logic enforces a minimum of 15 hours.
+- The product needs a clear rule for who may cancel, at what time, what fees apply, what the nanny earns, what the agency retains, and what the parent receives.
+- Nanny cancellation consequences are not fully defined.
+- No-show, late arrival, parent denial of times, extra hours, illness, emergency, and same-day dispute policies still need operational rules.
 
 ## 16. Security and Permissions
 
@@ -292,6 +552,33 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 - Some legacy compatibility paths exist.
 - Admin impersonation is available and should be tightly controlled/audited.
 - Text fields use contact-info redaction in important booking notes/profile paths.
+
+## 16A. POPIA and Sensitive Data Position
+
+The app collects high-sensitivity personal information, including SA ID numbers, passport numbers, identity/passport documents, family photos, addresses, location coordinates, child/family details, and medical condition information. POPIA compliance is therefore a launch requirement, not a nice-to-have.
+
+### Current Technical Controls Already Present
+
+- Role-based access exists for parent, nanny, and admin endpoints.
+- Admin-only endpoints are guarded.
+- Cookie auth and CSRF handling are present in the frontend helper.
+- SA ID numbers are validated for format/checksum/date in nanny onboarding/profile flows.
+- Contact details are redacted from several free-text booking/profile fields to discourage off-platform contact sharing.
+- Approved nanny profile policy locks key identity fields from casual editing.
+- Uploaded family photos and nanny identity/passport documents are stored as uploaded file URLs.
+- Audit logging exists for important admin/user actions in several flows.
+
+### POPIA Gaps Before Launch
+
+- There is no documented privacy notice and consent flow covering what data is collected, why, how long it is kept, and who receives it.
+- There is no retention/deletion policy for ID documents, passport documents, family photos, medical information, old bookings, chat/notes, and audit records.
+- There is no documented data subject request process for access, correction, export, deletion, or objection.
+- There is no documented breach response process.
+- There is no production storage policy for encryption at rest, private document access, backups, and document expiry.
+- There is no access minimization policy for which admin roles may view sensitive documents and medical/family information.
+- There is no operator/third-party processing register for Paystack, Google, email/SMTP, WhatsApp, hosting, backups, or analytics.
+- There is no explicit parental/child data policy, even though child/family details may be stored.
+- The current implementation should be treated as partial technical groundwork, not POPIA compliance.
 
 ## 17. Known Current Shortcomings
 
@@ -325,12 +612,18 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 - Payment status exists, Paystack webhook exists, and refund flows exist, but full payment lifecycle needs end-to-end production QA.
 - Nanny earnings display is based on computed wage snapshots; final reconciliation after extra hours/check-out confirmation needs policy review.
 - Refund, cancellation, company retained, nanny retained, and paid-at fields need clear accounting documentation.
+- Cancellation rules exist in code but need a signed-off business policy and user-facing wording.
 
 ### Admin Operations
 
 - Admin manual assignment is powerful but needs strong audit review and clear user notifications.
 - Admin dashboard grouping logic is complex and should have automated tests.
 - Reports likely need reconciliation against payments, refunds, cancellations, and booking states.
+- Notification triggers exist in code but need a central policy matrix, delivery logging, and retry handling.
+
+### Compliance
+
+- POPIA-related technical controls exist only partially; launch requires a proper privacy, retention, access, and breach-response plan.
 
 ### Testing
 
@@ -408,7 +701,6 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 - What is the official policy for late check-out, extra hours, and parent confirmation disputes?
 - What is the official cancellation/refund policy by time window?
 - Should manual admin reassignment notify all previously broadcasted nannies?
-- Which documents are required before a nanny can be searchable/bookable?
 
 ## 21. Immediate Loose Ends From Recent Work
 
@@ -421,3 +713,31 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 - Add UI logic to hide or label expired adverts.
 - Add tests for the new accept guard and earnings visibility.
 
+## 22. Product Decisions Implemented (May 31, 2026)
+
+- Task 9 completed: suspension and document enforcement in search and booking.
+- Search eligibility now requires all of the following:
+  - nanny is approved
+  - nanny is not suspended
+  - nanny profile meets document requirements
+- Booking acceptance now blocks:
+  - suspended nanny accounts (403)
+  - nanny profiles that do not meet document requirements (403)
+- Admin approval now blocks approval when document requirements are incomplete and returns missing fields (400).
+- Admin reactivation endpoint implemented:
+  - `POST /admin/nannies/{nanny_id}/lift-suspension`
+  - required body: `{ "reason": "..." }`
+  - clears suspension, records lift timestamp/admin user, sends nanny reactivation notice, logs audit + notification events.
+
+### Searchable/Bookable Document Rule (Current)
+
+- South African nanny:
+  - `sa_id_number`
+  - `sa_id_document_url`
+- Non-South African nanny:
+  - `passport_number`
+  - `passport_expiry`
+  - `passport_document_url`
+  - and when `permit_status == "permit"`:
+    - `work_permit_expiry`
+    - `work_permit_document_url`

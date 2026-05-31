@@ -115,8 +115,8 @@
       const startDt = slot && slot.start_dt ? new Date(slot.start_dt) : null;
       const endDt = slot && slot.end_dt ? new Date(slot.end_dt) : null;
       if (!startDt || Number.isNaN(startDt.getTime()) || !endDt || Number.isNaN(endDt.getTime())) {
-        const fallbackStart = window.formatDateTimeZA ? window.formatDateTimeZA(slot && slot.start_dt) : (slot && slot.start_dt) || "-";
-        const fallbackEnd = window.formatDateTimeZA ? window.formatDateTimeZA(slot && slot.end_dt) : (slot && slot.end_dt) || "-";
+        const fallbackStart = window.formatDateTimeDisplay(slot && slot.start_dt);
+        const fallbackEnd = window.formatDateTimeDisplay(slot && slot.end_dt);
         return `${fallbackStart} to ${fallbackEnd}`;
       }
       const dateLabel = new Intl.DateTimeFormat("en-ZA", {
@@ -207,8 +207,8 @@
         return;
       }
       items.forEach(r => {
-        const start = window.formatDateTimeZA ? window.formatDateTimeZA(r.start_dt) : (r.start_dt || "-");
-        const end = window.formatDateTimeZA ? window.formatDateTimeZA(r.end_dt) : (r.end_dt || "-");
+        const start = window.formatDateTimeDisplay(r.start_dt);
+        const end = window.formatDateTimeDisplay(r.end_dt);
         const endMs = r.end_dt ? new Date(r.end_dt).getTime() : NaN;
         const isPastBooking = Number.isFinite(endMs) && endMs < Date.now();
         const slots = Array.isArray(r.slots) ? r.slots : [];
@@ -273,7 +273,7 @@
             <div class="fieldList">${expectationFieldsHtml}</div>
           </div>
           <div class="muted" style="margin-top:10px;">Request status: ${escapeHtml(r.status || "-")}</div>
-          ${r.nanny_responded_at ? `<div class="muted">Last updated by you: ${escapeHtml(window.formatDateTimeZA ? window.formatDateTimeZA(r.nanny_responded_at) : r.nanny_responded_at)}</div>` : ""}
+          ${r.nanny_responded_at ? `<div class="muted">Last updated by you: ${escapeHtml(window.formatDateTimeDisplay(r.nanny_responded_at))}</div>` : ""}
           ${r.nanny_response_note ? `<div class="muted">Your note: ${escapeHtml(r.nanny_response_note)}</div>` : ""}
           ${earningsHtml}
           ${canRespond ? `<div class="commitNotice">Accept once you are ready to commit to this job. If you are not ready yet, you can mark it as still deciding, or decline it with a reason so admin can follow up quickly.</div><div class="actions"><button class="btn acceptBtn" data-id="${r.id}">Accept this booking</button><button class="btn decideBtn" data-id="${r.id}" data-response="deciding">Still deciding</button><button class="btn declineBtn" data-id="${r.id}" data-response="declined">Decline</button></div>` : ""}

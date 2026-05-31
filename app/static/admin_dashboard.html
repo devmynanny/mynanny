@@ -347,8 +347,8 @@
         row.style.borderBottom = "1px solid #eee";
         const loc = u.location?.label || "-";
         const rating = (u.rating === null || u.rating === undefined) ? "-" : `${u.rating} (${u.review_count || 0})`;
-        const joined = u.joined_at ? (window.formatDateTimeZA ? window.formatDateTimeZA(u.joined_at) : new Date(u.joined_at).toLocaleString()) : "-";
-        const lastActive = u.last_activity_at ? (window.formatDateTimeZA ? window.formatDateTimeZA(u.last_activity_at) : new Date(u.last_activity_at).toLocaleString()) : "-";
+        const joined = window.formatDateTimeDisplay(u.joined_at);
+        const lastActive = window.formatDateTimeDisplay(u.last_activity_at);
         const phoneBits = [u.phone, u.phone_alt].filter(Boolean);
         const identityDoc = u.sa_id_number || u.passport_number || "-";
         row.innerHTML = `
@@ -739,7 +739,7 @@
       const bookingFormItems = Array.isArray(data?.booking_form?.items) ? data.booking_form.items : [];
       const fallback = data?.booking_form?.fallback_profile || {};
       const days = Array.isArray(data?.booking_days) ? data.booking_days : [];
-      const formatDt = (value) => value ? (window.formatDateTimeZA ? window.formatDateTimeZA(value) : new Date(value).toLocaleString()) : "-";
+      const formatDt = (value) => window.formatDateTimeDisplay(value);
       const fallbackRows = [
         ["Booking responsibilities", fallback.booking_responsibilities],
         ["Adult present", fallback.booking_adult_present],

@@ -51,6 +51,7 @@ class BookingRequest(Base):
 	admin_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
 	admin_decided_at = Column(DateTime(timezone=True), nullable=True)
 	admin_reason = Column(Text, nullable=True)
+	replacement_required = Column(Boolean, nullable=False, default=False)
 	unaccepted_admin_notified_at = Column(DateTime(timezone=True), nullable=True)
 	nanny_response_status = Column(Text, nullable=True, default="pending")
 	nanny_responded_at = Column(DateTime(timezone=True), nullable=True)

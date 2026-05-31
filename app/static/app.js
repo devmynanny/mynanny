@@ -31,6 +31,47 @@ function formatDateTimeZA(value) {
 }
 
 window.formatDateTimeZA = formatDateTimeZA;
+window.formatDateTimeDisplay = function formatDateTimeDisplay(value, fallback = "-") {
+  if (value == null || value === "") return fallback;
+  const rendered = formatDateTimeZA(value);
+  if (!rendered || rendered === "-" || rendered === "Invalid Date") return fallback;
+  return rendered;
+};
+
+window.formatDateValueZA = function formatDateValueZA(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+window.parseDateOnlyZA = function parseDateOnlyZA(dateStr) {
+  if (!dateStr) return null;
+  const date = new Date(`${dateStr}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+window.formatDateLabelZA = function formatDateLabelZA(dateStr) {
+  const date = window.parseDateOnlyZA(dateStr);
+  if (!date) return String(dateStr || "");
+  return date.toLocaleDateString("en-ZA", {
+    weekday: "short",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
+
+window.formatShortDateLabelZA = function formatShortDateLabelZA(dateStr) {
+  const date = window.parseDateOnlyZA(dateStr);
+  if (!date) return String(dateStr || "");
+  return date.toLocaleDateString("en-ZA", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+};
 
 function toIsoFromZA(dateStr, timeStr) {
   if (!dateStr || !timeStr) return null;
@@ -50,6 +91,7 @@ window.toIsoFromZA = toIsoFromZA;
 function getImpersonationToken() {
   return sessionStorage.getItem("impersonation_token");
 }
+window.getImpersonationToken = getImpersonationToken;
 
 function getCookie(name) {
   const key = `${name}=`;
@@ -68,6 +110,12 @@ function getCsrfToken() {
 }
 
 window.getCsrfToken = getCsrfToken;
+
+function authHeaders(extra = {}) {
+  const token = getImpersonationToken();
+  return Object.assign({}, extra || {}, token ? { Authorization: "Bearer " + token } : {});
+}
+window.authHeaders = authHeaders;
 
 async function fetchJson(url, opts = {}) {
   const token = getImpersonationToken();
@@ -127,6 +175,7 @@ async function fetchJson(url, opts = {}) {
 
   return data;
 }
+window.fetchJson = fetchJson;
 
 async function requireMe() {
   const me = await fetchJson("/auth/me").catch(() => null);

@@ -5,12 +5,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import func, or_, Numeric
+from sqlalchemy import func, or_, Numeric, text
 from app.db import SessionLocal
 from app import models
 from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny, _ensure_default_nanny_tags
 from app.services.audit import log_audit
 from app.services.paystack import create_refund
+from app.utils.email import EmailMessage, get_email_client
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -42,6 +43,42 @@ def get_db():
 
 def require_admin(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
 	require_admin_user(authorization, db)
+
+
+def _notification_log_exists(db: Session) -> bool:
+    row = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_log'")).fetchone()
+    return row is not None
+
+
+def _log_notification_best_effort(
+    db: Session,
+    *,
+    user_id: Optional[int],
+    event_type: str,
+    channel: str,
+    status: str,
+    error_message: Optional[str] = None,
+    reference_id: Optional[str] = None,
+) -> None:
+    if not _notification_log_exists(db):
+        return
+    db.execute(
+        text(
+            """
+            INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, created_at)
+            VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :created_at)
+            """
+        ),
+        {
+            "user_id": user_id,
+            "event_type": event_type,
+            "channel": channel,
+            "status": status,
+            "error_message": error_message,
+            "reference_id": reference_id,
+            "created_at": datetime.utcnow(),
+        },
+    )
 
 
 @router.get("/integrations/google-maps", dependencies=[Depends(require_admin)])
@@ -109,7 +146,7 @@ def get_pricing_settings(db: Session = Depends(get_db)):
             booking_fee_pct_1_5=0.30,
             booking_fee_pct_6_10=0.27,
             booking_fee_pct_10_plus=0.25,
-            cancellation_fee_window_hours=12,
+            cancellation_fee_window_hours=15,
         )
         db.add(row)
         db.commit()
@@ -133,7 +170,7 @@ def get_pricing_settings(db: Session = Depends(get_db)):
         "booking_fee_pct_1_5": float(row.booking_fee_pct_1_5),
         "booking_fee_pct_6_10": float(row.booking_fee_pct_6_10),
         "booking_fee_pct_10_plus": float(row.booking_fee_pct_10_plus),
-        "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 12) or 12),
+        "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 15) or 15),
     }
 
 
@@ -445,7 +482,38 @@ def approve_refund(
     req.refund_review_reason = payload.reason if payload else None
     db.commit()
 
-    return refund_booking_request(job_id, RefundRequest(amount_cents=payload.amount_cents if payload else None), authorization, db)
+    result = refund_booking_request(job_id, RefundRequest(amount_cents=payload.amount_cents if payload else None), authorization, db)
+    parent = db.query(models.User).filter(models.User.id == req.parent_user_id).first()
+    amount_cents = int((result or {}).get("refund_cents") or (req.refund_cents or 0))
+    if parent and getattr(parent, "email", None):
+        try:
+            get_email_client().send(
+                EmailMessage(
+                    to=[parent.email],
+                    subject="Refund approved",
+                    body=f"Your refund of R{(amount_cents/100):.2f} has been processed.",
+                )
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=parent.id,
+                event_type="refund_approved_parent_notice",
+                channel="email",
+                status="sent",
+                reference_id=str(req.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=parent.id,
+                event_type="refund_approved_parent_notice",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(req.id),
+            )
+    db.commit()
+    return result
 
 
 @router.post("/booking-requests/{job_id}/refund/deny", dependencies=[Depends(require_admin)])
@@ -485,6 +553,42 @@ def deny_refund(
         changed_fields=["refund_status", "refund_review_reason"],
         request=None,
     )
+
+    parent = db.query(models.User).filter(models.User.id == req.parent_user_id).first()
+    amount_cents = int(req.refund_cents or 0)
+    reason_text = (req.refund_review_reason or "").strip() or "No reason provided."
+    if parent and getattr(parent, "email", None):
+        try:
+            get_email_client().send(
+                EmailMessage(
+                    to=[parent.email],
+                    subject="Refund denied",
+                    body=(
+                        f"Your refund request has been reviewed. R{(amount_cents/100):.2f} will not be refunded.\n"
+                        f"Reason: {reason_text}\n"
+                        "Contact support if you have questions."
+                    ),
+                )
+            )
+            _log_notification_best_effort(
+                db,
+                user_id=parent.id,
+                event_type="refund_denied_parent_notice",
+                channel="email",
+                status="sent",
+                reference_id=str(req.id),
+            )
+        except Exception as exc:
+            _log_notification_best_effort(
+                db,
+                user_id=parent.id,
+                event_type="refund_denied_parent_notice",
+                channel="email",
+                status="failed",
+                error_message=str(exc)[:500],
+                reference_id=str(req.id),
+            )
+    db.commit()
 
     return {"ok": True, "refund_status": req.refund_status}
 

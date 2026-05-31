@@ -59,6 +59,15 @@ class Nanny(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
     approved = Column(Boolean, nullable=False, default=False)
+    rating_demerit_pct = Column(Float, nullable=False, default=0)
+    cancellation_count = Column(Integer, nullable=False, default=0)
+    no_show_count = Column(Integer, nullable=False, default=0)
+    admin_review_flagged = Column(Boolean, nullable=False, default=False)
+    is_suspended = Column(Boolean, nullable=False, default=False)
+    suspended_at = Column(DateTime, nullable=True)
+    suspension_reason = Column(Text, nullable=True)
+    suspension_lifted_at = Column(DateTime, nullable=True)
+    suspension_lifted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     profile = relationship("NannyProfile", back_populates="nanny", uselist=False)
 
@@ -104,6 +113,23 @@ class Booking(Base):
     google_calendar_event_id = Column(String, nullable=True)
     google_calendar_synced_at = Column(DateTime, nullable=True)
     google_calendar_sync_error = Column(Text, nullable=True)
+    overrun_minutes = Column(Integer, nullable=True)
+    overrun_amount_cents = Column(Integer, nullable=True)
+    overrun_paystack_ref = Column(Text, nullable=True)
+    overrun_hold_until = Column(DateTime, nullable=True)
+    overrun_disputed = Column(Boolean, nullable=False, default=False)
+    overrun_dispute_raised_at = Column(DateTime, nullable=True)
+    overrun_resolved_at = Column(DateTime, nullable=True)
+    overrun_resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    overrun_resolution = Column(Text, nullable=True)
+    overrun_released_at = Column(DateTime, nullable=True)
+    payout_hold_until = Column(DateTime, nullable=True)
+    payout_released_at = Column(DateTime, nullable=True)
+    payout_disputed = Column(Boolean, nullable=False, default=False)
+    payout_dispute_raised_at = Column(DateTime, nullable=True)
+    payout_resolved_at = Column(DateTime, nullable=True)
+    payout_resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    payout_resolution = Column(Text, nullable=True)
 
 
 class Review(Base):
@@ -250,6 +276,39 @@ class PricingSettings(Base):
     booking_fee_pct_6_10 = Column(Numeric(5, 4), nullable=False, default=0.27)
     booking_fee_pct_10_plus = Column(Numeric(5, 4), nullable=False, default=0.25)
     cancellation_fee_window_hours = Column(Integer, nullable=False, default=15)
+    overrun_hourly_weekday = Column(Integer, nullable=False, default=4500)
+    overrun_hourly_weekend = Column(Integer, nullable=False, default=5000)
+    overrun_hold_hours = Column(Integer, nullable=False, default=24)
+    payout_hold_hours = Column(Integer, nullable=False, default=24)
+
+
+class NannyDemeritLog(Base):
+    __tablename__ = "nanny_demerit_log"
+
+    id = Column(Integer, primary_key=True)
+    nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
+    booking_id = Column(BigInteger, ForeignKey("booking_requests.id"), nullable=True)
+    reason = Column(Text, nullable=False)
+    demerit_pct = Column(Float, nullable=False)
+    weight = Column(Float, nullable=False, default=0)
+    cumulative_demerit_pct = Column(Float, nullable=False)
+    applied_at = Column(DateTime, nullable=False, server_default=func.now())
+    applied_by = Column(Text, nullable=False)
+    reversed_at = Column(DateTime, nullable=True)
+    reversed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reversal_reason = Column(Text, nullable=True)
+
+
+class NannyBankAccount(Base):
+    __tablename__ = "nanny_bank_accounts"
+
+    id = Column(Integer, primary_key=True)
+    nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
+    account_name = Column(Text, nullable=False)
+    account_number = Column(Text, nullable=False)
+    bank_code = Column(Text, nullable=False)
+    is_verified = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
 class AppSettings(Base):
