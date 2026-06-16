@@ -53,8 +53,26 @@
   </div>
 
     <div class="card">
-      <h3>Paid Jobs Only</h3>
+      <h3>Accounting Summary</h3>
       <div class="grid" id="statsGrid"></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0;">Payout Reconciliation</h3>
+          <div class="muted">Base payouts and overtime payouts are shown as separate line items.</div>
+        </div>
+        <div class="field">
+          <label for="payoutStatus">Filter</label>
+          <select id="payoutStatus">
+            <option value="all">All</option>
+            <option value="pending">Pending</option>
+            <option value="released">Released</option>
+            <option value="blocked">Blocked</option>
+          </select>
+        </div>
+      </div>
+      <div id="payoutsList" style="margin-top:14px;"></div>
     </div>
     <div class="card">
       <h3>Refunds</h3>
@@ -64,6 +82,71 @@
   <script src="/static/app.js?v=2"></script>
   <script>
     function cents(v){ return "R" + ((v||0)/100).toFixed(2); }
+
+    function fmtDt(value) {
+      if (!value) return "-";
+      const dt = new Date(value);
+      if (Number.isNaN(dt.getTime())) return value;
+      return dt.toLocaleString();
+    }
+
+    function payoutBadge(state) {
+      const map = {
+        released: "Released",
+        due: "Due",
+        pending: "Pending",
+        awaiting_parent: "Awaiting parent",
+        queried: "Queried",
+        blocked: "Blocked",
+        missing_recipient: "Missing recipient",
+      };
+      return map[state] || state || "Pending";
+    }
+
+    function payoutRowHtml(item) {
+      const amount = cents(item.net_amount_cents || item.gross_amount_cents || 0);
+      const gross = cents(item.gross_amount_cents || 0);
+      const debt = cents(item.debt_deducted_cents || 0);
+      const ref = item.kind === "overtime" ? "Overtime" : "Base payout";
+      return `
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px solid #eee;">
+          <div style="min-width:0;">
+            <div><strong>${ref} • Booking #${item.booking_id}</strong></div>
+            <div class="muted">${escapeHtml(item.parent_name || "-")} → ${escapeHtml(item.nanny_name || "-")}</div>
+            <div class="muted">Gross ${gross} • Net ${amount} • Debt ${debt} • State ${escapeHtml(payoutBadge(item.state))}</div>
+            <div class="muted">Hold ${escapeHtml(fmtDt(item.hold_until))} • Released ${escapeHtml(fmtDt(item.released_at))}</div>
+            <div class="muted">Bank ${escapeHtml(item.bank_name || "-")} • Recipient ${escapeHtml(item.recipient_code || "missing")}</div>
+          </div>
+          <div style="text-align:right;white-space:nowrap;">
+            <div><strong>${item.transfer_ready ? "Ready" : "Not ready"}</strong></div>
+            <div class="muted">${escapeHtml(item.kind || "base")}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function loadPayouts() {
+      const status = document.getElementById("payoutStatus").value;
+      const range = document.getElementById("range").value;
+      const start = document.getElementById("start").value;
+      const end = document.getElementById("end").value;
+      const qs = new URLSearchParams();
+      if (start && end) {
+        qs.set("start", start + "T00:00:00");
+        qs.set("end", end + "T23:59:59");
+      } else {
+        qs.set("range", range);
+      }
+      qs.set("status", status);
+      const data = await fetchJson("/admin/accounting/payouts?" + qs.toString());
+      const container = document.getElementById("payoutsList");
+      const list = data?.results || [];
+      if (!list.length) {
+        container.innerHTML = "<div class=\"muted\">No payout items in this range.</div>";
+        return;
+      }
+      container.innerHTML = list.map(payoutRowHtml).join("");
+    }
 
     async function runReport() {
       const range = document.getElementById("range").value;
@@ -76,7 +159,7 @@
       } else {
         qs.set("range", range);
       }
-      const data = await fetchJson("/admin/reports/jobs?" + qs.toString());
+      const data = await fetchJson("/admin/accounting/summary?" + qs.toString());
       const grid = document.getElementById("statsGrid");
       grid.innerHTML = `
         <div><strong>Total paid jobs</strong><div class="muted">${data.total_paid_jobs}</div></div>
@@ -86,14 +169,27 @@
         <div><strong>Cancelled</strong><div class="muted">${data.cancelled}</div></div>
         <div><strong>Total paid</strong><div class="muted">${cents(data.total_paid_cents)}</div></div>
         <div><strong>Company income</strong><div class="muted">${cents(data.company_income_cents)}</div></div>
+        <div><strong>Nanny wages</strong><div class="muted">${cents(data.nanny_income_cents)}</div></div>
         <div><strong>Refunded</strong><div class="muted">${cents(data.refunded_cents)}</div></div>
         <div><strong>Net company income</strong><div class="muted">${cents(data.net_company_income_cents)}</div></div>
-        <div><strong>Nanny wages</strong><div class="muted">${cents(data.nanny_income_cents)}</div></div>
+        <div><strong>Payments processed</strong><div class="muted">${cents(data.payments_processed_cents)}</div></div>
+        <div><strong>Overtime charges</strong><div class="muted">${cents(data.overtime_charges_cents)}</div></div>
+        <div><strong>Refunds processed</strong><div class="muted">${cents(data.refunds_processed_cents)}</div></div>
+        <div><strong>Payouts released</strong><div class="muted">${cents(data.payouts_released_cents)}</div></div>
+        <div><strong>Overrun payouts released</strong><div class="muted">${cents(data.overrun_payouts_released_cents)}</div></div>
+        <div><strong>Payouts pending</strong><div class="muted">${cents(data.payouts_pending_cents)}</div></div>
+        <div><strong>Overtime pending</strong><div class="muted">${cents(data.overtime_pending_cents)}</div></div>
+        <div><strong>Debt deducted</strong><div class="muted">${cents(data.debt_deducted_cents)}</div></div>
+        <div><strong>Debt outstanding</strong><div class="muted">${cents(data.debt_outstanding_cents)}</div></div>
       `;
+      await loadPayouts();
     }
 
     document.getElementById("runBtn").addEventListener("click", () => {
       runReport().catch(e => alert(e.message || "Error"));
+    });
+    document.getElementById("payoutStatus").addEventListener("change", () => {
+      loadPayouts().catch(e => alert(e.message || "Error"));
     });
     document.getElementById("backBtn").addEventListener("click", () => {
       location.href = "/static/admin_dashboard.html";

@@ -177,6 +177,40 @@ async function fetchJson(url, opts = {}) {
 }
 window.fetchJson = fetchJson;
 
+async function startParentPaymentMethodSetup(callbackUrl = null) {
+  const current = new URL(window.location.href);
+  current.searchParams.set("payment_method", "verify");
+  const data = await fetchJson("/parent/payment-method/initialize", {
+    method: "POST",
+    body: JSON.stringify({
+      callback_url: callbackUrl || current.toString()
+    })
+  });
+  if (!data?.authorization_url) {
+    throw new Error("Payment setup could not be started");
+  }
+  window.location.href = data.authorization_url;
+}
+window.startParentPaymentMethodSetup = startParentPaymentMethodSetup;
+
+async function verifyParentPaymentMethodFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("payment_method") !== "verify") return null;
+  const reference = params.get("reference") || params.get("trxref");
+  if (!reference) return null;
+  const result = await fetchJson("/parent/payment-method/verify", {
+    method: "POST",
+    body: JSON.stringify({ reference })
+  });
+  params.delete("payment_method");
+  params.delete("reference");
+  params.delete("trxref");
+  const cleanUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
+  window.history.replaceState({}, document.title, cleanUrl);
+  return result;
+}
+window.verifyParentPaymentMethodFromUrl = verifyParentPaymentMethodFromUrl;
+
 async function requireMe() {
   const me = await fetchJson("/auth/me").catch(() => null);
   if (!me) {

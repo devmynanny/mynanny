@@ -29,7 +29,9 @@ from app.services.cancellation import calculate_cancellation_outcome
 from app.services.demerit import apply_demerit, apply_cancellation_weight, apply_no_show
 from app.services.google_calendar import sync_booking_to_google_calendar
 from app.services.payout import run_scheduled_payouts
-from app.services.paystack import create_supplementary_charge
+from app.services.paystack import create_supplementary_charge, create_refund, create_transfer_recipient, initialize_transaction, list_banks, verify_transaction
+from app.services.notifications import send_notification
+from app.services.booking_status import booking_state_from_booking, booking_state_from_request, canonical_booking_status
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
@@ -2408,6 +2410,213 @@ def internal_run_payouts(
     return {"ok": True}
 
 
+@router.get("/parent/payment-method")
+def get_parent_payment_method(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return {
+        "has_card": _has_saved_parent_card(user),
+        "card_brand": getattr(user, "card_brand", None),
+        "card_last4": getattr(user, "card_last4", None),
+        "card_saved_at": _to_iso_z(user.card_saved_at) if getattr(user, "card_saved_at", None) else None,
+    }
+
+
+@router.post("/parent/payment-method/initialize")
+def initialize_parent_payment_method(
+    payload: schemas.ParentPaymentMethodInitializeRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not getattr(user, "email", None):
+        raise HTTPException(status_code=400, detail="Parent email is required before saving a card")
+
+    amount_cents = int(os.getenv("PAYSTACK_CARD_AUTH_AMOUNT_CENTS", "100"))
+    reference = _new_payment_reference(user.id)
+    callback_url = (payload.callback_url or "").strip() or f"{app_base_url()}/static/parent_home.html?payment_method=verify"
+    ok, data = initialize_transaction(
+        email=user.email,
+        amount_kobo=amount_cents,
+        reference=reference,
+        callback_url=callback_url,
+        currency="ZAR",
+        metadata={"purpose": "save_parent_card", "parent_user_id": user.id},
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail=(data or {}).get("message") or "Could not initialize Paystack payment method")
+    result = _paystack_data(data)
+    return {
+        "authorization_url": result.get("authorization_url"),
+        "access_code": result.get("access_code"),
+        "reference": result.get("reference") or reference,
+        "amount_cents": amount_cents,
+    }
+
+
+@router.post("/parent/payment-method/verify")
+def verify_parent_payment_method(
+    payload: schemas.ParentPaymentMethodVerifyRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    reference = (payload.reference or "").strip()
+    if not reference:
+        raise HTTPException(status_code=400, detail="reference is required")
+
+    ok, data = verify_transaction(reference)
+    if not ok:
+        raise HTTPException(status_code=502, detail=(data or {}).get("message") or "Could not verify Paystack transaction")
+    result = _paystack_data(data)
+    if str(result.get("status") or "").lower() != "success":
+        raise HTTPException(status_code=400, detail="Payment method verification was not successful")
+
+    authorization_data = result.get("authorization") or {}
+    customer_data = result.get("customer") or {}
+    auth_code = authorization_data.get("authorization_code")
+    if not auth_code:
+        raise HTTPException(status_code=400, detail="Paystack did not return a reusable authorization code")
+
+    user.paystack_auth_code = str(auth_code)
+    user.paystack_customer_code = customer_data.get("customer_code") or result.get("customer_code")
+    user.card_last4 = authorization_data.get("last4")
+    user.card_brand = authorization_data.get("card_type") or authorization_data.get("brand")
+    user.card_saved_at = datetime.utcnow()
+
+    refund_status = "not_requested"
+    transaction_id = result.get("id") or result.get("transaction")
+    amount_cents = result.get("amount")
+    if transaction_id is not None and amount_cents:
+        refund_ok, refund_data = create_refund(str(transaction_id), int(amount_cents))
+        refund_status = "requested" if refund_ok else f"failed: {(refund_data or {}).get('message') or 'Paystack refund failed'}"
+
+    db.commit()
+    return {
+        "ok": True,
+        "has_card": True,
+        "card_brand": user.card_brand,
+        "card_last4": user.card_last4,
+        "card_saved_at": _to_iso_z(user.card_saved_at),
+        "refund_status": refund_status,
+    }
+
+
+@router.get("/nanny/banking")
+def get_nanny_banking(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    rows = (
+        db.query(models.NannyBankAccount)
+        .filter(models.NannyBankAccount.nanny_id == nanny.id)
+        .order_by(models.NannyBankAccount.is_default.desc(), models.NannyBankAccount.id.desc())
+        .all()
+    )
+    return {
+        "banking_complete": bool(getattr(nanny, "banking_complete", False)),
+        "accounts": [
+            {
+                "id": row.id,
+                "account_name": row.account_name,
+                "bank_name": getattr(row, "bank_name", None),
+                "bank_code": row.bank_code,
+                "masked_account_number": getattr(row, "account_number_token", None) or _mask_account_number(getattr(row, "account_number", "")),
+                "is_default": bool(getattr(row, "is_default", False)),
+                "is_verified": bool(getattr(row, "is_verified", False)),
+                "created_at": _to_iso_z(row.created_at) if getattr(row, "created_at", None) else None,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/nanny/banking/banks")
+def get_nanny_banking_banks(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    ok, data = list_banks(country="south africa", currency="ZAR", enabled_for_verification=True)
+    if not ok:
+        raise HTTPException(status_code=502, detail=(data or {}).get("message") or "Could not fetch Paystack banks")
+    banks = data.get("data") or []
+    return {
+        "banks": [
+            {
+                "name": bank.get("name"),
+                "code": bank.get("code"),
+                "slug": bank.get("slug"),
+            }
+            for bank in banks
+            if isinstance(bank, dict)
+        ]
+    }
+
+
+@router.post("/nanny/banking")
+def save_nanny_banking(
+    payload: schemas.NannyBankingRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    account_name = (payload.account_name or "").strip()
+    bank_name = (payload.bank_name or "").strip()
+    bank_code = (payload.bank_code or "").strip()
+    account_number = "".join(ch for ch in str(payload.account_number or "") if ch.isdigit())
+    if not account_name:
+        raise HTTPException(status_code=400, detail="account_name is required")
+    if not bank_name:
+        raise HTTPException(status_code=400, detail="bank_name is required")
+    if not bank_code:
+        raise HTTPException(status_code=400, detail="bank_code is required")
+    if len(account_number) < 6:
+        raise HTTPException(status_code=400, detail="account_number is invalid")
+
+    ok, data = create_transfer_recipient(
+        account_name=account_name,
+        account_number=account_number,
+        bank_code=bank_code,
+        currency="ZAR",
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail=(data or {}).get("message") or "Could not create Paystack transfer recipient")
+    result = _paystack_data(data)
+    recipient_code = result.get("recipient_code")
+    if not recipient_code:
+        raise HTTPException(status_code=502, detail="Paystack did not return a recipient code")
+
+    has_existing = db.query(models.NannyBankAccount).filter(models.NannyBankAccount.nanny_id == nanny.id).first() is not None
+    bank = models.NannyBankAccount(
+        nanny_id=nanny.id,
+        account_name=account_name,
+        account_number=_mask_account_number(account_number),
+        account_number_token=_mask_account_number(account_number),
+        bank_name=bank_name,
+        bank_code=bank_code,
+        paystack_recipient_code=str(recipient_code),
+        is_default=not has_existing,
+        is_verified=True,
+    )
+    if not has_existing:
+        nanny.paystack_recipient_code = str(recipient_code)
+    nanny.banking_complete = True
+    db.add(bank)
+    db.commit()
+    db.refresh(bank)
+    return {
+        "ok": True,
+        "bank_account_id": bank.id,
+        "banking_complete": True,
+        "bank_name": bank.bank_name,
+        "masked_account_number": bank.account_number_token,
+        "is_default": bool(bank.is_default),
+    }
+
+
 @router.post("/admin/impersonate")
 def admin_impersonate(
     payload: schemas.AdminImpersonateRequest,
@@ -2460,6 +2669,34 @@ def _require_nanny_user_not_on_hold(authorization: Optional[str], db: Session) -
             detail="Your profile is on hold due to outstanding information. Please update your profile to continue.",
         )
     return user, nanny, profile
+
+
+def _mask_account_number(account_number: str) -> str:
+    digits = "".join(ch for ch in str(account_number or "") if ch.isdigit())
+    if len(digits) < 4:
+        return "****"
+    return f"****{digits[-4:]}"
+
+
+def _paystack_data(payload: dict) -> dict:
+    data = (payload or {}).get("data") or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _new_payment_reference(user_id: int) -> str:
+    return f"MN-CARD-{user_id}-{uuid.uuid4().hex[:16]}"
+
+
+def _new_booking_payment_reference(request_id: int) -> str:
+    return f"MN-BOOK-{request_id}-{uuid.uuid4().hex[:16]}"
+
+
+def _new_overrun_payment_reference(booking_id: int) -> str:
+    return f"MN-OVERRUN-{booking_id}-{uuid.uuid4().hex[:16]}"
+
+
+def _has_saved_parent_card(user: models.User) -> bool:
+    return bool(getattr(user, "paystack_auth_code", None))
 
 
 def _nanny_profile_snapshot(user: models.User, profile: models.NannyProfile) -> dict:
@@ -3972,6 +4209,7 @@ def list_nanny_me_booking_requests(
             "id": req.id,
             "group_id": req.group_id or req.id,
             "status": req.status,
+            "booking_state": booking_state_from_request(req),
             "nanny_response_status": getattr(req, "nanny_response_status", None) or "pending",
             "nanny_responded_at": req.nanny_responded_at.isoformat() if getattr(req, "nanny_responded_at", None) else None,
             "nanny_response_note": getattr(req, "nanny_response_note", None),
@@ -4030,6 +4268,7 @@ def list_nanny_me_bookings(
                 "request_id": request_id,
                 "group_id": group_id,
                 "status": getattr(req, "status", None) or booking.status,
+                "booking_state": booking_state_from_booking(booking),
                 "nanny_response_status": (getattr(req, "nanny_response_status", None) or "accepted"),
                 "parent_name": parent.name,
                 "parent_email": parent.email,
@@ -4054,6 +4293,7 @@ def list_nanny_me_bookings(
             "start_dt": start_dt,
             "end_dt": end_dt,
             "status": booking.status,
+            "booking_state": booking_state_from_booking(booking),
             "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
             "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
         })
@@ -4126,6 +4366,7 @@ def list_nanny_me_duty_bookings(
             {
                 "booking_id": b.id,
                 "booking_request_id": getattr(b, "booking_request_id", None),
+                "booking_state": booking_state_from_booking(b),
                 "parent_name": p.name,
                 "parent_email": p.email,
                 "parent_phone": (getattr(prof, "phone", None) or getattr(p, "phone", None)),
@@ -4240,14 +4481,11 @@ def nanny_check_out_booking(
 
     settings = _get_pricing_settings(db)
     payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
-    overrun_hold_hours = max(1, int(settings.get("overrun_hold_hours") or 24))
 
     actual_minutes = max(0, int((booking.check_out_at - booking.check_in_at).total_seconds() // 60))
     booked_minutes = 0
     if getattr(booking, "starts_at", None) and getattr(booking, "ends_at", None):
         booked_minutes = max(0, int((booking.ends_at - booking.starts_at).total_seconds() // 60))
-
-    booking.payout_hold_until = now_utc + timedelta(hours=payout_hold_hours)
 
     related_request = None
     if getattr(booking, "booking_request_id", None):
@@ -4269,83 +4507,46 @@ def nanny_check_out_booking(
         )
         overrun_amount_cents = int(round((overrun_minutes / 60.0) * overrun_hourly_rate))
         booking.overrun_amount_cents = overrun_amount_cents
-
-        payment_auth = None
-        if related_request:
-            payment_auth = getattr(related_request, "paystack_reference", None) or getattr(related_request, "paystack_transaction_id", None)
-        if not payment_auth:
-            raise HTTPException(status_code=400, detail="Cannot raise overrun charge: missing parent payment authorization reference")
-
-        ok, charge_data = create_supplementary_charge(
-            authorization_code=str(payment_auth),
-            amount_kobo=int(overrun_amount_cents),
-            email=getattr(parent_user, "email", None),
-        )
-        if not ok:
-            message = charge_data.get("message") if isinstance(charge_data, dict) else "Paystack overrun charge failed"
-            raise HTTPException(status_code=400, detail=message or "Paystack overrun charge failed")
-
-        charge_ref = None
-        if isinstance(charge_data, dict):
-            payload_data = charge_data.get("data") or {}
-            charge_ref = payload_data.get("reference") or payload_data.get("id")
-        booking.overrun_paystack_ref = str(charge_ref) if charge_ref is not None else None
-        booking.overrun_hold_until = now_utc + timedelta(hours=overrun_hold_hours)
-
-        # Parent overrun charge notification
-        try:
-            msg = (
+        booking.overrun_status = "awaiting_parent"
+        booking.status = "awaiting_overtime_approval"
+        booking.payout_hold_until = None
+        send_notification(
+            db,
+            getattr(parent_user, "id", None),
+            "overtime_request",
+            "email",
+            (
                 f"Your nanny worked {overrun_minutes/60.0:.2f} extra hours. "
-                f"R{(overrun_amount_cents/100):.2f} has been charged. "
-                "If you have a query, raise it within 24 hours."
-            )
-            _safe_send(getattr(parent_user, "email", None), "Overrun charge raised", msg)
-            _log_notification_best_effort(
-                db,
-                user_id=getattr(parent_user, "id", None),
-                event_type="overrun_charge_raised_parent",
-                channel="email",
-                status="sent",
-                reference_id=str(booking.id),
-            )
-        except Exception as exc:
-            _log_notification_best_effort(
-                db,
-                user_id=getattr(parent_user, "id", None),
-                event_type="overrun_charge_raised_parent",
-                channel="email",
-                status="failed",
-                error_message=str(exc)[:500],
-                reference_id=str(booking.id),
-            )
+                f"Please approve or query the overtime charge of R{(overrun_amount_cents/100):.2f}."
+            ),
+            reference_id=int(booking.id),
+        )
+        send_notification(
+            db,
+            getattr(parent_user, "id", None),
+            "overtime_request",
+            "in_app",
+            (
+                f"Nanny worked {overrun_minutes/60.0:.2f} extra hours. "
+                f"Approve or query R{(overrun_amount_cents/100):.2f}."
+            ),
+            reference_id=int(booking.id),
+        )
+        send_notification(
+            db,
+            getattr(nanny_user, "id", None),
+            "payout_pending",
+            "email",
+            "Your overtime is awaiting parent approval before payout can be released.",
+            reference_id=int(booking.id),
+        )
+    else:
+        booking.overrun_status = "none"
+        booking.status = "completed"
+        booking.payout_hold_until = now_utc + timedelta(hours=payout_hold_hours)
 
-        # Nanny overrun payout hold notification
-        try:
-            msg = (
-                f"You worked {overrun_minutes/60.0:.2f} extra hours. "
-                f"R{(overrun_amount_cents/100):.2f} will be paid to you in 24 hours if no query is raised."
-            )
-            _safe_send(getattr(nanny_user, "email", None), "Overrun payout pending", msg)
-            _log_notification_best_effort(
-                db,
-                user_id=getattr(nanny_user, "id", None),
-                event_type="overrun_charge_raised_nanny",
-                channel="email",
-                status="sent",
-                reference_id=str(booking.id),
-            )
-        except Exception as exc:
-            _log_notification_best_effort(
-                db,
-                user_id=getattr(nanny_user, "id", None),
-                event_type="overrun_charge_raised_nanny",
-                channel="email",
-                status="failed",
-                error_message=str(exc)[:500],
-                reference_id=str(booking.id),
-            )
-
-    booking.status = "completed"
+    if related_request and booking.status == "completed":
+        related_request.status = "completed"
     db.commit()
     db.refresh(booking)
     log_booking_status_change(
@@ -4504,8 +4705,8 @@ def parent_confirm_booking_check_out(
     }
 
 
-@router.post("/bookings/{booking_id}/dispute-overrun")
-def parent_dispute_overrun(
+@router.post("/bookings/{booking_id}/overtime/agree")
+def parent_agree_overtime(
     booking_id: int,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
@@ -4514,13 +4715,82 @@ def parent_dispute_overrun(
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
     booking = _parent_owned_booking_or_404(db, booking_id, user.id)
-    if not getattr(booking, "overrun_hold_until", None):
-        raise HTTPException(status_code=400, detail="No overrun hold exists for this booking")
-    if datetime.utcnow() >= booking.overrun_hold_until:
-        raise HTTPException(status_code=400, detail="Overrun dispute window has expired")
+    if getattr(booking, "overrun_status", None) != "awaiting_parent":
+        raise HTTPException(status_code=400, detail="No overtime approval is pending for this booking")
+    if not getattr(user, "paystack_auth_code", None):
+        raise HTTPException(status_code=409, detail="Please add a payment method before approving overtime")
+    amount_cents = int(getattr(booking, "overrun_amount_cents", 0) or 0)
+    if amount_cents <= 0:
+        raise HTTPException(status_code=400, detail="No overtime amount is available to charge")
 
+    payment_reference = _new_overrun_payment_reference(booking.id)
+    ok, charge_data = create_supplementary_charge(
+        authorization_code=str(user.paystack_auth_code),
+        amount_kobo=amount_cents,
+        email=user.email,
+        reference=payment_reference,
+        metadata={
+            "purpose": "booking_overrun_charge",
+            "booking_id": booking.id,
+            "parent_user_id": user.id,
+        },
+    )
+    charge_result = _paystack_data(charge_data)
+    if not ok or str(charge_result.get("status") or "").lower() != "success":
+        raise HTTPException(status_code=402, detail=(charge_data or {}).get("message") or "Overtime charge failed")
+
+    settings = _get_pricing_settings(db)
+    booking.overrun_status = "charged"
+    booking.overrun_paystack_ref = str(charge_result.get("reference") or payment_reference)
+    booking.overrun_confirmed_at = datetime.utcnow()
+    booking.overrun_resolved_at = datetime.utcnow()
+    booking.overrun_resolved_by = user.id
+    booking.overrun_hold_until = datetime.utcnow() + timedelta(hours=max(1, int(settings.get("overrun_hold_hours") or 24)))
+    booking.status = "completed"
+    payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
+    booking.payout_hold_until = datetime.utcnow() + timedelta(hours=payout_hold_hours)
+    related_request = None
+    if getattr(booking, "booking_request_id", None):
+        related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+    if related_request:
+        related_request.status = "completed"
+    db.commit()
+    nanny_row = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
+    send_notification(
+        db,
+        getattr(nanny_row, "user_id", None),
+        "payment_success",
+        "email",
+        f"Overtime was approved and R{(amount_cents/100):.2f} has been charged.",
+        reference_id=int(booking.id),
+    )
+    db.commit()
+    return {"ok": True, "booking_id": booking.id, "overrun_status": booking.overrun_status}
+
+
+@router.post("/bookings/{booking_id}/overtime/query")
+def parent_query_overtime(
+    booking_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    booking = _parent_owned_booking_or_404(db, booking_id, user.id)
+    if getattr(booking, "overrun_status", None) != "awaiting_parent":
+        raise HTTPException(status_code=400, detail="No overtime approval is pending for this booking")
+
+    booking.overrun_status = "queried"
+    booking.overrun_queried_at = datetime.utcnow()
+    booking.status = "admin_review"
     booking.overrun_disputed = True
     booking.overrun_dispute_raised_at = datetime.utcnow()
+    if getattr(booking, "booking_request_id", None):
+        related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+        if related_request:
+            related_request.status = "pending_admin"
+            related_request.admin_reason = "overtime_query"
     db.commit()
 
     admins = admin_emails()
@@ -4529,10 +4799,10 @@ def parent_dispute_overrun(
             get_email_client().send(
                 EmailMessage(
                     to=admins,
-                    subject=f"Overrun dispute raised for booking #{booking.id}",
+                    subject=f"Overtime query raised for booking #{booking.id}",
                     body="\n".join(
                         [
-                            "A parent raised an overrun dispute.",
+                            "A parent queried overtime for this booking.",
                             f"booking_id: {booking.id}",
                             f"parent_user_id: {user.id}",
                         ]
@@ -4558,7 +4828,16 @@ def parent_dispute_overrun(
                 reference_id=str(booking.id),
             )
 
-    return {"ok": True, "booking_id": booking.id, "overrun_disputed": True}
+    return {"ok": True, "booking_id": booking.id, "overrun_status": booking.overrun_status}
+
+
+@router.post("/bookings/{booking_id}/dispute-overrun")
+def parent_dispute_overrun(
+    booking_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    return parent_query_overtime(booking_id=booking_id, authorization=authorization, db=db)
 
 
 @router.post("/bookings/{booking_id}/dispute-payout")
@@ -4774,6 +5053,16 @@ def accept_nanny_booking_request(
         raise HTTPException(status_code=404, detail="Booking request not found")
     if req.status not in ("tbc", "pending_admin", "approved"):
         raise HTTPException(status_code=400, detail="Booking request is not available")
+    if getattr(req, "nanny_response_status", None) == "accepted" and getattr(req, "payment_status", None) == "paid":
+        existing_bookings = _find_related_bookings_for_request(db, req)
+        return {
+            "ok": True,
+            "booking_id": existing_bookings[0].id if existing_bookings else None,
+            "booking_ids": [b.id for b in existing_bookings],
+            "booking_request_id": req.id,
+            "payment_status": getattr(req, "payment_status", None),
+            "paystack_reference": getattr(req, "paystack_reference", None),
+        }
 
     existing_bookings = _find_related_bookings_for_request(db, req) if req.status == "approved" else []
     windows = _booking_request_windows(db, req)
@@ -4802,6 +5091,48 @@ def accept_nanny_booking_request(
     )
     if sibling_winner:
         raise HTTPException(status_code=409, detail="Another nanny has already been selected for this job")
+
+    parent_user = db.query(models.User).filter(models.User.id == req.parent_user_id).first()
+    if not parent_user:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    if not getattr(parent_user, "paystack_auth_code", None):
+        req.admin_reason = "missing_parent_payment_method"
+        db.commit()
+        raise HTTPException(status_code=409, detail="Parent payment method is missing. We have asked the parent to add a card.")
+
+    amount_cents = int(req.total_cents or ((req.wage_cents or 0) + (req.booking_fee_cents or 0)) or 0)
+    if amount_cents <= 0:
+        raise HTTPException(status_code=400, detail="Booking total is missing")
+    payment_reference = _new_booking_payment_reference(req.id)
+    charge_ok, charge_data = create_supplementary_charge(
+        authorization_code=str(parent_user.paystack_auth_code),
+        amount_kobo=amount_cents,
+        email=parent_user.email,
+        reference=payment_reference,
+        metadata={
+            "purpose": "booking_acceptance_charge",
+            "booking_request_id": req.id,
+            "parent_user_id": parent_user.id,
+            "nanny_id": nanny.id,
+        },
+    )
+    charge_result = _paystack_data(charge_data)
+    charge_status = str(charge_result.get("status") or "").lower()
+    if not charge_ok or charge_status != "success":
+        req.admin_reason = "payment_failed"
+        req.paystack_reference = charge_result.get("reference") or payment_reference
+        req.paystack_transaction_id = str(charge_result.get("id")) if charge_result.get("id") is not None else None
+        db.commit()
+        send_notification(
+            db,
+            parent_user.id,
+            "payment_failed",
+            "email",
+            "Your saved card could not be charged for this booking. Please update your payment method so we can confirm the booking.",
+            reference_id=int(req.id),
+        )
+        db.commit()
+        raise HTTPException(status_code=402, detail="Parent payment failed. The parent has been asked to update their card.")
 
     def _resolve_group_acceptance(group_id_value: int):
         accepted_reqs = (
@@ -4842,6 +5173,11 @@ def accept_nanny_booking_request(
     req.nanny_response_status = "accepted"
     req.nanny_responded_at = datetime.utcnow()
     req.nanny_response_note = None
+    req.payment_status = "paid"
+    req.paid_at = datetime.utcnow()
+    req.paystack_reference = charge_result.get("reference") or payment_reference
+    if charge_result.get("id") is not None:
+        req.paystack_transaction_id = str(charge_result.get("id"))
 
     created_bookings = existing_bookings or _find_related_bookings_for_request(db, req)
     if not created_bookings:
@@ -4909,6 +5245,23 @@ def accept_nanny_booking_request(
 
     db.commit()
     _sync_confirmed_booking_request_to_google_calendar(db, req)
+    send_notification(
+        db,
+        req.parent_user_id,
+        "payment_success",
+        "email",
+        f"Your booking has been confirmed and your card was charged R{(amount_cents/100):.2f}.",
+        reference_id=int(req.id),
+    )
+    send_notification(
+        db,
+        user.id,
+        "booking_confirmed",
+        "email",
+        "Your booking has been confirmed. Please check your bookings for the details.",
+        reference_id=int(req.id),
+    )
+    db.commit()
     log_booking_request_status_change(
         db,
         actor_user=user,
@@ -4937,14 +5290,8 @@ def accept_nanny_booking_request(
         "booking_id": primary_booking_id,
         "booking_ids": [b.id for b in created_bookings],
         "booking_request_id": req.id,
-        "previous_nanny_cancelled": bool(previous_nanny_id and previous_nanny_id != selected_nanny_id and cancelled_previous_bookings),
-        "previous_nanny_id": previous_nanny_id,
-        "assigned_nanny_id": selected_nanny_id,
-        "notifications": {
-            "parent_reassigned_notice_sent": True,
-            "previous_nanny_cancellation_notice_sent": bool(previous_nanny_id and previous_nanny_id != selected_nanny_id and cancelled_previous_bookings),
-            "new_nanny_assignment_notice_sent": True,
-        },
+        "payment_status": getattr(req, "payment_status", None),
+        "paystack_reference": getattr(req, "paystack_reference", None),
     }
 
 
@@ -5754,6 +6101,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             grouped[gid] = {
                 "job_id": gid,
                 "status": status,
+                "booking_state": booking_state_from_request(req),
                 "booking_category": booking_category,
                 "start_dt": start_dt,
                 "end_dt": end_dt,
@@ -5780,12 +6128,16 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                     {
                         "booking_id": booking.id,
                         "status": booking.status,
+                        "booking_state": booking_state_from_booking(booking),
                         "start_dt": booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None),
                         "end_dt": booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None),
                         "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
                         "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if getattr(booking, "check_in_confirmed_at", None) else None,
                         "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
                         "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if getattr(booking, "check_out_confirmed_at", None) else None,
+                        "overrun_minutes": getattr(booking, "overrun_minutes", None),
+                        "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),
+                        "overrun_status": getattr(booking, "overrun_status", None),
                     }
                     for booking in related_bookings
                 ],
@@ -5794,6 +6146,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         entry["requested_nannies"].append({"id": req.nanny_id, "name": nanny_u.name})
         if status == "approved":
             entry["status"] = "approved"
+            entry["booking_state"] = "confirmed"
             entry["booking_category"] = entry.get("booking_category") or "upcoming"
             entry["wage_cents"] = int(getattr(req, "wage_cents", None) or entry.get("wage_cents") or 0)
             entry["booking_fee_cents"] = int(getattr(req, "booking_fee_cents", None) or entry.get("booking_fee_cents") or 0)
@@ -6841,6 +7194,11 @@ def create_booking(payload: schemas.BookingCreateRequest, request: Request, db: 
     try:
         if not _is_profile_complete(db, payload.parent_user_id):
             raise HTTPException(status_code=403, detail="Complete your profile before booking")
+        parent_user = db.query(models.User).filter(models.User.id == payload.parent_user_id).first()
+        if not parent_user:
+            raise HTTPException(status_code=404, detail="Parent user not found")
+        if not _has_saved_parent_card(parent_user):
+            raise HTTPException(status_code=402, detail="Please add a payment method before booking")
         location = (
             db.query(models.ParentLocation)
             .filter(
@@ -7179,6 +7537,11 @@ def create_booking_request(
         user = _require_user(authorization, db)
         if user.role != "parent":
             raise HTTPException(status_code=403, detail="Forbidden")
+        if not _has_saved_parent_card(user):
+            return {
+                "requires_payment_method": True,
+                "message": "Please add a payment method before sending booking requests.",
+            }
 
         windows = _normalize_booking_slots(
             start_dt_value=payload.start_dt,
@@ -7284,6 +7647,13 @@ def estimate_booking_request(
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
+    if not _has_saved_parent_card(user):
+        return {
+            "requires_payment_method": True,
+            "message": "Please add a payment method before sending booking requests.",
+            "created": [],
+            "errors": [],
+        }
 
     windows = _normalize_booking_slots(
         start_dt_value=payload.start_dt,
@@ -8438,12 +8808,14 @@ def get_admin_booking_request_detail(
     related_bookings = _find_related_bookings_for_request(db, req)
     questionnaire = _parse_booking_questionnaire_notes(getattr(req, "client_notes", None))
     created_at = getattr(req, "created_at", None)
-    is_overdue = bool(created_at and (datetime.utcnow() - created_at) >= timedelta(hours=6) and req.status in ("tbc", "pending_admin"))
+    request_booking_state = booking_state_from_request(req)
+    is_overdue = bool(created_at and (datetime.utcnow() - created_at) >= timedelta(hours=6) and request_booking_state in ("awaiting_acceptance", "broadcast_sent"))
 
     return {
         "request_id": req.id,
         "group_id": req.group_id or req.id,
         "status": req.status,
+        "booking_state": request_booking_state,
         "admin_reason": req.admin_reason,
         "payment_status": getattr(req, "payment_status", None),
         "is_overdue": is_overdue,
@@ -8502,10 +8874,14 @@ def get_admin_booking_request_detail(
             {
                 "booking_id": booking.id,
                 "status": booking.status,
+                "booking_state": booking_state_from_booking(booking),
                 "start_dt": booking.start_dt or (booking.starts_at.isoformat() if booking.starts_at else None),
                 "end_dt": booking.end_dt or (booking.ends_at.isoformat() if booking.ends_at else None),
                 "check_in_at": _to_iso_z(booking.check_in_at) if getattr(booking, "check_in_at", None) else None,
                 "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
+                "overrun_minutes": getattr(booking, "overrun_minutes", None),
+                "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),
+                "overrun_status": getattr(booking, "overrun_status", None),
                 "scheduled_minutes": _booking_scheduled_minutes(booking),
                 "worked_minutes": _booking_elapsed_minutes(booking),
                 "extra_minutes": (
@@ -8678,11 +9054,13 @@ def list_admin_bookings_overview(
     for req, parent, nanny in request_rows:
         try:
             request_start_dt, request_end_dt = _booking_request_start_end_iso(req)
+            request_booking_state = booking_state_from_request(req)
             item = {
                 "source": "request",
                 "request_id": req.id,
                 "booking_id": None,
                 "status": req.status,
+                "booking_state": request_booking_state,
                 "parent_name": parent.name,
                 "parent_email": parent.email,
                 "nanny_name": nanny.name,
@@ -8694,12 +9072,12 @@ def list_admin_bookings_overview(
                 "updated_at": req.updated_at.isoformat() if getattr(req, "updated_at", None) else None,
                 "is_overdue": bool(getattr(req, "created_at", None) and (now - req.created_at) >= timedelta(hours=6)),
             }
-            if req.status in ("tbc", "pending_admin"):
+            if request_booking_state in ("awaiting_acceptance", "broadcast_sent"):
                 pending_requests.append(item)
-            elif req.status == "cancelled" and req.id not in booking_request_ids:
+            elif request_booking_state == "cancelled" and req.id not in booking_request_ids:
                 cancelled_bookings.append(item)
                 unsuccessful_bookings.append(item)
-            elif req.status == "rejected" and req.id not in booking_request_ids:
+            elif request_booking_state == "cancelled" and req.id not in booking_request_ids:
                 unsuccessful_bookings.append(item)
         except Exception:
             continue
@@ -8710,7 +9088,7 @@ def list_admin_bookings_overview(
             end_dt = booking.ends_at
             related_request = request_by_id.get(getattr(booking, "booking_request_id", None))
             nanny_response_status = (getattr(related_request, "nanny_response_status", None) or "").lower() if related_request else ""
-            booking_state = _booking_time_state(
+            booking_time_state = _booking_time_state(
                 start_dt=start_dt,
                 end_dt=end_dt,
                 status=booking.status,
@@ -8718,13 +9096,15 @@ def list_admin_bookings_overview(
                 check_out_at=getattr(booking, "check_out_at", None),
                 now=now,
             )
-            is_live_booking = booking_state in {"upcoming", "in_progress"}
+            booking_state = booking_state_from_booking(booking, now=now)
+            is_live_booking = booking_time_state in {"upcoming", "in_progress"} or booking_state in {"confirmed", "upcoming", "in_progress", "awaiting_overtime_approval"}
             item = {
                 "source": "booking",
                 "request_id": getattr(booking, "booking_request_id", None),
                 "booking_id": booking.id,
                 "status": booking.status,
                 "booking_state": booking_state,
+                "booking_time_state": booking_time_state,
                 "nanny_response_status": nanny_response_status or None,
                 "confirmed": bool(is_live_booking),
                 "parent_name": parent.name,
@@ -8750,14 +9130,11 @@ def list_admin_bookings_overview(
                     bookings_tomorrow.append(item)
                 if month_start <= local_start.date() <= month_end:
                     month_confirmed_bookings.append(item)
-            if booking.status == "cancelled":
+            if booking_state == "cancelled":
                 cancelled_bookings.append(item)
                 unsuccessful_bookings.append(item)
                 continue
-            if booking.status == "rejected":
-                unsuccessful_bookings.append(item)
-                continue
-            if booking_state == "past":
+            if booking_state == "past" or booking_time_state == "past":
                 past_bookings.append(item)
         except Exception:
             continue
@@ -9769,6 +10146,35 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
 
     event = payload.get("event")
     data = payload.get("data") or {}
+
+    if event == "charge.success":
+        tx_ref = data.get("reference")
+        tx_id = data.get("id")
+        metadata = data.get("metadata") or {}
+        request_id = metadata.get("booking_request_id") if isinstance(metadata, dict) else None
+        q = db.query(models.BookingRequest)
+        if request_id:
+            try:
+                q = q.filter(models.BookingRequest.id == int(request_id))
+            except Exception:
+                return {"ok": True}
+        elif tx_ref:
+            q = q.filter(models.BookingRequest.paystack_reference == str(tx_ref))
+        elif tx_id is not None:
+            q = q.filter(models.BookingRequest.paystack_transaction_id == str(tx_id))
+        else:
+            return {"ok": True}
+        req = q.first()
+        if not req:
+            return {"ok": True}
+        req.payment_status = "paid"
+        req.paid_at = req.paid_at or datetime.utcnow()
+        if tx_ref:
+            req.paystack_reference = str(tx_ref)
+        if tx_id is not None:
+            req.paystack_transaction_id = str(tx_id)
+        db.commit()
+        return {"ok": True}
 
     if event not in ("refund.processed", "refund.failed"):
         return {"ok": True}

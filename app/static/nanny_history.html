@@ -89,7 +89,7 @@
         start_dt: r.start_dt,
         end_dt: r.end_dt,
         response_status: r.nanny_response_status || "accepted",
-        booking_status: bookingGroupStatus(r, now),
+        booking_status: r.booking_state || bookingGroupStatus(r, now),
       }));
       const requestItems = (requestData.results || []).filter((r) => {
         const response = String(r.nanny_response_status || "").toLowerCase();
@@ -104,7 +104,7 @@
         start_dt: r.start_dt,
         end_dt: r.end_dt,
         response_status: r.nanny_response_status,
-        booking_status: r.status,
+        booking_status: r.booking_state || r.status,
       }));
       const items = [...bookingItems, ...requestItems]
         .sort((a, b) => String(b.end_dt || "").localeCompare(String(a.end_dt || "")));

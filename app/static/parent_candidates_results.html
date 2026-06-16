@@ -1274,6 +1274,18 @@
       });
     }
 
+    async function handlePaymentMethodRequirement(res, statusEl) {
+      if (!res?.requires_payment_method) return false;
+      statusEl.textContent = "Opening secure card setup...";
+      try {
+        await window.startParentPaymentMethodSetup(window.location.href);
+      } catch (err) {
+        statusEl.textContent = err.message || "Could not start payment setup.";
+        statusEl.style.color = "#b91c1c";
+      }
+      return true;
+    }
+
     async function submitBookingRequest() {
       const status = document.getElementById("bookingStatus");
       status.style.color = "";
@@ -1333,6 +1345,7 @@
             disclaimer_transport: questionnaire.disclaimer_transport,
           })
         });
+        if (await handlePaymentMethodRequirement(res, status)) return;
         const displayId = res?.group_id ?? "—";
         status.textContent = "";
         showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
@@ -1361,6 +1374,7 @@
             disclaimer_transport: questionnaire.disclaimer_transport,
           })
         });
+        if (await handlePaymentMethodRequirement(res, status)) return;
         const displayId = res?.group_id ?? "—";
         status.textContent = "";
         showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
@@ -1389,6 +1403,7 @@
             disclaimer_transport: questionnaire.disclaimer_transport,
           })
         });
+        if (await handlePaymentMethodRequirement(res, status)) return;
         const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
         status.textContent = "";
         showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");

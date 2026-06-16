@@ -371,6 +371,21 @@ class BookingCancellationRequest(BaseModel):
     reason: str
 
 
+class ParentPaymentMethodInitializeRequest(BaseModel):
+    callback_url: Optional[str] = None
+
+
+class ParentPaymentMethodVerifyRequest(BaseModel):
+    reference: str
+
+
+class NannyBankingRequest(BaseModel):
+    account_name: str
+    bank_name: str
+    bank_code: str
+    account_number: str
+
+
 class NannyBookingRequestResponse(BaseModel):
     response: Literal["accepted", "declined", "deciding"]
     reason: Optional[str] = None

@@ -111,6 +111,7 @@ def apply_demerit(
         weight=float(weight),
         cumulative_demerit_pct=float(new_cumulative),
         applied_by=str(applied_by),
+        applied_at=datetime.utcnow(),
     )
     db.add(log)
 
@@ -140,6 +141,19 @@ def apply_cancellation_weight(
         raise ValueError("Nanny not found")
 
     nanny.cancellation_count = int(getattr(nanny, "cancellation_count", 0) or 0) + 1
+
+    db.add(
+        models.NannyDemeritLog(
+            nanny_id=nanny_id,
+            booking_id=None,
+            reason="cancellation_weight",
+            demerit_pct=0.0,
+            weight=float(weight),
+            cumulative_demerit_pct=float(getattr(nanny, "rating_demerit_pct", 0.0) or 0.0),
+            applied_by="system",
+            applied_at=datetime.utcnow(),
+        )
+    )
 
     cutoff = datetime.utcnow() - timedelta(days=180)
     weighted_total_180d = (
@@ -197,4 +211,3 @@ def apply_no_show(
             event_type="nanny_no_show_fitness_review_required",
         )
     db.commit()
-

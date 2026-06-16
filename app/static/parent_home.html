@@ -62,6 +62,13 @@
       <button id="btnFavorites" class="btn">My Favourites</button>
     </div>
 
+    <div class="card">
+      <h2 style="margin:0 0 8px;font-size:20px;">Payment method</h2>
+      <div id="paymentMethodSummary" class="hint">Checking saved card...</div>
+      <div style="height:12px"></div>
+      <button id="btnPaymentMethod" class="btn secondary" type="button">Add or replace card</button>
+    </div>
+
     <div id="msg" class="msg"></div>
     <button id="logoutBottom" class="btn secondary" style="margin-top:24px; display:none;">Log out</button>
   </div>
@@ -186,6 +193,8 @@
       const multiStartTimeInput = document.getElementById("multiStartTime");
       const multiEndTimeInput = document.getElementById("multiEndTime");
       const multiDayStatus = document.getElementById("multiDayStatus");
+      const paymentMethodSummary = document.getElementById("paymentMethodSummary");
+      const paymentMethodBtn = document.getElementById("btnPaymentMethod");
 
       let parentLocations = [];
       let pendingCandidatesUrl = "/static/parent_candidates.html?mode=all";
@@ -296,6 +305,40 @@
       function resetMultiDayStatus() {
         if (multiDayStatus) multiDayStatus.textContent = "";
       }
+
+      async function loadPaymentMethod() {
+        try {
+          const payment = await fetchJson("/parent/payment-method");
+          if (payment?.has_card) {
+            paymentMethodSummary.textContent = `${payment.card_brand || "Card"} ending ${payment.card_last4 || "----"}`;
+            paymentMethodBtn.textContent = "Replace card";
+          } else {
+            paymentMethodSummary.textContent = "No card saved yet.";
+            paymentMethodBtn.textContent = "Add card";
+          }
+        } catch (err) {
+          paymentMethodSummary.textContent = err.message || "Could not load payment method.";
+        }
+      }
+
+      paymentMethodBtn.addEventListener("click", async () => {
+        paymentMethodSummary.textContent = "Opening secure card setup...";
+        try {
+          await window.startParentPaymentMethodSetup(window.location.href);
+        } catch (err) {
+          paymentMethodSummary.textContent = err.message || "Could not start card setup.";
+        }
+      });
+
+      try {
+        const verified = await window.verifyParentPaymentMethodFromUrl();
+        if (verified?.ok) {
+          paymentMethodSummary.textContent = `${verified.card_brand || "Card"} ending ${verified.card_last4 || "----"} saved.`;
+        }
+      } catch (err) {
+        paymentMethodSummary.textContent = err.message || "Could not verify payment method.";
+      }
+      await loadPaymentMethod();
 
       document.getElementById("btnCandidates").addEventListener("click", () => {
         if (requestTypeModal) requestTypeModal.style.display = "flex";

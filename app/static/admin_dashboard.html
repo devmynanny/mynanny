@@ -351,6 +351,7 @@
         const lastActive = window.formatDateTimeDisplay(u.last_activity_at);
         const phoneBits = [u.phone, u.phone_alt].filter(Boolean);
         const identityDoc = u.sa_id_number || u.passport_number || "-";
+        const displayState = r.booking_state || r.booking_time_state || r.status || "-";
         row.innerHTML = `
           <div>
             <div><strong>${u.name || "-"}</strong></div>
@@ -496,7 +497,7 @@
             <div><strong>${parentLine}</strong> → <strong>${nannyName}</strong></div>
             <div class="bookingMeta">${refLine}</div>
             <div class="bookingMeta">${escapeHtml(bookingRange)}</div>
-            <div class="bookingMeta">Status: ${escapeHtml(r.status || "-")}</div>
+            <div class="bookingMeta">Status: ${escapeHtml(displayState)}</div>
             ${locationLine}
             ${reasonLine}
             ${overdueLine}
@@ -565,7 +566,7 @@
             ...(Array.isArray(data?.bookings_in_progress) ? data.bookings_in_progress : []),
             ...(Array.isArray(data?.past_bookings) ? data.past_bookings : []),
           ];
-      return combined.filter((item) => !["cancelled", "rejected"].includes(String(item?.status || "").toLowerCase()));
+      return combined.filter((item) => !["cancelled"].includes(String(item?.booking_state || item?.status || "").toLowerCase()));
     }
 
     function renderMonthCalendar(monthDate, items) {
@@ -758,6 +759,7 @@
             <div class="detailRow"><strong>Status:</strong> ${escapeHtml(data?.status || "-")}</div>
             <div class="detailRow"><strong>Parent:</strong> ${escapeHtml(data?.parent?.name || "-")}</div>
             <div class="detailRow"><strong>Nanny:</strong> ${escapeHtml(data?.nanny?.name || "-")} (${escapeHtml(data?.nanny?.email || "-")})</div>
+            <div class="detailRow"><strong>Canonical state:</strong> ${escapeHtml(data?.booking_state || data?.status || "-")}</div>
             <div class="detailRow"><strong>Location:</strong> ${escapeHtml(data?.location?.label || data?.location?.address || "-")}</div>
             <div class="detailRow"><strong>Created:</strong> ${escapeHtml(formatDt(data?.created_at))}</div>
             ${data?.is_overdue ? `<div class="bookingOverdue">Overdue: this request has been waiting more than 6 hours.</div>` : ""}
@@ -776,7 +778,7 @@
             <div class="detailRow" style="margin-bottom:8px;"><strong>Booking ID:</strong> ${escapeHtml(data?.group_id || data?.request_id || "-")}</div>
             ${days.length ? days.map((day) => `
               <div class="detailDay">
-                <div class="detailRow"><strong>Booking day:</strong> ${escapeHtml(formatAdminBookingRange(day.start_dt, day.end_dt))} • ${escapeHtml(day.status || "-")}</div>
+                <div class="detailRow"><strong>Booking day:</strong> ${escapeHtml(formatAdminBookingRange(day.start_dt, day.end_dt))} • ${escapeHtml(day.booking_state || day.booking_time_state || day.status || "-")}</div>
                 <div class="detailRow">Scheduled: ${escapeHtml(formatDt(day.start_dt))} to ${escapeHtml(formatDt(day.end_dt))}</div>
                 <div class="detailRow">Arrived: ${escapeHtml(formatDt(day.check_in_at))}</div>
                 <div class="detailRow">Finished: ${escapeHtml(formatDt(day.check_out_at))}</div>

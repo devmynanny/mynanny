@@ -1,11 +1,11 @@
 import os
-from datetime import date, time, datetime, timedelta
+from datetime import date, time, datetime, timedelta, timezone
 import json
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import func, or_, Numeric, text
+from sqlalchemy import and_, func, or_, Numeric, text
 from app.db import SessionLocal
 from app import models
 from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny, _ensure_default_nanny_tags
@@ -32,6 +32,17 @@ class GoogleMapsSettingsPayload(BaseModel):
 
 class NannyTagPayload(BaseModel):
     name: str
+
+
+class NannyDebtCreatePayload(BaseModel):
+    amount_cents: int
+    reason: str
+
+
+class NannyDebtUpdatePayload(BaseModel):
+    amount_cents: Optional[int] = None
+    reason: Optional[str] = None
+    status: Optional[str] = None
 
 
 def get_db():
@@ -203,6 +214,110 @@ def update_pricing_settings(payload: dict, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/nannies/{nanny_id}/debt", dependencies=[Depends(require_admin)])
+def admin_create_nanny_debt(
+    nanny_id: int,
+    payload: NannyDebtCreatePayload,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin_user(authorization, db)
+    nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason is required")
+    amount_cents = int(payload.amount_cents or 0)
+    if amount_cents <= 0:
+        raise HTTPException(status_code=400, detail="amount_cents must be greater than zero")
+    row = models.NannyDebt(
+        nanny_id=nanny_id,
+        amount_cents=amount_cents,
+        balance_cents=amount_cents,
+        reason=reason,
+        status="active",
+        created_by=admin.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "nanny_id": row.nanny_id,
+        "amount_cents": row.amount_cents,
+        "balance_cents": row.balance_cents,
+        "reason": row.reason,
+        "status": row.status,
+    }
+
+
+@router.get("/nannies/{nanny_id}/debt", dependencies=[Depends(require_admin)])
+def admin_list_nanny_debt(
+    nanny_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_admin_user(authorization, db)
+    rows = db.query(models.NannyDebt).filter(models.NannyDebt.nanny_id == nanny_id).order_by(models.NannyDebt.created_at.desc(), models.NannyDebt.id.desc()).all()
+    total_outstanding = sum(int(getattr(row, "balance_cents", 0) or 0) for row in rows)
+    return {
+        "nanny_id": nanny_id,
+        "total_outstanding_cents": total_outstanding,
+        "items": [
+            {
+                "id": row.id,
+                "amount_cents": row.amount_cents,
+                "balance_cents": row.balance_cents,
+                "reason": row.reason,
+                "status": row.status,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.put("/nannies/{nanny_id}/debt/{debt_id}", dependencies=[Depends(require_admin)])
+def admin_update_nanny_debt(
+    nanny_id: int,
+    debt_id: int,
+    payload: NannyDebtUpdatePayload,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    require_admin_user(authorization, db)
+    row = db.query(models.NannyDebt).filter(models.NannyDebt.id == debt_id, models.NannyDebt.nanny_id == nanny_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Debt record not found")
+    if payload.amount_cents is not None:
+        amount_cents = int(payload.amount_cents)
+        if amount_cents <= 0:
+            raise HTTPException(status_code=400, detail="amount_cents must be greater than zero")
+        delta = amount_cents - int(row.amount_cents or 0)
+        row.amount_cents = amount_cents
+        row.balance_cents = max(0, int(row.balance_cents or 0) + delta)
+    if payload.reason is not None:
+        reason = payload.reason.strip()
+        if not reason:
+            raise HTTPException(status_code=400, detail="reason cannot be blank")
+        row.reason = reason
+    if payload.status is not None:
+        row.status = payload.status.strip()
+    db.commit()
+    db.refresh(row)
+    return {
+        "ok": True,
+        "id": row.id,
+        "nanny_id": row.nanny_id,
+        "amount_cents": row.amount_cents,
+        "balance_cents": row.balance_cents,
+        "reason": row.reason,
+        "status": row.status,
+    }
+
+
 @router.get("/nanny-tags", dependencies=[Depends(require_admin)])
 def admin_list_nanny_tags(db: Session = Depends(get_db)):
     rows = _ensure_default_nanny_tags(db)
@@ -345,6 +460,370 @@ def report_jobs(
         "total_paid_cents": total_paid,
         "refunded_cents": refunded,
         "net_company_income_cents": company_income,
+    }
+
+
+def _normalize_reporting_dt(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _resolve_reporting_window(
+    *,
+    report_range: Optional[str],
+    start: Optional[str],
+    end: Optional[str],
+) -> tuple[datetime, datetime]:
+    now = datetime.utcnow()
+    if start and end:
+        try:
+            start_dt = _normalize_reporting_dt(_parse_iso_dt(start))
+            end_dt = _normalize_reporting_dt(_parse_iso_dt(end))
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+        if start_dt is None or end_dt is None or end_dt < start_dt:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+        return start_dt, end_dt
+
+    report_range = (report_range or "month").strip().lower()
+    if report_range == "day":
+        start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif report_range == "week":
+        start_dt = now - timedelta(days=7)
+    elif report_range == "quarter":
+        start_dt = now - timedelta(days=90)
+    elif report_range == "year":
+        start_dt = now - timedelta(days=365)
+    else:
+        start_dt = now - timedelta(days=30)
+    return start_dt, now
+
+
+@router.get("/accounting/summary", dependencies=[Depends(require_admin)])
+def accounting_summary(
+    range: Optional[str] = Query(default="month"),
+    start: Optional[str] = Query(default=None),
+    end: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    start_dt, end_dt = _resolve_reporting_window(report_range=range, start=start, end=end)
+
+    paid_rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.payment_status == "paid",
+            models.BookingRequest.requested_starts_at >= start_dt,
+            models.BookingRequest.requested_starts_at <= end_dt,
+        )
+        .all()
+    )
+
+    total_paid_jobs = len(paid_rows)
+    accepted = len([r for r in paid_rows if r.status == "approved"])
+    cancelled = len([r for r in paid_rows if r.status == "cancelled"])
+    completed = len([r for r in paid_rows if r.end_dt and _parse_iso_dt(r.end_dt) < datetime.utcnow()])
+    in_progress = len([r for r in paid_rows if r.start_dt and r.end_dt and _parse_iso_dt(r.start_dt) <= datetime.utcnow() <= _parse_iso_dt(r.end_dt)])
+
+    company_income_cents = 0
+    nanny_income_cents = 0
+    refunded_cents = 0
+    for r in paid_rows:
+        if r.status == "cancelled" and r.company_retained_cents is not None:
+            company_income_cents += int(r.company_retained_cents or 0)
+        else:
+            company_income_cents += int(r.booking_fee_cents or 0)
+        if r.status == "cancelled" and r.nanny_retained_cents is not None:
+            nanny_income_cents += int(r.nanny_retained_cents or 0)
+        else:
+            nanny_income_cents += int(r.wage_cents or 0)
+        if r.refund_status == "processed" and r.refund_cents:
+            refunded_cents += int(r.refund_cents or 0)
+    total_paid_cents = sum(int(r.total_cents or 0) for r in paid_rows)
+
+    payment_rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.payment_status == "paid",
+            models.BookingRequest.paid_at.isnot(None),
+            models.BookingRequest.paid_at >= start_dt,
+            models.BookingRequest.paid_at <= end_dt,
+        )
+        .all()
+    )
+    payments_processed_cents = sum(int(r.total_cents or 0) for r in payment_rows)
+
+    overtime_rows = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.overrun_status == "charged",
+            models.Booking.overrun_confirmed_at.isnot(None),
+            models.Booking.overrun_confirmed_at >= start_dt,
+            models.Booking.overrun_confirmed_at <= end_dt,
+        )
+        .all()
+    )
+    overtime_charges_cents = sum(int(r.overrun_amount_cents or 0) for r in overtime_rows)
+
+    refund_rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.payment_status == "paid",
+            models.BookingRequest.refund_status == "processed",
+            models.BookingRequest.refund_processed_at.isnot(None),
+            models.BookingRequest.refund_processed_at >= start_dt,
+            models.BookingRequest.refund_processed_at <= end_dt,
+        )
+        .all()
+    )
+    refunds_processed_cents = sum(int(r.refund_cents or 0) for r in refund_rows)
+
+    payout_rows = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.status == "completed",
+            models.Booking.payout_released_at.isnot(None),
+            models.Booking.payout_released_at >= start_dt,
+            models.Booking.payout_released_at <= end_dt,
+        )
+        .all()
+    )
+    payouts_released_cents = sum(int(r.payout_amount_cents or 0) for r in payout_rows)
+
+    overrun_payout_rows = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.overrun_status == "charged",
+            models.Booking.overrun_released_at.isnot(None),
+            models.Booking.overrun_released_at >= start_dt,
+            models.Booking.overrun_released_at <= end_dt,
+        )
+        .all()
+    )
+    overrun_payouts_released_cents = sum(int(r.overrun_amount_cents or 0) for r in overrun_payout_rows)
+
+    payout_backlog_rows = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.status == "completed",
+            models.Booking.payout_hold_until.isnot(None),
+            models.Booking.payout_hold_until <= end_dt,
+            models.Booking.payout_released_at.is_(None),
+            models.Booking.payout_disputed == False,  # noqa: E712
+        )
+        .all()
+    )
+    payouts_pending_cents = 0
+    for booking in payout_backlog_rows:
+        req = None
+        if getattr(booking, "booking_request_id", None):
+            req = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+        payouts_pending_cents += int((booking.payout_amount_cents if booking.payout_amount_cents is not None else (req.nanny_retained_cents if req else 0)) or 0)
+
+    overtime_pending_rows = (
+        db.query(models.Booking)
+        .filter(
+            models.Booking.overrun_status == "awaiting_parent",
+            models.Booking.overrun_amount_cents.isnot(None),
+        )
+        .all()
+    )
+    overtime_pending_cents = sum(int(r.overrun_amount_cents or 0) for r in overtime_pending_rows)
+
+    debt_deduction_rows = (
+        db.query(models.DebtDeductionLog)
+        .filter(
+            models.DebtDeductionLog.deducted_at >= start_dt,
+            models.DebtDeductionLog.deducted_at <= end_dt,
+        )
+        .all()
+    )
+    debt_deducted_cents = sum(int(row.amount_deducted_cents or 0) for row in debt_deduction_rows)
+
+    debt_outstanding_cents = (
+        db.query(func.coalesce(func.sum(models.NannyDebt.balance_cents), 0))
+        .filter(models.NannyDebt.balance_cents > 0)
+        .scalar()
+    )
+    debt_outstanding_cents = int(debt_outstanding_cents or 0)
+
+    return {
+        "range_start": start_dt.isoformat(),
+        "range_end": end_dt.isoformat(),
+        "total_paid_jobs": total_paid_jobs,
+        "accepted": accepted,
+        "cancelled": cancelled,
+        "in_progress": in_progress,
+        "completed": completed,
+        "company_income_cents": company_income_cents,
+        "nanny_income_cents": nanny_income_cents,
+        "total_paid_cents": total_paid_cents,
+        "refunded_cents": refunded_cents,
+        "net_company_income_cents": company_income_cents - refunded_cents,
+        "payments_processed_cents": payments_processed_cents,
+        "payments_processed_count": len(payment_rows),
+        "overtime_charges_cents": overtime_charges_cents,
+        "overtime_charges_count": len(overtime_rows),
+        "refunds_processed_cents": refunds_processed_cents,
+        "refunds_processed_count": len(refund_rows),
+        "payouts_released_cents": payouts_released_cents,
+        "payouts_released_count": len(payout_rows),
+        "overrun_payouts_released_cents": overrun_payouts_released_cents,
+        "overrun_payouts_released_count": len(overrun_payout_rows),
+        "payouts_pending_cents": payouts_pending_cents,
+        "overtime_pending_cents": overtime_pending_cents,
+        "debt_deducted_cents": debt_deducted_cents,
+        "debt_deducted_count": len(debt_deduction_rows),
+        "debt_outstanding_cents": debt_outstanding_cents,
+    }
+
+
+@router.get("/accounting/payouts", dependencies=[Depends(require_admin)])
+def accounting_payouts(
+    range: Optional[str] = Query(default="month"),
+    start: Optional[str] = Query(default=None),
+    end: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default="all"),
+    db: Session = Depends(get_db),
+):
+    start_dt, end_dt = _resolve_reporting_window(report_range=range, start=start, end=end)
+    status_key = (status or "all").strip().lower()
+    now = datetime.utcnow()
+
+    payout_rows = (
+        db.query(models.Booking)
+        .filter(
+            or_(
+                and_(
+                    models.Booking.payout_released_at.isnot(None),
+                    models.Booking.payout_released_at >= start_dt,
+                    models.Booking.payout_released_at <= end_dt,
+                ),
+                and_(
+                    models.Booking.payout_hold_until.isnot(None),
+                    models.Booking.payout_hold_until <= end_dt,
+                    models.Booking.payout_released_at.is_(None),
+                    models.Booking.status == "completed",
+                ),
+                and_(
+                    models.Booking.overrun_released_at.isnot(None),
+                    models.Booking.overrun_released_at >= start_dt,
+                    models.Booking.overrun_released_at <= end_dt,
+                ),
+                and_(
+                    models.Booking.overrun_confirmed_at.isnot(None),
+                    models.Booking.overrun_confirmed_at >= start_dt,
+                    models.Booking.overrun_confirmed_at <= end_dt,
+                    models.Booking.overrun_status.in_(["awaiting_parent", "charged", "queried"]),
+                ),
+            )
+        )
+        .order_by(models.Booking.id.desc())
+        .all()
+    )
+
+    results = []
+    for booking in payout_rows:
+        req = None
+        if getattr(booking, "booking_request_id", None):
+            req = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+        parent_user = db.query(models.User).filter(models.User.id == booking.client_user_id).first()
+        nanny = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
+        nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first() if nanny else None
+        bank = (
+            db.query(models.NannyBankAccount)
+            .filter(models.NannyBankAccount.nanny_id == booking.nanny_id)
+            .order_by(models.NannyBankAccount.is_default.desc(), models.NannyBankAccount.is_verified.desc(), models.NannyBankAccount.id.desc())
+            .first()
+        )
+        recipient_code = getattr(bank, "paystack_recipient_code", None) or getattr(nanny, "paystack_recipient_code", None)
+        parent_name = getattr(parent_user, "name", None) if parent_user else None
+        nanny_name = getattr(nanny_user, "name", None) if nanny_user else None
+        refund_amount_cents = int(getattr(req, "refund_cents", 0) or 0) if req and getattr(req, "refund_status", None) == "processed" else 0
+        base_gross_cents = int((req.nanny_retained_cents if req and req.nanny_retained_cents is not None else 0) or 0)
+        base_released_at = getattr(booking, "payout_released_at", None)
+        base_hold_until = getattr(booking, "payout_hold_until", None)
+        base_debt_cents = int(getattr(booking, "payout_debt_deducted_cents", 0) or 0)
+        base_net_cents = int(getattr(booking, "payout_amount_cents", 0) or 0)
+        if base_net_cents <= 0 and base_gross_cents > 0:
+            base_net_cents = max(0, base_gross_cents - base_debt_cents)
+
+        base_state = "released" if base_released_at else ("due" if base_hold_until and base_hold_until <= now and not getattr(booking, "payout_disputed", False) else "pending")
+        overrun_gross_cents = int(getattr(booking, "overrun_amount_cents", 0) or 0)
+        overrun_released_at = getattr(booking, "overrun_released_at", None)
+        overrun_hold_until = getattr(booking, "overrun_hold_until", None)
+        overrun_state = "released" if overrun_released_at else (
+            "due" if overrun_hold_until and overrun_hold_until <= now and not getattr(booking, "overrun_disputed", False) else str(getattr(booking, "overrun_status", None) or "pending")
+        )
+
+        def include_item(item_status: str) -> bool:
+            if status_key == "all":
+                return True
+            if status_key == "pending":
+                return item_status in {"pending", "due", "awaiting_parent", "queried"}
+            if status_key == "released":
+                return item_status == "released"
+            if status_key == "blocked":
+                return item_status in {"blocked", "missing_recipient"}
+            return item_status == status_key
+
+        base_item = {
+            "kind": "base",
+            "booking_id": booking.id,
+            "booking_request_id": getattr(booking, "booking_request_id", None),
+            "parent_name": parent_name,
+            "parent_email": getattr(parent_user, "email", None) if parent_user else None,
+            "nanny_name": nanny_name,
+            "nanny_email": getattr(nanny_user, "email", None) if nanny_user else None,
+            "gross_amount_cents": base_gross_cents,
+            "debt_deducted_cents": base_debt_cents,
+            "net_amount_cents": base_net_cents,
+            "refund_amount_cents": refund_amount_cents,
+            "hold_until": base_hold_until.isoformat() if base_hold_until else None,
+            "released_at": base_released_at.isoformat() if base_released_at else None,
+            "state": base_state,
+            "recipient_code": recipient_code,
+            "bank_name": getattr(bank, "bank_name", None) if bank else None,
+            "transfer_ready": bool(recipient_code),
+            "check_out_at": _to_iso_z(booking.check_out_at) if booking.check_out_at else None,
+            "check_in_at": _to_iso_z(booking.check_in_at) if booking.check_in_at else None,
+            "status": getattr(booking, "status", None),
+        }
+        if base_gross_cents > 0 and include_item(base_item["state"]):
+            results.append(base_item)
+
+        overrun_item = {
+            "kind": "overtime",
+            "booking_id": booking.id,
+            "booking_request_id": getattr(booking, "booking_request_id", None),
+            "parent_name": parent_name,
+            "parent_email": getattr(parent_user, "email", None) if parent_user else None,
+            "nanny_name": nanny_name,
+            "nanny_email": getattr(nanny_user, "email", None) if nanny_user else None,
+            "gross_amount_cents": overrun_gross_cents,
+            "debt_deducted_cents": 0,
+            "net_amount_cents": overrun_gross_cents,
+            "refund_amount_cents": 0,
+            "hold_until": overrun_hold_until.isoformat() if overrun_hold_until else None,
+            "released_at": overrun_released_at.isoformat() if overrun_released_at else None,
+            "state": overrun_state,
+            "recipient_code": recipient_code,
+            "bank_name": getattr(bank, "bank_name", None) if bank else None,
+            "transfer_ready": bool(recipient_code),
+            "check_out_at": _to_iso_z(booking.check_out_at) if booking.check_out_at else None,
+            "check_in_at": _to_iso_z(booking.check_in_at) if booking.check_in_at else None,
+            "status": getattr(booking, "overrun_status", None),
+        }
+        if overrun_gross_cents > 0 and include_item(overrun_item["state"]):
+            results.append(overrun_item)
+
+    return {
+        "range_start": start_dt.isoformat(),
+        "range_end": end_dt.isoformat(),
+        "results": results,
+        "total": len(results),
     }
 
 

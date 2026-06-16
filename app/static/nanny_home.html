@@ -55,6 +55,10 @@
     .monthLabel{font-weight:700;font-size:18px}
     .btn.primarySoft{background:#ecfdf5;border-color:#86efac;color:#166534}
     .btn.isDisabled{opacity:.55;cursor:not-allowed;pointer-events:none}
+    .bankGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+    .bankGrid label{display:grid;gap:5px;font-size:13px;color:#555}
+    .bankGrid input,.bankGrid select{padding:10px;border:1px solid #ccc;border-radius:8px;font:inherit}
+    .bankStatus{min-height:18px;margin-top:10px;font-size:14px;color:#666}
     .dutyFeedback{
       display:none;
       margin:12px 0 0;
@@ -71,6 +75,7 @@
       .bookingGlance{grid-template-columns:1fr}
       .monthNav{flex-wrap:wrap}
       .calendarDay{min-height:84px}
+      .bankGrid{grid-template-columns:1fr}
     }
   </style>
   <script defer src="/static/nav_buttons.js"></script>
@@ -89,6 +94,32 @@
       <button class="btn" id="complaintTicketBtn" type="button">Complaint / ticket</button>
       <button class="btn" id="shareProfileBtn" type="button">Share my profile</button>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="sectionHead">
+      <div>
+        <h2>Banking information</h2>
+        <div id="bankingSummary" class="muted">Checking payout details...</div>
+      </div>
+    </div>
+    <form id="bankingForm">
+      <div class="bankGrid">
+        <label>Account holder
+          <input id="bankAccountName" autocomplete="name" required>
+        </label>
+        <label>Bank
+          <select id="bankCode" required></select>
+        </label>
+        <label>Account number
+          <input id="bankAccountNumber" inputmode="numeric" autocomplete="off" required>
+        </label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primarySoft" type="submit">Save banking details</button>
+      </div>
+      <div id="bankingStatus" class="bankStatus"></div>
+    </form>
   </div>
 
   <div class="card acceptedCard">
@@ -141,6 +172,7 @@
   <script>
     let currentCalendarMonth = null;
     let dutyBookingsCache = [];
+    let paystackBanks = [];
 
     document.getElementById("goAvailabilityBtn").addEventListener("click", () => {
       location.href = "/static/nanny_availability.html";
@@ -182,6 +214,54 @@
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#39;");
     }
+
+    async function loadBanking() {
+      const summary = document.getElementById("bankingSummary");
+      const status = document.getElementById("bankingStatus");
+      const bankSelect = document.getElementById("bankCode");
+      try {
+        const [banking, banks] = await Promise.all([
+          fetchJson("/nanny/banking").catch(() => ({ accounts: [] })),
+          fetchJson("/nanny/banking/banks").catch(() => ({ banks: [] })),
+        ]);
+        paystackBanks = Array.isArray(banks?.banks) ? banks.banks : [];
+        bankSelect.innerHTML = paystackBanks.map((bank) => {
+          return `<option value="${escapeHtml(bank.code)}">${escapeHtml(bank.name)}</option>`;
+        }).join("");
+        const first = (banking?.accounts || [])[0];
+        if (first) {
+          summary.textContent = `${first.bank_name || "Bank account"} ${first.masked_account_number || ""}`;
+        } else {
+          summary.textContent = "Add your bank account before payouts can be sent.";
+        }
+      } catch (err) {
+        status.textContent = err.message || "Could not load banking details.";
+      }
+    }
+
+    document.getElementById("bankingForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = document.getElementById("bankingStatus");
+      const bankSelect = document.getElementById("bankCode");
+      const selectedBank = paystackBanks.find((bank) => String(bank.code) === String(bankSelect.value));
+      status.textContent = "Saving banking details...";
+      try {
+        const saved = await fetchJson("/nanny/banking", {
+          method: "POST",
+          body: JSON.stringify({
+            account_name: document.getElementById("bankAccountName").value,
+            bank_name: selectedBank?.name || bankSelect.options[bankSelect.selectedIndex]?.text || "",
+            bank_code: bankSelect.value,
+            account_number: document.getElementById("bankAccountNumber").value,
+          })
+        });
+        status.textContent = `${saved.bank_name || "Bank account"} ${saved.masked_account_number || ""} saved.`;
+        document.getElementById("bankAccountNumber").value = "";
+        await loadBanking();
+      } catch (err) {
+        status.textContent = err.message || "Could not save banking details.";
+      }
+    });
 
     function formatListingDate(value) {
       if (!value) return "-";
@@ -751,7 +831,7 @@
         location.href = "/static/login.html";
         return;
       }
-      await Promise.all([updateRequestCount(), loadDutyBookings()]);
+      await Promise.all([updateRequestCount(), loadDutyBookings(), loadBanking()]);
     })();
   </script>
 </body>

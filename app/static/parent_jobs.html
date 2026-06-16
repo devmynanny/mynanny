@@ -210,8 +210,16 @@
     }
 
     function mapStatus(status) {
-      if (status === "approved") return "Accepted";
-      if (status === "tbc" || status === "pending_admin") return "Requested";
+      const key = String(status || "").toLowerCase();
+      if (key === "approved" || key === "accepted" || key === "confirmed") return "Accepted";
+      if (key === "tbc" || key === "pending_admin" || key === "awaiting_acceptance") return "Requested";
+      if (key === "awaiting_payment") return "Awaiting payment";
+      if (key === "payment_failed") return "Payment failed";
+      if (key === "in_progress") return "In progress";
+      if (key === "awaiting_overtime_approval") return "Awaiting overtime approval";
+      if (key === "admin_review") return "Admin review";
+      if (key === "completed") return "Completed";
+      if (key === "cancelled") return "Cancelled";
       return status || "-";
     }
 
@@ -359,6 +367,28 @@
         <div class="bookingCardNote">Worked time: ${escapeHtml(formatMinutesLabel(workedMinutes))}</div>
         <div class="bookingCardNote">Extra time: ${escapeHtml(formatMinutesLabel(extraMinutes))}</div>
       `;
+    }
+
+    function renderOvertimeActions(item, todayDay) {
+      if (!item || !todayDay) return "";
+      const overrunStatus = String(todayDay.overrun_status || "").toLowerCase();
+      const amount = Number(todayDay.overrun_amount_cents || 0);
+      if (overrunStatus === "awaiting_parent" && amount > 0) {
+        return `
+          <div class="bookingCardNote"><strong>Overtime approval needed:</strong> ${escapeHtml(formatCurrencyFromCents(amount))}</div>
+          <div class="actions">
+            <button class="btn overtimeAgreeBtn" type="button" data-booking-id="${escapeHtml(todayDay.booking_id || "")}">Agree overtime</button>
+            <button class="btn overtimeQueryBtn" type="button" data-booking-id="${escapeHtml(todayDay.booking_id || "")}">Query overtime</button>
+          </div>
+        `;
+      }
+      if (overrunStatus === "charged") {
+        return `<div class="bookingCardNote">Overtime approved and charged: ${escapeHtml(formatCurrencyFromCents(amount))}</div>`;
+      }
+      if (overrunStatus === "queried") {
+        return `<div class="bookingCardNote">Overtime queried and sent to admin review.</div>`;
+      }
+      return "";
     }
 
     function toLocalDateParts(date) {
@@ -825,7 +855,7 @@
         const start = window.formatDateTimeDisplay(r.start_dt);
         const end = window.formatDateTimeDisplay(r.end_dt);
         const bookingRange = formatBookingDateTimeRange(r.start_dt, r.end_dt);
-        const status = mapStatus(r.status);
+        const status = mapStatus(r.booking_state || r.status);
         const displayName = formatName(r.accepted_nanny_name || "Nanny");
         let nannyLine = "Awaiting nanny acceptance";
         if (r.status === "approved") {
@@ -856,6 +886,7 @@
           ${showAgreedPrice ? `<div class="muted"><strong>Agreed price:</strong> ${escapeHtml(agreedPrice)}</div>` : ""}
           ${todayDay ? `<div class="bookingCardNote">Today's booking day: ${escapeHtml(formatBookingDateTimeRange(todayDay.start_dt, todayDay.end_dt))}</div>` : ""}
           ${todayDay ? renderParentBookingDaySummary(todayDay) : ""}
+          ${todayDay ? renderOvertimeActions(r, todayDay) : ""}
           <div class="actions">
             ${canCancelJob ? `<button class="btn cancelBtn" data-id="${r.job_id}">Cancel job</button>` : ""}
             ${canEditJob ? `<button class="btn editJobBtn" data-id="${r.job_id}">Edit job</button>` : ""}
@@ -1041,6 +1072,36 @@
           } catch (e) {
             btn.disabled = false;
             alert(e.message || "Failed to update booking form");
+          }
+        });
+      });
+      list.querySelectorAll(".overtimeAgreeBtn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const bookingId = btn.dataset.bookingId || "";
+          if (!bookingId) return;
+          if (!window.confirm("Approve and charge this overtime amount to your saved card?")) return;
+          btn.disabled = true;
+          try {
+            await fetchJson(`/bookings/${encodeURIComponent(bookingId)}/overtime/agree`, { method: "POST" });
+            loadJobs().catch(() => {});
+          } catch (e) {
+            btn.disabled = false;
+            alert(e.message || "Failed to approve overtime");
+          }
+        });
+      });
+      list.querySelectorAll(".overtimeQueryBtn").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const bookingId = btn.dataset.bookingId || "";
+          if (!bookingId) return;
+          if (!window.confirm("Query this overtime amount and send it for admin review?")) return;
+          btn.disabled = true;
+          try {
+            await fetchJson(`/bookings/${encodeURIComponent(bookingId)}/overtime/query`, { method: "POST" });
+            loadJobs().catch(() => {});
+          } catch (e) {
+            btn.disabled = false;
+            alert(e.message || "Failed to query overtime");
           }
         });
       });

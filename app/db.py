@@ -348,7 +348,10 @@ def ensure_bookings_schema() -> None:
         add_col("google_calendar_sync_error", "TEXT")
         add_col("overrun_minutes", "INTEGER")
         add_col("overrun_amount_cents", "INTEGER")
+        add_col("overrun_status", "TEXT")
         add_col("overrun_paystack_ref", "TEXT")
+        add_col("overrun_confirmed_at", "DATETIME")
+        add_col("overrun_queried_at", "DATETIME")
         add_col("overrun_hold_until", "DATETIME")
         add_col("overrun_disputed", "BOOLEAN NOT NULL DEFAULT 0")
         add_col("overrun_dispute_raised_at", "DATETIME")
@@ -358,6 +361,8 @@ def ensure_bookings_schema() -> None:
         add_col("overrun_released_at", "DATETIME")
         add_col("payout_hold_until", "DATETIME")
         add_col("payout_released_at", "DATETIME")
+        add_col("payout_amount_cents", "INTEGER")
+        add_col("payout_debt_deducted_cents", "INTEGER NOT NULL DEFAULT 0")
         add_col("payout_disputed", "BOOLEAN NOT NULL DEFAULT 0")
         add_col("payout_dispute_raised_at", "DATETIME")
         add_col("payout_resolved_at", "DATETIME")
@@ -386,6 +391,10 @@ def ensure_nannies_schema() -> None:
         add_col("suspension_reason", "TEXT")
         add_col("suspension_lifted_at", "DATETIME")
         add_col("suspension_lifted_by", "INTEGER")
+        add_col("paystack_recipient_code", "TEXT")
+        add_col("profile_complete", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("availability_complete", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("banking_complete", "BOOLEAN NOT NULL DEFAULT 0")
 
 
 def ensure_nanny_profiles_schema() -> None:
@@ -569,6 +578,16 @@ def ensure_users_schema() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1"))
         if "phone_alt" not in existing:
             conn.execute(text("ALTER TABLE users ADD COLUMN phone_alt TEXT"))
+        if "paystack_customer_code" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN paystack_customer_code TEXT"))
+        if "paystack_auth_code" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN paystack_auth_code TEXT"))
+        if "card_last4" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN card_last4 TEXT"))
+        if "card_brand" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN card_brand TEXT"))
+        if "card_saved_at" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN card_saved_at DATETIME"))
 
 
 def ensure_languages_seed() -> None:
@@ -727,7 +746,11 @@ def ensure_pricing_settings_schema() -> None:
                   overrun_hourly_weekday INTEGER NOT NULL DEFAULT 4500,
                   overrun_hourly_weekend INTEGER NOT NULL DEFAULT 5000,
                   overrun_hold_hours INTEGER NOT NULL DEFAULT 24,
-                  payout_hold_hours INTEGER NOT NULL DEFAULT 24
+                  payout_hold_hours INTEGER NOT NULL DEFAULT 24,
+                  transport_fee_17_20 INTEGER NOT NULL DEFAULT 5000,
+                  transport_fee_after_20 INTEGER NOT NULL DEFAULT 8000,
+                  transport_threshold_1 INTEGER NOT NULL DEFAULT 17,
+                  transport_threshold_2 INTEGER NOT NULL DEFAULT 20
                 );
             """))
             conn.execute(text("""
@@ -755,9 +778,13 @@ def ensure_pricing_settings_schema() -> None:
                   overrun_hourly_weekday,
                   overrun_hourly_weekend,
                   overrun_hold_hours,
-                  payout_hold_hours
+                  payout_hold_hours,
+                  transport_fee_17_20,
+                  transport_fee_after_20,
+                  transport_threshold_1,
+                  transport_threshold_2
                 ) VALUES (
-                  1, 250, 300, 300, 350, 150, 400, 450, 50, 30, 35, 45, 50, 14, 7, 45, 0.30, 0.27, 0.25, 15, 4500, 5000, 24, 24
+                  1, 250, 300, 300, 350, 150, 400, 450, 50, 30, 35, 45, 50, 14, 7, 45, 0.30, 0.27, 0.25, 15, 4500, 5000, 24, 24, 5000, 8000, 17, 20
                 )
             """))
             return
@@ -774,6 +801,14 @@ def ensure_pricing_settings_schema() -> None:
             conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN overrun_hold_hours INTEGER NOT NULL DEFAULT 24"))
         if "payout_hold_hours" not in existing:
             conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN payout_hold_hours INTEGER NOT NULL DEFAULT 24"))
+        if "transport_fee_17_20" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN transport_fee_17_20 INTEGER NOT NULL DEFAULT 5000"))
+        if "transport_fee_after_20" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN transport_fee_after_20 INTEGER NOT NULL DEFAULT 8000"))
+        if "transport_threshold_1" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN transport_threshold_1 INTEGER NOT NULL DEFAULT 17"))
+        if "transport_threshold_2" not in existing:
+            conn.execute(text("ALTER TABLE pricing_settings ADD COLUMN transport_threshold_2 INTEGER NOT NULL DEFAULT 20"))
 
         rows = conn.execute(text("SELECT COUNT(*) FROM pricing_settings")).fetchone()
         if rows and rows[0] == 0:
@@ -802,6 +837,10 @@ def ensure_pricing_settings_schema() -> None:
                 "overrun_hourly_weekend": 5000,
                 "overrun_hold_hours": 24,
                 "payout_hold_hours": 24,
+                "transport_fee_17_20": 5000,
+                "transport_fee_after_20": 8000,
+                "transport_threshold_1": 17,
+                "transport_threshold_2": 20,
             }
             insert_columns = [name for name in default_values if name in existing]
             placeholders = ", ".join(f":{name}" for name in insert_columns)
@@ -834,6 +873,114 @@ def ensure_nanny_demerit_log_schema() -> None:
             """))
 
 
+def ensure_nanny_debt_schema() -> None:
+    with engine.begin() as conn:
+        if not _table_exists(conn, "nanny_debt"):
+            conn.execute(text("""
+                CREATE TABLE nanny_debt (
+                  id INTEGER NOT NULL PRIMARY KEY,
+                  nanny_id INTEGER NOT NULL,
+                  amount_cents INTEGER NOT NULL,
+                  balance_cents INTEGER NOT NULL,
+                  reason TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'active',
+                  created_by INTEGER NOT NULL,
+                  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  FOREIGN KEY(nanny_id) REFERENCES nannies (id),
+                  FOREIGN KEY(created_by) REFERENCES users (id)
+                )
+            """))
+            return
+
+        cols = conn.execute(text("PRAGMA table_info(nanny_debt)")).fetchall()
+        existing = {row[1] for row in cols}
+
+        def add_col(name: str, col_type: str):
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE nanny_debt ADD COLUMN {name} {col_type}"))
+
+        add_col("status", "TEXT NOT NULL DEFAULT 'active'")
+        add_col("updated_at", "DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+
+def ensure_debt_deduction_log_schema() -> None:
+    with engine.begin() as conn:
+        if _table_exists(conn, "debt_deduction_log"):
+            return
+        conn.execute(text("""
+            CREATE TABLE debt_deduction_log (
+              id INTEGER NOT NULL PRIMARY KEY,
+              debt_id INTEGER NOT NULL,
+              booking_id INTEGER,
+              amount_deducted_cents INTEGER NOT NULL,
+              balance_after_cents INTEGER NOT NULL,
+              deducted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(debt_id) REFERENCES nanny_debt (id),
+              FOREIGN KEY(booking_id) REFERENCES bookings (id)
+            )
+        """))
+
+
+def ensure_notification_log_schema() -> None:
+    with engine.begin() as conn:
+        if _table_exists(conn, "notification_log"):
+            return
+        conn.execute(text("""
+            CREATE TABLE notification_log (
+              id INTEGER NOT NULL PRIMARY KEY,
+              user_id INTEGER,
+              event_type TEXT NOT NULL,
+              channel TEXT NOT NULL,
+              status TEXT NOT NULL,
+              error_message TEXT,
+              reference_id INTEGER,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+        """))
+
+
+def ensure_in_app_notifications_schema() -> None:
+    with engine.begin() as conn:
+        if _table_exists(conn, "in_app_notifications"):
+            return
+        conn.execute(text("""
+            CREATE TABLE in_app_notifications (
+              id INTEGER NOT NULL PRIMARY KEY,
+              user_id INTEGER NOT NULL,
+              title TEXT NOT NULL,
+              body TEXT NOT NULL,
+              action_url TEXT,
+              read BOOLEAN NOT NULL DEFAULT 0,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+        """))
+
+
+def ensure_client_reviews_schema() -> None:
+    with engine.begin() as conn:
+        if _table_exists(conn, "client_reviews"):
+            return
+        conn.execute(text("""
+            CREATE TABLE client_reviews (
+              id INTEGER NOT NULL PRIMARY KEY,
+              booking_id INTEGER NOT NULL,
+              nanny_id INTEGER NOT NULL,
+              parent_user_id INTEGER NOT NULL,
+              stars INTEGER NOT NULL,
+              comment TEXT,
+              approved BOOLEAN NOT NULL DEFAULT 0,
+              parent_notified BOOLEAN NOT NULL DEFAULT 0,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(booking_id) REFERENCES bookings (id),
+              FOREIGN KEY(nanny_id) REFERENCES nannies (id),
+              FOREIGN KEY(parent_user_id) REFERENCES users (id)
+            )
+        """))
+
+
 def ensure_nanny_bank_accounts_schema() -> None:
     with engine.begin() as conn:
         if not _table_exists(conn, "nanny_bank_accounts"):
@@ -842,8 +989,12 @@ def ensure_nanny_bank_accounts_schema() -> None:
                   id INTEGER NOT NULL PRIMARY KEY,
                   nanny_id INTEGER NOT NULL,
                   account_name TEXT NOT NULL,
-                  account_number TEXT NOT NULL,
+                  account_number TEXT,
+                  account_number_token TEXT,
                   bank_code TEXT NOT NULL,
+                  bank_name TEXT,
+                  paystack_recipient_code TEXT,
+                  is_default BOOLEAN NOT NULL DEFAULT 0,
                   is_verified BOOLEAN NOT NULL DEFAULT 0,
                   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                   FOREIGN KEY(nanny_id) REFERENCES nannies (id)
@@ -860,7 +1011,11 @@ def ensure_nanny_bank_accounts_schema() -> None:
 
         add_col("account_name", "TEXT")
         add_col("account_number", "TEXT")
+        add_col("account_number_token", "TEXT")
         add_col("bank_code", "TEXT")
+        add_col("bank_name", "TEXT")
+        add_col("paystack_recipient_code", "TEXT")
+        add_col("is_default", "BOOLEAN NOT NULL DEFAULT 0")
         add_col("is_verified", "BOOLEAN NOT NULL DEFAULT 0")
         add_col("created_at", "DATETIME")
 

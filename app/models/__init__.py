@@ -43,6 +43,11 @@ class User(Base):
     phone_alt = Column(String, nullable=True)
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
+    paystack_customer_code = Column(String, nullable=True)
+    paystack_auth_code = Column(String, nullable=True)
+    card_last4 = Column(String, nullable=True)
+    card_brand = Column(String, nullable=True)
+    card_saved_at = Column(DateTime, nullable=True)
 
     nickname = Column(String, nullable=True)
     last_initial = Column(String, nullable=True)
@@ -68,6 +73,10 @@ class Nanny(Base):
     suspension_reason = Column(Text, nullable=True)
     suspension_lifted_at = Column(DateTime, nullable=True)
     suspension_lifted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    paystack_recipient_code = Column(String, nullable=True)
+    profile_complete = Column(Boolean, nullable=False, default=False)
+    availability_complete = Column(Boolean, nullable=False, default=False)
+    banking_complete = Column(Boolean, nullable=False, default=False)
 
     profile = relationship("NannyProfile", back_populates="nanny", uselist=False)
 
@@ -115,16 +124,21 @@ class Booking(Base):
     google_calendar_sync_error = Column(Text, nullable=True)
     overrun_minutes = Column(Integer, nullable=True)
     overrun_amount_cents = Column(Integer, nullable=True)
+    overrun_status = Column(String, nullable=True)
     overrun_paystack_ref = Column(Text, nullable=True)
+    overrun_confirmed_at = Column(DateTime, nullable=True)
+    overrun_queried_at = Column(DateTime, nullable=True)
+    overrun_resolved_at = Column(DateTime, nullable=True)
+    overrun_resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     overrun_hold_until = Column(DateTime, nullable=True)
     overrun_disputed = Column(Boolean, nullable=False, default=False)
     overrun_dispute_raised_at = Column(DateTime, nullable=True)
-    overrun_resolved_at = Column(DateTime, nullable=True)
-    overrun_resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     overrun_resolution = Column(Text, nullable=True)
     overrun_released_at = Column(DateTime, nullable=True)
     payout_hold_until = Column(DateTime, nullable=True)
     payout_released_at = Column(DateTime, nullable=True)
+    payout_amount_cents = Column(Integer, nullable=True)
+    payout_debt_deducted_cents = Column(Integer, nullable=False, default=0)
     payout_disputed = Column(Boolean, nullable=False, default=False)
     payout_dispute_raised_at = Column(DateTime, nullable=True)
     payout_resolved_at = Column(DateTime, nullable=True)
@@ -150,6 +164,28 @@ class Review(Base):
         Index("reviews_parent_user_id_idx", "parent_user_id"),
         Index("reviews_approved_idx", "approved"),
         Index("reviews_created_at_idx", "created_at"),
+    )
+
+
+class ClientReview(Base):
+    __tablename__ = "client_reviews"
+
+    id = Column(Integer, primary_key=True)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=False)
+    nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
+    parent_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    stars = Column(Integer, nullable=False)
+    comment = Column(Text, nullable=True)
+    approved = Column(Boolean, nullable=False, default=False)
+    parent_notified = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("stars >= 1 AND stars <= 5", name="client_reviews_stars_check"),
+        Index("client_reviews_booking_id_idx", "booking_id"),
+        Index("client_reviews_nanny_id_idx", "nanny_id"),
+        Index("client_reviews_parent_user_id_idx", "parent_user_id"),
+        Index("client_reviews_approved_idx", "approved"),
     )
 
 
@@ -280,6 +316,10 @@ class PricingSettings(Base):
     overrun_hourly_weekend = Column(Integer, nullable=False, default=5000)
     overrun_hold_hours = Column(Integer, nullable=False, default=24)
     payout_hold_hours = Column(Integer, nullable=False, default=24)
+    transport_fee_17_20 = Column(Integer, nullable=False, default=5000)
+    transport_fee_after_20 = Column(Integer, nullable=False, default=8000)
+    transport_threshold_1 = Column(Integer, nullable=False, default=17)
+    transport_threshold_2 = Column(Integer, nullable=False, default=20)
 
 
 class NannyDemeritLog(Base):
@@ -305,9 +345,63 @@ class NannyBankAccount(Base):
     id = Column(Integer, primary_key=True)
     nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
     account_name = Column(Text, nullable=False)
-    account_number = Column(Text, nullable=False)
+    account_number = Column(Text, nullable=True)
+    account_number_token = Column(Text, nullable=True)
     bank_code = Column(Text, nullable=False)
+    bank_name = Column(Text, nullable=True)
+    paystack_recipient_code = Column(Text, nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False)
     is_verified = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class NannyDebt(Base):
+    __tablename__ = "nanny_debt"
+
+    id = Column(Integer, primary_key=True)
+    nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=False)
+    amount_cents = Column(Integer, nullable=False)
+    balance_cents = Column(Integer, nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="active")
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class DebtDeductionLog(Base):
+    __tablename__ = "debt_deduction_log"
+
+    id = Column(Integer, primary_key=True)
+    debt_id = Column(Integer, ForeignKey("nanny_debt.id"), nullable=False)
+    booking_id = Column(Integer, ForeignKey("bookings.id"), nullable=True)
+    amount_deducted_cents = Column(Integer, nullable=False)
+    balance_after_cents = Column(Integer, nullable=False)
+    deducted_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class NotificationLog(Base):
+    __tablename__ = "notification_log"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    event_type = Column(String, nullable=False)
+    channel = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    error_message = Column(Text, nullable=True)
+    reference_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class InAppNotification(Base):
+    __tablename__ = "in_app_notifications"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    action_url = Column(Text, nullable=True)
+    read = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
