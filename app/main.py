@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pathlib import Path
 from app.routes import router
-from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_nanny_debt_schema, ensure_debt_deduction_log_schema, ensure_notification_log_schema, ensure_in_app_notifications_schema, ensure_client_reviews_schema, ensure_bootstrap_admin
+from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_pricing_settings_seed, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_nanny_debt_schema, ensure_debt_deduction_log_schema, ensure_notification_log_schema, ensure_in_app_notifications_schema, ensure_client_reviews_schema, ensure_bootstrap_admin
 from app.routers.public import _decode_access_token, ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app import models
 from app.request_context import auth_token_ctx
@@ -85,8 +85,16 @@ async def attach_request_user(request: Request, call_next):
     return response
 
 
-# Ensure all models are registered before creating tables
-Base.metadata.create_all(bind=engine)
+# Schema bootstrap.
+# - SQLite (local/dev): create_all + legacy in-place ensure_* migrations,
+#   preserving the existing dev workflow.
+# - Postgres (production): schema is managed exclusively by Alembic - run
+#   `alembic upgrade head` before starting the app (render.yaml preDeploy).
+#   The ensure_*_schema functions no-op on non-SQLite dialects.
+# - Seeds (languages, qualifications, pricing defaults, bootstrap admin)
+#   run on every dialect.
+if engine.dialect.name == "sqlite":
+    Base.metadata.create_all(bind=engine)
 ensure_audit_log_schema()
 ensure_booking_requests_schema()
 ensure_nanny_availability_schema()
@@ -101,6 +109,7 @@ ensure_qualifications_seed()
 ensure_parent_favorites_schema()
 ensure_app_settings_schema()
 ensure_pricing_settings_schema()
+ensure_pricing_settings_seed()
 ensure_nanny_demerit_log_schema()
 ensure_nanny_bank_accounts_schema()
 ensure_nanny_debt_schema()

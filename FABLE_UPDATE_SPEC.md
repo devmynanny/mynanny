@@ -77,11 +77,12 @@ My Nanny is a South Africa-first childcare booking platform built with:
 
 Tracked as 14 work items across four milestones, gating full launch. Status as of 2026-07-19:
 
-### Milestone 1: Stabilize Booking Core
-- [in progress] Test coverage for core booking flows — started with full characterization test suite for `app/services/booking_status.py` (the read-side status derivation layer), since it had zero prior coverage and any lifecycle refactor needs a safety net first.
-- [not started] Normalize booking status lifecycle — investigation found `app/routers/public.py` (10,251 lines) writes raw status strings at 50+ call sites across two different vocabularies (`bookings.status` vs `booking_requests.status`), reconciled only at read-time by `booking_status.py`. Sequencing changed: tests before refactor, to avoid regressions in a payment-connected file.
-- [not started] Add structured `requested_nannies_count` column (currently encoded in notes/request payload).
-- [not started] Expire/hide stale adverts (cleanup policy + UI hiding for expired pending adverts).
+### Milestone 1: Stabilize Booking Core — COMPLETE (2026-07-19)
+- [done] Test coverage for core booking flows — 87 tests passing: characterization suite for status derivation, end-to-end API tests (request → accept → charge → booking), 5-hour buffer, 100m geofence, guard rails (suspended/missing docs/failed charge/decline/overlap/idempotency). Test suite now hermetic (temp DB per run, no longer writes into dev DB).
+- [done] Normalize booking status lifecycle — central write vocabularies in `booking_status.py`, model-level validators reject rogue status writes on all four status columns. Removed dead legacy routers (`routes_public.py`/`routes_admin.py`) that contained a CHECK-violating status write and marked requests paid without charging.
+- [done] Structured `requested_nannies_count` column with legacy notes backfill; exposed in admin API.
+- [done] Stale advert expiry — sweep service (30-min scheduler) marks past open adverts rejected/expired; nanny listing hides them between sweeps. Policy documented in APP_RULES.md 6A.
+- [done, bonus] Fixed fresh-database bootstrap (duplicate audit index creation broke any clean deploy — would have blocked Postgres).
 
 ### Milestone 2: Production Data and Payments
 - [not started] Alembic migrations (replacing the custom `ensure_*_schema` functions in `app/db.py`).

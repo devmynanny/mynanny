@@ -23,10 +23,20 @@ def _ensure_sqlite_parent_dir(database_url: str) -> None:
 
 _ensure_sqlite_parent_dir(settings.database_url)
 
-engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False}
-)
+# check_same_thread is a SQLite-only argument; passing it to Postgres
+# (psycopg2) raises. Pool sizing/pre-ping only matter for real servers.
+if settings.database_url.startswith("sqlite"):
+    engine = create_engine(
+        settings.database_url,
+        connect_args={"check_same_thread": False},
+    )
+else:
+    engine = create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+    )
 
 SessionLocal = sessionmaker(bind=engine)
 
@@ -42,6 +52,10 @@ def _index_exists(conn, name: str) -> bool:
 
 
 def ensure_audit_log_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         exists = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_logs'"))
         if not exists.fetchone():
@@ -83,9 +97,25 @@ def ensure_audit_log_schema() -> None:
                 conn.execute(text(f"CREATE INDEX {index_name} ON audit_logs({column_name})"))
 
 
+def _is_sqlite() -> bool:
+    return engine.dialect.name == "sqlite"
+
+
 def _table_exists(conn, name: str) -> bool:
-    exists = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name=:name"), {"name": name})
-    return exists.fetchone() is not None
+    # Dialect-agnostic (works on SQLite and Postgres).
+    from sqlalchemy import inspect as sa_inspect
+
+    return sa_inspect(conn).has_table(name)
+
+
+def session_table_exists(db, name: str) -> bool:
+    """Dialect-agnostic table-existence check for an ORM Session.
+
+    Replaces the legacy `SELECT ... FROM sqlite_master` probes that crash on
+    Postgres."""
+    from sqlalchemy import inspect as sa_inspect
+
+    return sa_inspect(db.get_bind()).has_table(name)
 
 
 def _backfill_requested_nannies_count(conn) -> None:
@@ -110,6 +140,10 @@ def _backfill_requested_nannies_count(conn) -> None:
 
 
 def ensure_booking_requests_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "booking_requests"):
             return
@@ -320,6 +354,10 @@ def ensure_booking_requests_schema() -> None:
 
 
 def ensure_nanny_availability_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "nanny_availability"):
             return
@@ -337,6 +375,10 @@ def ensure_nanny_availability_schema() -> None:
 
 
 def ensure_bookings_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "bookings"):
             return
@@ -395,6 +437,10 @@ def ensure_bookings_schema() -> None:
 
 
 def ensure_nannies_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "nannies"):
             return
@@ -422,6 +468,10 @@ def ensure_nannies_schema() -> None:
 
 
 def ensure_nanny_profiles_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "nanny_profiles"):
             return
@@ -466,6 +516,10 @@ def ensure_nanny_profiles_schema() -> None:
 
 
 def ensure_parent_profiles_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "parent_profiles"):
             return
@@ -565,6 +619,10 @@ def ensure_parent_profiles_schema() -> None:
 
 
 def ensure_admin_invites_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if _table_exists(conn, "admin_invites"):
             return
@@ -591,6 +649,10 @@ def ensure_admin_invites_schema() -> None:
 
 
 def ensure_users_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "users"):
             return
@@ -704,6 +766,10 @@ def ensure_qualifications_seed() -> None:
 
 
 def ensure_parent_favorites_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if _table_exists(conn, "parent_favorites"):
             return
@@ -723,6 +789,10 @@ def ensure_parent_favorites_schema() -> None:
 
 
 def ensure_app_settings_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "app_settings"):
             conn.execute(text("""
@@ -743,6 +813,10 @@ def ensure_app_settings_schema() -> None:
 
 
 def ensure_pricing_settings_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic; seeding happens in
+        # ensure_pricing_settings_seed which runs on all dialects.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "pricing_settings"):
             conn.execute(text("""
@@ -873,7 +947,63 @@ def ensure_pricing_settings_schema() -> None:
             conn.execute(text(sql), params)
 
 
+PRICING_DEFAULTS = {
+    "id": 1,
+    "weekday_half_day": 250,
+    "weekday_full_day": 300,
+    "weekend_half_day": 300,
+    "weekend_full_day": 350,
+    "sleepover_add": 150,
+    "sleepover_only_weekday": 400,
+    "sleepover_only_weekend": 450,
+    "sleepover_extra_hour_over14": 50,
+    "after17_weekday": 30,
+    "after17_weekend": 35,
+    "over9_weekday": 45,
+    "over9_weekend": 50,
+    "sleepover_start_hour": 14,
+    "sleepover_end_hour": 7,
+    "sleepover_after7_hourly": 45,
+    "booking_fee_pct_1_5": 0.30,
+    "booking_fee_pct_6_10": 0.27,
+    "booking_fee_pct_10_plus": 0.25,
+    "cancellation_fee_window_hours": 15,
+    "overrun_hourly_weekday": 4500,
+    "overrun_hourly_weekend": 5000,
+    "overrun_hold_hours": 24,
+    "payout_hold_hours": 24,
+    "transport_fee_17_20": 5000,
+    "transport_fee_after_20": 8000,
+    "transport_threshold_1": 17,
+    "transport_threshold_2": 20,
+}
+
+
+def ensure_pricing_settings_seed() -> None:
+    """Dialect-agnostic pricing defaults seed (runs on SQLite AND Postgres).
+
+    The DDL in ensure_pricing_settings_schema is SQLite-only; on Postgres the
+    table comes from Alembic and this seed fills it on first boot."""
+    from sqlalchemy import inspect as sa_inspect
+
+    with engine.begin() as conn:
+        if not _table_exists(conn, "pricing_settings"):
+            return
+        count = conn.execute(text("SELECT COUNT(*) FROM pricing_settings")).fetchone()
+        if count and count[0] > 0:
+            return
+        existing_cols = {c["name"] for c in sa_inspect(conn).get_columns("pricing_settings")}
+        insert_columns = [name for name in PRICING_DEFAULTS if name in existing_cols]
+        placeholders = ", ".join(f":{name}" for name in insert_columns)
+        sql = f"INSERT INTO pricing_settings ({', '.join(insert_columns)}) VALUES ({placeholders})"
+        conn.execute(text(sql), {name: PRICING_DEFAULTS[name] for name in insert_columns})
+
+
 def ensure_nanny_demerit_log_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "nanny_demerit_log"):
             conn.execute(text("""
@@ -898,6 +1028,10 @@ def ensure_nanny_demerit_log_schema() -> None:
 
 
 def ensure_nanny_debt_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "nanny_debt"):
             conn.execute(text("""
@@ -929,6 +1063,10 @@ def ensure_nanny_debt_schema() -> None:
 
 
 def ensure_debt_deduction_log_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if _table_exists(conn, "debt_deduction_log"):
             return
@@ -947,6 +1085,10 @@ def ensure_debt_deduction_log_schema() -> None:
 
 
 def ensure_notification_log_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if _table_exists(conn, "notification_log"):
             return
@@ -966,6 +1108,10 @@ def ensure_notification_log_schema() -> None:
 
 
 def ensure_in_app_notifications_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if _table_exists(conn, "in_app_notifications"):
             return
@@ -984,6 +1130,10 @@ def ensure_in_app_notifications_schema() -> None:
 
 
 def ensure_client_reviews_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if _table_exists(conn, "client_reviews"):
             return
@@ -1006,6 +1156,10 @@ def ensure_client_reviews_schema() -> None:
 
 
 def ensure_nanny_bank_accounts_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
     with engine.begin() as conn:
         if not _table_exists(conn, "nanny_bank_accounts"):
             conn.execute(text("""

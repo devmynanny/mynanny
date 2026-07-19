@@ -1440,8 +1440,8 @@ def _safe_send(to_email: str, subject: str, body: str):
 
 
 def _notification_log_exists(db: Session) -> bool:
-    row = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_log'")).fetchone()
-    return row is not None
+    from app.db import session_table_exists
+    return session_table_exists(db, "notification_log")
 
 
 def _log_notification_best_effort(

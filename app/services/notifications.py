@@ -33,13 +33,13 @@ WHATSAPP_TEMPLATE_NAMES = {
 
 
 def _notification_log_exists(db: Session) -> bool:
-    row = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='notification_log'")).fetchone()
-    return row is not None
+    from app.db import session_table_exists
+    return session_table_exists(db, "notification_log")
 
 
 def _in_app_notifications_exist(db: Session) -> bool:
-    row = db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='in_app_notifications'")).fetchone()
-    return row is not None
+    from app.db import session_table_exists
+    return session_table_exists(db, "in_app_notifications")
 
 
 def _log_notification(

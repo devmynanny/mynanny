@@ -4,9 +4,13 @@ services:
     runtime: python
     plan: starter
     buildCommand: pip install -r requirements.txt
+    # Run schema migrations before each deploy goes live.
+    preDeployCommand: alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /
+    healthCheckPath: /health
     autoDeployTrigger: commit
+    # Persistent disk kept ONLY for uploaded documents/photos.
+    # The database now lives in managed Postgres (below), not on this disk.
     disk:
       name: app-data
       mountPath: /opt/render/project/src/app/static/uploads
@@ -15,7 +19,9 @@ services:
       - key: APP_ENV
         value: staging
       - key: DATABASE_URL
-        value: sqlite:////opt/render/project/src/app/static/uploads/data/nanny_app.db
+        fromDatabase:
+          name: mynanny-db
+          property: connectionString
       - key: ADMIN_API_KEY
         sync: false
       - key: JWT_SECRET
@@ -24,3 +30,8 @@ services:
         sync: false
       - key: PAYSTACK_SECRET_KEY
         sync: false
+
+databases:
+  - name: mynanny-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"
