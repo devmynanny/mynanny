@@ -27,6 +27,39 @@ app = FastAPI()
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 scheduler = AsyncIOScheduler()
 
+# POPIA access control for uploaded files served from /static/uploads/.
+# Identity/vetting documents are restricted to their owner and admins;
+# everything else under uploads (profile/family photos) requires login.
+SENSITIVE_UPLOAD_PREFIXES = (
+    "id_",
+    "passport_",
+    "permit_",
+    "police_",
+    "drivers_license_",
+    "reference_",
+    "certificate_",
+)
+
+
+def _upload_access_status(path: str, user: dict | None) -> int | None:
+    """Return an HTTP status to reject with, or None to allow."""
+    if not path.startswith("/static/uploads/"):
+        return None
+    if user is None:
+        return 401
+    if user.get("is_admin"):
+        return None
+    filename = path.rsplit("/", 1)[-1]
+    for prefix in SENSITIVE_UPLOAD_PREFIXES:
+        if filename.startswith(prefix):
+            owner_part = filename[len(prefix):].split("_", 1)[0]
+            try:
+                owner_id = int(owner_part)
+            except ValueError:
+                return 403
+            return None if int(user.get("id", 0)) == owner_id else 403
+    return None
+
 
 def _is_prod_like_env() -> bool:
     env = (os.getenv("APP_ENV") or os.getenv("ENV") or "").strip().lower()
@@ -70,6 +103,14 @@ async def attach_request_user(request: Request, call_next):
                         request.state.impersonated_by_user_id = payload.get("impersonated_by")
                 finally:
                     db.close()
+
+        denied_status = _upload_access_status(request.url.path, request.state.user)
+        if denied_status is not None:
+            return JSONResponse(
+                status_code=denied_status,
+                content={"detail": "Not authorized to access this file"},
+            )
+
         response = await call_next(request)
         if token and not request.cookies.get(CSRF_COOKIE_NAME):
             response.set_cookie(
