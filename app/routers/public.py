@@ -6298,33 +6298,6 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
-    def _resolve_group_acceptance(group_id_value: int) -> bool:
-        accepted_reqs = (
-            db.query(models.BookingRequest)
-            .filter(
-                models.BookingRequest.group_id == group_id_value,
-                models.BookingRequest.status == "approved",
-            )
-            .all()
-        )
-        if len(accepted_reqs) <= 1:
-            return False
-
-        def rating_key(r):
-            avg, cnt = get_rating_12m_for_nanny(db, r.nanny_id)
-            return (avg or 0.0, cnt or 0, -r.id)
-
-        winner = max(accepted_reqs, key=rating_key)
-        changed = False
-        for other_req in accepted_reqs:
-            if other_req.id == winner.id:
-                continue
-            other_req.status = "rejected"
-            other_req.admin_reason = "filled_higher_rating"
-            other_req.admin_decided_at = datetime.utcnow()
-            changed = True
-        return changed
-
     nanny_user = aliased(models.User)
     rows = (
         db.query(models.BookingRequest, nanny_user)
@@ -6334,13 +6307,105 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         .order_by(models.BookingRequest.created_at.desc())
         .all()
     )
-    group_ids = {req.group_id or req.id for req, _ in rows}
+
+    # ---- Batched lookups (replaces per-group N+1 queries) ----
+    all_req_ids = [req.id for req, _ in rows]
+
+    slots_by_req: dict = {}
+    bookings_by_req: dict = {}
+    all_parent_bookings: list = []
+    if all_req_ids:
+        for slot in (
+            db.query(models.BookingRequestSlot)
+            .filter(models.BookingRequestSlot.booking_request_id.in_(all_req_ids))
+            .order_by(models.BookingRequestSlot.starts_at.asc())
+            .all()
+        ):
+            slots_by_req.setdefault(slot.booking_request_id, []).append(slot)
+        all_parent_bookings = (
+            db.query(models.Booking)
+            .filter(models.Booking.client_user_id == user.id)
+            .order_by(models.Booking.starts_at.asc(), models.Booking.id.asc())
+            .all()
+        )
+        for b in all_parent_bookings:
+            if b.booking_request_id:
+                bookings_by_req.setdefault(b.booking_request_id, []).append(b)
+
+    reqs_by_group: dict = {}
+    for req, _ in rows:
+        reqs_by_group.setdefault(req.group_id or req.id, []).append(req)
+
+    def _windows_cached(req) -> list:
+        ws = []
+        for slot in slots_by_req.get(req.id, []):
+            s = getattr(slot, "starts_at", None)
+            e = getattr(slot, "ends_at", None)
+            if s and e and e > s:
+                ws.append((s, e))
+        if ws:
+            return ws
+        try:
+            s = _parse_iso_dt(req.start_dt or req.requested_starts_at)
+            e = _parse_iso_dt(req.end_dt or req.requested_ends_at)
+        except Exception:
+            return []
+        return [(s, e)] if e > s else []
+
+    def _related_bookings_cached(gid: int, req) -> list:
+        found = []
+        for r in reqs_by_group.get(gid, []):
+            found.extend(bookings_by_req.get(r.id, []))
+        if found:
+            found.sort(key=lambda b: (b.starts_at or datetime.min, b.id))
+            return found
+        # Legacy fallback: match by nanny + overlapping time window, in memory.
+        windows = _windows_cached(req)
+        if not windows:
+            return []
+        start_floor = min(w[0] for w in windows)
+        end_ceiling = max(w[1] for w in windows)
+        return [
+            b for b in all_parent_bookings
+            if b.nanny_id == req.nanny_id
+            and b.starts_at is not None and b.ends_at is not None
+            and b.starts_at <= end_ceiling and b.ends_at >= start_floor
+        ]
+
+    # Resolve rare double-acceptance conflicts in memory (rating queries only
+    # run when a group actually has more than one accepted request).
     any_changes = False
-    for gid in group_ids:
-        if _resolve_group_acceptance(gid):
+    for gid, group_reqs in reqs_by_group.items():
+        accepted_reqs = [r for r in group_reqs if r.status == "approved"]
+        if len(accepted_reqs) <= 1:
+            continue
+
+        def rating_key(r):
+            avg, cnt = get_rating_12m_for_nanny(db, r.nanny_id)
+            return (avg or 0.0, cnt or 0, -r.id)
+
+        winner = max(accepted_reqs, key=rating_key)
+        for other_req in accepted_reqs:
+            if other_req.id == winner.id:
+                continue
+            other_req.status = "rejected"
+            other_req.admin_reason = "filled_higher_rating"
+            other_req.admin_decided_at = datetime.utcnow()
             any_changes = True
     if any_changes:
         db.commit()
+
+    # Per-group aggregates (single pass instead of O(n^2) scans).
+    group_flags: dict = {}
+    for gid, group_reqs in reqs_by_group.items():
+        group_flags[gid] = {
+            "any_accepted": any(
+                r.status == "approved" or (getattr(r, "nanny_response_status", None) or "").lower() == "accepted"
+                for r in group_reqs
+            ),
+            "any_editable": any(r.status in ("tbc", "pending_admin") for r in group_reqs),
+        }
+
     grouped = {}
     for req, nanny_u in rows:
         gid = req.group_id or req.id
@@ -6350,24 +6415,15 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         end_dt = req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None)
         if not entry:
             booking_form = _booking_questionnaire_from_notes(req.client_notes)
-            related_bookings = _find_related_bookings_for_request(db, req)
+            related_bookings = _related_bookings_cached(gid, req)
             booking_category = "upcoming"
             if related_bookings:
                 booking_category = _booking_group_time_state(related_bookings)
             elif status in ("cancelled", "rejected", "completed"):
                 booking_category = "past"
-            windows = _booking_request_windows(db, req)
-            any_accepted = any(
-                (candidate.status == "approved" or (getattr(candidate, "nanny_response_status", None) or "").lower() == "accepted")
-                for candidate, _ in rows
-                if (candidate.group_id or candidate.id) == gid
-            )
-            any_editable = any(
-                candidate.status in ("tbc", "pending_admin")
-                for candidate, _ in rows
-                if (candidate.group_id or candidate.id) == gid
-            )
-            can_edit_details = bool(not any_accepted and any_editable)
+            windows = _windows_cached(req)
+            flags = group_flags.get(gid) or {}
+            can_edit_details = bool(not flags.get("any_accepted") and flags.get("any_editable"))
             grouped[gid] = {
                 "job_id": gid,
                 "status": status,

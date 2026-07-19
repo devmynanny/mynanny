@@ -825,13 +825,16 @@
 
     async function loadJobs() {
       const data = await fetchJson("/parents/me/booking-requests");
-      const list = document.getElementById("jobsList");
-      list.innerHTML = "";
-      const items = data.results || [];
-      parentBookingsCache = items.slice();
+      parentBookingsCache = (data.results || []).slice();
       pendingConfirmationQueue = collectPendingConfirmations(parentBookingsCache);
       renderBookingsDashboard(parentBookingsCache);
       maybeShowNextPendingConfirmation();
+      renderJobsList();
+    }
+    function renderJobsList() {
+      const list = document.getElementById("jobsList");
+      list.innerHTML = "";
+      const items = parentBookingsCache;
       if (!items.length) {
         list.innerHTML = "<div class=\"muted\">No jobs yet.</div>";
         return;
@@ -1252,14 +1255,14 @@
           alert(`Card ending ${verified.card_last4 || "----"} saved. You can now approve the overtime.`);
         }
       } catch {}
-      try {
-        const cfg = await fetchJson("/settings/cancellation-window-hours");
+      // Non-blocking: settings only affect the cancel modal text
+      fetchJson("/settings/cancellation-window-hours").then((cfg) => {
         const hrs = Number(cfg?.cancellation_fee_window_hours);
         if (Number.isFinite(hrs) && hrs >= 0) cancellationWindowHours = Math.max(15, Math.floor(hrs));
-      } catch {}
+      }).catch(() => {});
       loadJobs().catch(() => {});
       document.getElementById("statusFilter").addEventListener("change", () => {
-        loadJobs().catch(() => {});
+        renderJobsList();
       });
     })();
   </script>
