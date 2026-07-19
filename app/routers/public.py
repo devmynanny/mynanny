@@ -10146,7 +10146,8 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
     if not secret or not signature:
         raise HTTPException(status_code=400, detail="Invalid signature")
     expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha512).hexdigest()
-    if expected != signature:
+    # Constant-time comparison prevents signature timing attacks.
+    if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     try:
