@@ -4951,7 +4951,7 @@ def nanny_cancel_booking(
         related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
     if related_request:
         starts_at = _booking_request_starts_at(related_request)
-        hours_until_start = ((starts_at - datetime.utcnow()).total_seconds() / 3600.0) if starts_at else 9999.0
+        hours_until_start = ((_as_utc_aware(starts_at) - datetime.now(timezone.utc)).total_seconds() / 3600.0) if starts_at else 9999.0
         outcome = calculate_cancellation_outcome(
             total_paid_cents=int((related_request.wage_cents or 0) + (related_request.booking_fee_cents or 0)),
             wage_cents=int(related_request.wage_cents or 0),
@@ -6323,7 +6323,7 @@ def cancel_parent_booking_request(
         if req.status == "cancelled":
             continue
         starts_at = _booking_request_starts_at(req)
-        hours_until_start = ((starts_at - datetime.utcnow()).total_seconds() / 3600.0) if starts_at else 9999.0
+        hours_until_start = ((_as_utc_aware(starts_at) - datetime.now(timezone.utc)).total_seconds() / 3600.0) if starts_at else 9999.0
         outcome = calculate_cancellation_outcome(
             total_paid_cents=int((req.wage_cents or 0) + (req.booking_fee_cents or 0)),
             wage_cents=int(req.wage_cents or 0),
@@ -8352,7 +8352,7 @@ def cancel_admin_booking_request(
         if group_req.status == "cancelled":
             continue
         starts_at = _booking_request_starts_at(group_req)
-        hours_until_start = ((starts_at - datetime.utcnow()).total_seconds() / 3600.0) if starts_at else 9999.0
+        hours_until_start = ((_as_utc_aware(starts_at) - datetime.now(timezone.utc)).total_seconds() / 3600.0) if starts_at else 9999.0
         outcome = calculate_cancellation_outcome(
             total_paid_cents=int((group_req.wage_cents or 0) + (group_req.booking_fee_cents or 0)),
             wage_cents=int(group_req.wage_cents or 0),
