@@ -62,7 +62,9 @@
       <button id="btnFavorites" class="btn">My Favourites</button>
     </div>
 
-    <div class="card">
+    <!-- Payment method section intentionally hidden: card capture happens
+         contextually inside the booking flow when payment is required. -->
+    <div class="card" id="paymentMethodCard" style="display:none;">
       <h2 style="margin:0 0 8px;font-size:20px;">Payment method</h2>
       <div id="paymentMethodSummary" class="hint">Checking saved card...</div>
       <div style="height:12px"></div>
@@ -330,15 +332,18 @@
         }
       });
 
+      // Section is hidden by default (card capture happens in the booking
+      // flow), but still complete verification if Paystack redirects here.
       try {
         const verified = await window.verifyParentPaymentMethodFromUrl();
         if (verified?.ok) {
-          paymentMethodSummary.textContent = `${verified.card_brand || "Card"} ending ${verified.card_last4 || "----"} saved.`;
+          const msgEl = document.getElementById("msg");
+          if (msgEl) msgEl.textContent = `${verified.card_brand || "Card"} ending ${verified.card_last4 || "----"} saved.`;
         }
       } catch (err) {
-        paymentMethodSummary.textContent = err.message || "Could not verify payment method.";
+        const msgEl = document.getElementById("msg");
+        if (msgEl) msgEl.textContent = err.message || "Could not verify payment method.";
       }
-      await loadPaymentMethod();
 
       document.getElementById("btnCandidates").addEventListener("click", () => {
         if (requestTypeModal) requestTypeModal.style.display = "flex";

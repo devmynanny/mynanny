@@ -1083,7 +1083,19 @@
             loadJobs().catch(() => {});
           } catch (e) {
             btn.disabled = false;
-            alert(e.message || "Failed to approve overtime");
+            const msg = e.message || "Failed to approve overtime";
+            if (/payment method/i.test(msg)) {
+              if (window.confirm("You need to add a card first. Open secure card setup now?")) {
+                try {
+                  await window.startParentPaymentMethodSetup(window.location.href);
+                  return;
+                } catch (setupErr) {
+                  alert(setupErr.message || "Could not start card setup.");
+                }
+              }
+            } else {
+              alert(msg);
+            }
           }
         });
       });
@@ -1160,6 +1172,13 @@
         location.href = "/static/login.html";
         return;
       }
+      // Complete card save if returning from Paystack card setup.
+      try {
+        const verified = await window.verifyParentPaymentMethodFromUrl();
+        if (verified?.ok) {
+          alert(`Card ending ${verified.card_last4 || "----"} saved. You can now approve the overtime.`);
+        }
+      } catch {}
       try {
         const cfg = await fetchJson("/settings/cancellation-window-hours");
         const hrs = Number(cfg?.cancellation_fee_window_hours);

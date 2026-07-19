@@ -1859,6 +1859,15 @@
 
     guard().then(async (me) => {
       currentParentUser = me;
+      // Complete card save if returning from Paystack card setup.
+      try {
+        const verified = await window.verifyParentPaymentMethodFromUrl();
+        if (verified?.ok) {
+          alert(`Card ending ${verified.card_last4 || "----"} saved. Please submit your booking again.`);
+        }
+      } catch (err) {
+        alert(err.message || "Could not verify your card. Please try again.");
+      }
       const searchState = readCandidateSearchState();
       if (!searchState || !Array.isArray(searchState.slots) || !searchState.slots.length) {
         location.href = "/static/parent_candidates.html?mode=all";

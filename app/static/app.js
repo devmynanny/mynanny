@@ -212,12 +212,15 @@ async function fetchJson(url, opts = {}) {
 window.fetchJson = fetchJson;
 
 async function startParentPaymentMethodSetup(callbackUrl = null) {
-  const current = new URL(window.location.href);
-  current.searchParams.set("payment_method", "verify");
+  // Always tag the callback URL so verifyParentPaymentMethodFromUrl can
+  // recognise the Paystack redirect and store the card, whichever page
+  // the parent returns to.
+  const target = new URL(callbackUrl || window.location.href, window.location.origin);
+  target.searchParams.set("payment_method", "verify");
   const data = await fetchJson("/parent/payment-method/initialize", {
     method: "POST",
     body: JSON.stringify({
-      callback_url: callbackUrl || current.toString()
+      callback_url: target.toString()
     })
   });
   if (!data?.authorization_url) {
