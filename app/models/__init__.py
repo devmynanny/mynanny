@@ -20,10 +20,11 @@ from sqlalchemy import (
     Index,
     Numeric,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from app.db import Base
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.sql import func
+from app.services.booking_status import BOOKING_WRITE_STATUSES
 
 # ---------------- USERS ----------------
 
@@ -94,6 +95,14 @@ class Booking(Base):
     day = Column(Date, nullable=False)
     status = Column(String, nullable=False, default="pending")
     price_cents = Column(Integer, nullable=False)
+
+    @validates("status")
+    def _validate_status(self, key, value):
+        if value is not None and value not in BOOKING_WRITE_STATUSES:
+            raise ValueError(
+                f"Invalid booking status {value!r}; allowed: {sorted(BOOKING_WRITE_STATUSES)}"
+            )
+        return value
     starts_at = Column(DateTime, nullable=True)
     ends_at = Column(DateTime, nullable=True)
     start_dt = Column(String, nullable=True)

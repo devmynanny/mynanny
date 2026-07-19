@@ -28,6 +28,45 @@ LEGACY_STATUS_MAP = {
     "rejected": "cancelled",
 }
 
+# ---------------------------------------------------------------------------
+# Write-side vocabularies (single source of truth).
+#
+# These are the ONLY values allowed to be written to the corresponding
+# columns. Model-level validators (app/models) enforce them on every
+# assignment, so no code path can introduce a rogue status string.
+# The read-side derivation above maps these raw values to the canonical
+# display states.
+# ---------------------------------------------------------------------------
+
+# booking_requests.status - mirrors the DB CHECK constraint exactly.
+REQUEST_WRITE_STATUSES = frozenset(
+    {"tbc", "pending_admin", "approved", "rejected", "cancelled"}
+)
+
+# bookings.status - observed vocabulary across all write sites plus default.
+BOOKING_WRITE_STATUSES = frozenset(
+    {
+        "pending",
+        "approved",
+        "accepted",
+        "active",
+        "in_progress",
+        "admin_review",
+        "awaiting_overtime_approval",
+        "completed",
+        "cancelled",
+    }
+)
+
+# booking_requests.nanny_response_status - mirrors the DB CHECK constraint.
+RESPONSE_WRITE_STATUSES = frozenset({"pending", "accepted", "declined", "deciding"})
+
+# booking_requests.payment_status - mirrors the DB CHECK constraint exactly.
+# NOTE: payment failure is expressed via admin_reason="payment_failed", never
+# via payment_status (the DB CHECK forbids a "failed" value); the read-side
+# "failed" branch above only exists for defensive display handling.
+PAYMENT_WRITE_STATUSES = frozenset({"pending_payment", "paid", "cancelled"})
+
 
 def canonical_booking_status(status: str | None) -> str:
     if not status:

@@ -56,8 +56,12 @@ It is intended as an operational source of truth for product, support, and engin
 - Booking requests use one or more windows (slots).
 - A nanny must be available for all requested windows to be bookable.
 - Once a nanny accepts/booking is approved, certain edits become locked.
-- Booking states used across flows include values like:
-  - `tbc`, `pending_admin`, `approved`, `accepted`, `pending`, `active`, `in_progress`, `cancelled`, `rejected`, `completed`.
+- Status vocabularies are centrally defined in `app/services/booking_status.py` and enforced on every write by model-level validators (rogue values raise immediately):
+  - `booking_requests.status`: `tbc`, `pending_admin`, `approved`, `rejected`, `cancelled` (mirrors DB CHECK).
+  - `bookings.status`: `pending`, `approved`, `accepted`, `active`, `in_progress`, `admin_review`, `awaiting_overtime_approval`, `completed`, `cancelled`.
+  - `booking_requests.nanny_response_status`: `pending`, `accepted`, `declined`, `deciding`.
+  - `booking_requests.payment_status`: `pending_payment`, `paid`, `cancelled`. Payment failure is expressed via `admin_reason = "payment_failed"`, never via `payment_status`.
+- Display states are derived read-side by `booking_state_from_booking` / `booking_state_from_request` (canonical states like `awaiting_acceptance`, `awaiting_payment`, `confirmed`, `in_progress`, `completed`, `past`, `cancelled`).
 - Overlap checks prevent conflicting assignments.
 
 ## 6A. Advert Expiry Rules

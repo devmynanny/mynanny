@@ -3,11 +3,17 @@ from sqlalchemy import (
 	Column, BigInteger, Integer, String, Text, Boolean, ForeignKey, DateTime, Numeric,
 	CheckConstraint, UniqueConstraint, Index, and_
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
 
 
 from app.db import Base
+from app.services.booking_status import (
+	BOOKING_WRITE_STATUSES,
+	PAYMENT_WRITE_STATUSES,
+	REQUEST_WRITE_STATUSES,
+	RESPONSE_WRITE_STATUSES,
+)
 
 
 class BookingRequest(Base):
@@ -63,6 +69,31 @@ class BookingRequest(Base):
 	nanny_response_note = Column(Text, nullable=True)
 	created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 	updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+	@validates("status")
+	def _validate_status(self, key, value):
+		if value is not None and value not in REQUEST_WRITE_STATUSES:
+			raise ValueError(
+				f"Invalid booking_request status {value!r}; allowed: {sorted(REQUEST_WRITE_STATUSES)}"
+			)
+		return value
+
+	@validates("nanny_response_status")
+	def _validate_response_status(self, key, value):
+		if value is not None and value not in RESPONSE_WRITE_STATUSES:
+			raise ValueError(
+				f"Invalid nanny_response_status {value!r}; allowed: {sorted(RESPONSE_WRITE_STATUSES)}"
+			)
+		return value
+
+	@validates("payment_status")
+	def _validate_payment_status(self, key, value):
+		if value is not None and value not in PAYMENT_WRITE_STATUSES:
+			raise ValueError(
+				f"Invalid payment_status {value!r}; allowed: {sorted(PAYMENT_WRITE_STATUSES)}"
+			)
+		return value
+
 	__table_args__ = (
 		CheckConstraint("status IN ('tbc','pending_admin','approved','rejected','cancelled')", name="booking_requests_status_check"),
 		CheckConstraint(
