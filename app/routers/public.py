@@ -2458,6 +2458,172 @@ def initialize_parent_payment_method(
     }
 
 
+def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
+    """After a parent saves a card, retry any booking requests stuck in payment_pending."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    pending_reqs = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.parent_user_id == user.id,
+            models.BookingRequest.nanny_response_status == "payment_pending",
+        )
+        .all()
+    )
+    results = []
+    for req in pending_reqs:
+        try:
+            amount_cents = int(req.total_cents or ((req.wage_cents or 0) + (req.booking_fee_cents or 0)) or 0)
+            if amount_cents <= 0:
+                _log.warning("payment_pending retry: req %s has no amount, skipping", req.id)
+                continue
+
+            payment_reference = _new_booking_payment_reference(req.id)
+            charge_ok, charge_data = create_supplementary_charge(
+                authorization_code=str(user.paystack_auth_code),
+                amount_kobo=amount_cents,
+                email=user.email,
+                reference=payment_reference,
+                metadata={
+                    "booking_request_id": req.id,
+                    "parent_user_id": user.id,
+                    "nanny_id": req.nanny_id,
+                    "retry": True,
+                },
+            )
+            charge_result = _paystack_data(charge_data)
+            charge_status = str(charge_result.get("status") or "").lower()
+
+            if not charge_ok or charge_status != "success":
+                _log.error("payment_pending retry: charge failed for req %s: %s", req.id, charge_result)
+                # Notify parent that retry also failed
+                send_notification(
+                    db,
+                    user.id,
+                    "payment_failed",
+                    "email",
+                    "We tried to charge your new card for a pending booking but were unsuccessful. Please contact support.",
+                    reference_id=int(req.id),
+                )
+                db.commit()
+                results.append({"req_id": req.id, "ok": False, "reason": "charge_failed"})
+                continue
+
+            # Charge succeeded — complete the acceptance
+            windows = _booking_request_windows(db, req)
+            if not windows:
+                _log.error("payment_pending retry: no windows for req %s after charge, refunding", req.id)
+                results.append({"req_id": req.id, "ok": False, "reason": "no_windows"})
+                continue
+
+            location = None
+            if req.location_id:
+                location = db.query(models.ParentLocation).filter(models.ParentLocation.id == req.location_id).first()
+
+            req.status = "approved"
+            req.admin_reason = "accepted_by_nanny"
+            req.admin_decided_at = datetime.utcnow()
+            req.nanny_response_status = "accepted"
+            req.nanny_responded_at = datetime.utcnow()
+            req.nanny_response_note = None
+            req.payment_status = "paid"
+            req.paid_at = datetime.utcnow()
+            req.paystack_reference = charge_result.get("reference") or payment_reference
+            if charge_result.get("id") is not None:
+                req.paystack_transaction_id = str(charge_result.get("id"))
+
+            # Create Booking records
+            existing_bookings = _find_related_bookings_for_request(db, req)
+            created_bookings = existing_bookings or []
+            if not created_bookings:
+                for slot_start, slot_end in windows:
+                    booking = models.Booking(
+                        booking_request_id=req.id,
+                        nanny_id=req.nanny_id,
+                        client_user_id=req.parent_user_id,
+                        day=slot_start.date(),
+                        status="approved",
+                        price_cents=0,
+                        starts_at=slot_start,
+                        ends_at=slot_end,
+                        start_dt=_to_iso_z(slot_start),
+                        end_dt=_to_iso_z(slot_end),
+                        lat=location.lat if location else None,
+                        lng=location.lng if location else None,
+                        location_mode="saved" if location else None,
+                        location_label=(location.label or "Location").strip() if location else None,
+                        formatted_address=getattr(location, "formatted_address", None) if location else None,
+                    )
+                    db.add(booking)
+                    created_bookings.append(booking)
+
+                # Cancel overlapping requests for this parent
+                others = (
+                    db.query(models.BookingRequest)
+                    .filter(
+                        models.BookingRequest.parent_user_id == req.parent_user_id,
+                        models.BookingRequest.id != req.id,
+                        models.BookingRequest.status.in_(["tbc", "pending_admin"]),
+                    )
+                    .all()
+                )
+                for other in others:
+                    try:
+                        other_start = _parse_iso_dt(other.start_dt or other.requested_starts_at)
+                        other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
+                    except Exception:
+                        continue
+                    if any(_overlaps(s, e, other_start, other_end) for s, e in windows):
+                        other.status = "rejected"
+                        other.admin_reason = "filled"
+                        other.admin_decided_at = datetime.utcnow()
+
+                # Block nanny's availability
+                for slot_start, slot_end in windows:
+                    block_row = models.NannyAvailability(
+                        nanny_id=req.nanny_id,
+                        date=slot_start.date(),
+                        start_time=slot_start.time(),
+                        end_time=slot_end.time(),
+                        is_available=False,
+                        created_by="nanny",
+                        type="blocked",
+                        start_dt=_to_iso_z(slot_start),
+                        end_dt=_to_iso_z(slot_end),
+                    )
+                    db.add(block_row)
+
+            db.commit()
+            _sync_confirmed_booking_request_to_google_calendar(db, req)
+
+            # Notify parent
+            send_notification(
+                db,
+                user.id,
+                "payment_success",
+                "email",
+                f"Your booking has been confirmed and your card was charged R{(amount_cents/100):.2f}.",
+                reference_id=int(req.id),
+            )
+            # Notify nanny
+            nanny_user = db.query(models.User).join(models.Nanny, models.Nanny.user_id == models.User.id).filter(models.Nanny.id == req.nanny_id).first()
+            if nanny_user:
+                send_notification(
+                    db,
+                    nanny_user.id,
+                    "booking_confirmed",
+                    "email",
+                    "Great news! The parent's payment was processed and your booking is now confirmed. Please check your bookings for the details.",
+                    reference_id=int(req.id),
+                )
+            db.commit()
+            results.append({"req_id": req.id, "ok": True})
+        except Exception as exc:
+            _log.error("payment_pending retry: unexpected error for req %s: %s", req.id, exc)
+            results.append({"req_id": req.id, "ok": False, "reason": str(exc)})
+    return results
+
+
 @router.post("/parent/payment-method/verify")
 def verify_parent_payment_method(
     payload: schemas.ParentPaymentMethodVerifyRequest,
@@ -2498,6 +2664,8 @@ def verify_parent_payment_method(
         refund_status = "requested" if refund_ok else f"failed: {(refund_data or {}).get('message') or 'Paystack refund failed'}"
 
     db.commit()
+    # Auto-retry any booking requests that were stuck waiting for payment
+    retry_results = _retry_payment_pending_for_parent(db, user)
     return {
         "ok": True,
         "has_card": True,
@@ -2505,6 +2673,7 @@ def verify_parent_payment_method(
         "card_last4": user.card_last4,
         "card_saved_at": _to_iso_z(user.card_saved_at),
         "refund_status": refund_status,
+        "retried_bookings": retry_results,
     }
 
 
@@ -5145,19 +5314,33 @@ def accept_nanny_booking_request(
     charge_status = str(charge_result.get("status") or "").lower()
     if not charge_ok or charge_status != "success":
         req.admin_reason = "payment_failed"
+        req.nanny_response_status = "payment_pending"
+        req.nanny_responded_at = datetime.utcnow()
         req.paystack_reference = charge_result.get("reference") or payment_reference
         req.paystack_transaction_id = str(charge_result.get("id")) if charge_result.get("id") is not None else None
         db.commit()
+        # Notify parent to update their card
         send_notification(
             db,
             parent_user.id,
             "payment_failed",
             "email",
-            "Your saved card could not be charged for this booking. Please update your payment method so we can confirm the booking.",
+            "A nanny accepted your booking but your card could not be charged. Please update your payment method — once updated we will retry the booking automatically.",
             reference_id=int(req.id),
         )
+        # Notify nanny they are pending payment confirmation
+        nanny_user_for_notif = db.query(models.User).filter(models.User.id == nanny.user_id).first()
+        if nanny_user_for_notif:
+            send_notification(
+                db,
+                nanny_user_for_notif.id,
+                "payment_pending",
+                "email",
+                "Your acceptance was received, but the parent's payment could not be processed. We are chasing the parent to update their card and will confirm your booking shortly.",
+                reference_id=int(req.id),
+            )
         db.commit()
-        raise HTTPException(status_code=402, detail="Parent payment failed. The parent has been asked to update their card.")
+        raise HTTPException(status_code=402, detail="Parent payment failed. The parent has been notified to update their card.")
 
     def _resolve_group_acceptance(group_id_value: int):
         accepted_reqs = (
