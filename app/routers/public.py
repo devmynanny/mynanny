@@ -7591,6 +7591,7 @@ def create_booking_request(
             booking_fee_pct=pricing.get("booking_fee_pct"),
             booking_fee_cents=pricing.get("booking_fee_cents"),
             total_cents=pricing.get("total_cents"),
+            requested_nannies_count=requested_nannies_count,
             client_notes=_with_requested_nannies_note(
                 _build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
                 requested_nannies_count,
@@ -7768,6 +7769,7 @@ def create_booking_request_bulk(
             booking_fee_pct=pricing.get("booking_fee_pct"),
             booking_fee_cents=pricing.get("booking_fee_cents"),
             total_cents=pricing.get("total_cents"),
+            requested_nannies_count=requested_nannies_count,
             client_notes=_with_requested_nannies_note(
                 _build_booking_questionnaire_notes((payload.notes or "").strip() or None, questionnaire),
                 requested_nannies_count,
@@ -7835,6 +7837,7 @@ def list_booking_requests(
             "nanny_name": nanny.name,
             "start_dt": req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else None),
             "end_dt": req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else None),
+            "requested_nannies_count": int(getattr(req, "requested_nannies_count", None) or 1),
             "location_label": getattr(loc, "label", None) if loc else None,
             "suburb": getattr(loc, "suburb", None) if loc else None,
             "city": getattr(loc, "city", None) if loc else None,

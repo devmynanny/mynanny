@@ -88,6 +88,27 @@ def _table_exists(conn, name: str) -> bool:
     return exists.fetchone() is not None
 
 
+def _backfill_requested_nannies_count(conn) -> None:
+    """Parse legacy 'Nannies requested: N' prefix out of client_notes into the
+    structured requested_nannies_count column. Defaults to 1 when absent."""
+    rows = conn.execute(
+        text("SELECT id, client_notes FROM booking_requests WHERE requested_nannies_count IS NULL")
+    ).fetchall()
+    for row in rows:
+        req_id, notes = row[0], row[1] or ""
+        count = 1
+        first_line = notes.split("\n", 1)[0].strip()
+        if first_line.lower().startswith("nannies requested:"):
+            try:
+                count = max(1, int(first_line.split(":", 1)[1].strip()))
+            except (ValueError, IndexError):
+                count = 1
+        conn.execute(
+            text("UPDATE booking_requests SET requested_nannies_count = :count WHERE id = :id"),
+            {"count": count, "id": req_id},
+        )
+
+
 def ensure_booking_requests_schema() -> None:
     with engine.begin() as conn:
         if not _table_exists(conn, "booking_requests"):
@@ -164,6 +185,9 @@ def ensure_booking_requests_schema() -> None:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN nanny_responded_at DATETIME"))
             if "nanny_response_note" not in existing:
                 conn.execute(text("ALTER TABLE booking_requests ADD COLUMN nanny_response_note TEXT"))
+            if "requested_nannies_count" not in existing:
+                conn.execute(text("ALTER TABLE booking_requests ADD COLUMN requested_nannies_count INTEGER"))
+                _backfill_requested_nannies_count(conn)
             return
 
         conn.execute(text("ALTER TABLE booking_requests RENAME TO booking_requests_old"))

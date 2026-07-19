@@ -44,6 +44,11 @@ class BookingRequest(Base):
 	payment_status = Column(Text, nullable=False, default="pending_payment")
 	admin_notes = Column(Text)
 	client_notes = Column(Text)
+	# Structured count of nannies the parent wants for this job. Historically
+	# this was only encoded as a "Nannies requested: N" prefix inside
+	# client_notes; the column is now the source of truth (notes prefix kept
+	# for human readability / backward compatibility).
+	requested_nannies_count = Column(Integer, nullable=True, default=1)
 	created_by_admin_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"))
 	requested_starts_at = Column(DateTime(timezone=True), nullable=False)
 	requested_ends_at = Column(DateTime(timezone=True), nullable=False)
