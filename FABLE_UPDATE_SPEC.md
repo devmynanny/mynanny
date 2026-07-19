@@ -95,12 +95,12 @@ Tracked as 14 work items across four milestones, gating full launch. Status as o
 - [done] Admin operational trust — impersonation now audit-logged (was completely unaudited) with /admin/ops/impersonations listing; rejected Paystack webhooks audit-logged; /admin/ops/health failure-queue snapshot; BACKUPS.md with restore drill and RPO/RTO.
 - [done] POPIA — critical fix: uploaded identity documents were publicly retrievable by URL; now owner/admin-only with middleware enforcement (photos require login). POPIA.md documents data inventory, controls, retention, data subject requests, breach response, and open company-side obligations (Information Officer registration, privacy policy page, express consent checkbox).
 
-### Milestone 4: UX Consistency
-- [not started] Consolidate frontend date/time and status helpers (partially started in prior work, per below).
-- [not started] Standardize status labels, empty states, and dashboard polish across parent/nanny/admin.
+### Milestone 4: UX Consistency — COMPLETE (2026-07-19)
+- [done] Frontend helpers — date/time consolidation was already complete from prior work (app.js shared ZA helpers on 25/26 pages); added shared `bookingStatusLabel()` map mirroring backend vocabularies and switched parent_jobs/nanny_history/nanny_requests/admin_dashboard to it (raw enum strings no longer shown to users).
+- [done, with caveat] Empty states verified present on all main dashboards; viewport meta fixed on nanny.html (live post-signup mobile page). Subjective visual polish needs a browser walkthrough by David — punch-list item in LAUNCH_READINESS.md.
 
-### Final
-- [not started] Full walk of the Section 18 Production Readiness Checklist before declaring launch-ready.
+### Final — checklist walked (2026-07-19)
+- [done] LAUNCH_READINESS.md: full Section 18 walk. Everything code-side is done; launch now gates on 4 David actions (deploy, Paystack test key + sandbox run, live key swap, production secrets) with 7 non-blocking follow-ups (Twilio/WhatsApp sender approval, POPIA company obligations, support policy wording, restore drill, mobile walkthrough, Maps/Calendar failure verification, staging timezone pass).
 
 ## Risks To Keep In Mind
 
