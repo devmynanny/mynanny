@@ -2621,6 +2621,7 @@ def save_nanny_banking(
 @router.post("/admin/impersonate")
 def admin_impersonate(
     payload: schemas.AdminImpersonateRequest,
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
@@ -2629,6 +2630,23 @@ def admin_impersonate(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     token = _create_impersonation_token(target, admin.id)
+    # Every impersonation session start is audited: who, whom, when, from where.
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=target.id,
+        entity="users",
+        entity_id=target.id,
+        action="impersonate",
+        before_obj=None,
+        after_obj={
+            "impersonated_user_id": target.id,
+            "impersonated_email": target.email,
+            "impersonated_role": target.role,
+        },
+        changed_fields=None,
+        request=request,
+    )
     return {"access_token": token}
 
 
@@ -10143,11 +10161,33 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
     secret = os.getenv("PAYSTACK_SECRET_KEY")
     body = await request.body()
     signature = request.headers.get("x-paystack-signature") or request.headers.get("X-Paystack-Signature")
+
+    def _log_webhook_rejection(reason: str) -> None:
+        # Rejected webhook calls are audit-logged (never silently dropped):
+        # repeated rejections indicate misconfiguration or an attack.
+        try:
+            log_audit(
+                db,
+                actor_user=None,
+                target_user_id=None,
+                entity="paystack_webhook",
+                entity_id=None,
+                action="webhook_rejected",
+                before_obj=None,
+                after_obj={"reason": reason, "body_bytes": len(body or b"")},
+                changed_fields=None,
+                request=request,
+            )
+        except Exception:
+            pass
+
     if not secret or not signature:
+        _log_webhook_rejection("missing_secret_or_signature")
         raise HTTPException(status_code=400, detail="Invalid signature")
     expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha512).hexdigest()
     # Constant-time comparison prevents signature timing attacks.
     if not hmac.compare_digest(expected, signature):
+        _log_webhook_rejection("signature_mismatch")
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     try:

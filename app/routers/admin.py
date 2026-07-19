@@ -680,6 +680,130 @@ def accounting_summary(
     }
 
 
+@router.get("/ops/health", dependencies=[Depends(require_admin)])
+def ops_health(db: Session = Depends(get_db)):
+    """Single operational health snapshot for admins.
+
+    Surfaces the failure queues that otherwise go unnoticed: undelivered
+    notifications, rejected payment webhooks, stuck payouts, refunds
+    awaiting review, stale adverts, and recent impersonation activity."""
+    now = datetime.utcnow()
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+
+    failed_notifications_24h = (
+        db.query(func.count(models.NotificationLog.id))
+        .filter(
+            models.NotificationLog.status == "failed",
+            models.NotificationLog.created_at >= day_ago,
+        )
+        .scalar()
+    ) or 0
+
+    webhook_rejections_24h = (
+        db.query(func.count(models.AuditLog.id))
+        .filter(
+            models.AuditLog.entity == "paystack_webhook",
+            models.AuditLog.action == "webhook_rejected",
+            models.AuditLog.created_at >= day_ago,
+        )
+        .scalar()
+    ) or 0
+
+    stuck_payouts = (
+        db.query(func.count(models.Booking.id))
+        .filter(
+            models.Booking.status == "completed",
+            models.Booking.payout_hold_until.isnot(None),
+            models.Booking.payout_hold_until <= now,
+            models.Booking.payout_released_at.is_(None),
+            models.Booking.payout_disputed == False,  # noqa: E712
+        )
+        .scalar()
+    ) or 0
+
+    refunds_awaiting_review = (
+        db.query(func.count(models.BookingRequest.id))
+        .filter(models.BookingRequest.refund_status == "requested")
+        .scalar()
+    ) or 0
+
+    stale_open_adverts = (
+        db.query(func.count(models.BookingRequest.id))
+        .filter(
+            models.BookingRequest.status.in_(["tbc", "pending_admin"]),
+            models.BookingRequest.requested_starts_at <= now,
+        )
+        .scalar()
+    ) or 0
+
+    impersonations_7d = (
+        db.query(func.count(models.AuditLog.id))
+        .filter(
+            models.AuditLog.action == "impersonate",
+            models.AuditLog.created_at >= week_ago,
+        )
+        .scalar()
+    ) or 0
+
+    flagged_nannies = (
+        db.query(func.count(models.Nanny.id))
+        .filter(models.Nanny.admin_review_flagged == True)  # noqa: E712
+        .scalar()
+    ) or 0
+
+    checks = {
+        "failed_notifications_24h": int(failed_notifications_24h),
+        "webhook_rejections_24h": int(webhook_rejections_24h),
+        "stuck_payouts": int(stuck_payouts),
+        "refunds_awaiting_review": int(refunds_awaiting_review),
+        "stale_open_adverts": int(stale_open_adverts),
+        "impersonations_7d": int(impersonations_7d),
+        "nannies_flagged_for_review": int(flagged_nannies),
+    }
+    attention_needed = [
+        key for key, value in checks.items()
+        if value > 0 and key not in ("impersonations_7d",)
+    ]
+    return {
+        "generated_at": now.isoformat(),
+        "checks": checks,
+        "attention_needed": attention_needed,
+        "ok": len(attention_needed) == 0,
+    }
+
+
+@router.get("/ops/impersonations", dependencies=[Depends(require_admin)])
+def ops_impersonations(
+    days: int = Query(default=30, ge=1, le=365),
+    db: Session = Depends(get_db),
+):
+    """Recent impersonation sessions: who impersonated whom, when, from where."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "impersonate",
+            models.AuditLog.created_at >= cutoff,
+        )
+        .order_by(models.AuditLog.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    return {
+        "results": [
+            {
+                "admin_user_id": r.actor_user_id,
+                "target_user_id": r.target_user_id,
+                "at": r.created_at.isoformat() if r.created_at else None,
+                "ip": r.ip,
+                "details": r.after_json,
+            }
+            for r in rows
+        ]
+    }
+
+
 @router.get("/accounting/reconciliation", dependencies=[Depends(require_admin)])
 def accounting_reconciliation(
     range: Optional[str] = Query(default="month"),
