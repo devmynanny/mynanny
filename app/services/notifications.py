@@ -29,6 +29,16 @@ WHATSAPP_TEMPLATE_NAMES = {
     "booking_cancelled",
     "refund_processed",
     "review_request",
+    # Broadcast / request lifecycle
+    "new_booking_request",
+    "nanny_declined",
+    "no_nanny_yet",
+    "request_expired",
+    "deciding_reminder",
+    # Payment retry flow
+    "payment_pending",
+    # Nanny-specific cancellation notice
+    "booking_cancelled_nanny",
 }
 
 # ---------------------------------------------------------------------------
@@ -52,6 +62,15 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     # Action required - in-app pop-up mandatory.
     "overtime_request": {"channels": ("whatsapp", "email"), "in_app": True},
     "review_request": {"channels": ("whatsapp", "email"), "in_app": True},
+    # Request lifecycle - parent must act or know quickly.
+    "new_booking_request": {"channels": ("whatsapp", "email")},
+    "nanny_declined": {"channels": ("whatsapp", "email")},
+    "no_nanny_yet": {"channels": ("whatsapp", "email"), "in_app": True},
+    "request_expired": {"channels": ("whatsapp", "email"), "in_app": True},
+    "deciding_reminder": {"channels": ("whatsapp", "email")},
+    # Payment retry flow.
+    "payment_pending": {"channels": ("whatsapp", "email")},
+    "booking_cancelled_nanny": {"channels": ("whatsapp", "email"), "in_app": True},
     # Payouts.
     "payout_pending": {"channels": ("whatsapp", "email")},
     "payout_sent": {"channels": ("whatsapp", "email")},

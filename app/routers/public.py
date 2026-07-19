@@ -6641,7 +6641,7 @@ def cancel_parent_booking_request(
                 send_notification(
                     db,
                     nanny_user.id,
-                    "booking_cancelled",
+                    "booking_cancelled_nanny",
                     "email",
                     "The client has cancelled your booking. Please check your calendar — this job no longer takes place." + (f" You retain R{(retained/100):.2f} for the late cancellation." if retained > 0 else ""),
                     reference_id=int(req.id),
