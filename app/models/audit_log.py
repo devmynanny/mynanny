@@ -11,9 +11,12 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    # NOTE: do not add index=True on columns that also have an explicit Index
+    # in __table_args__ below — SQLAlchemy would emit CREATE INDEX twice with
+    # the same name and break schema creation on a fresh database.
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     actor_role = Column(String, nullable=True)
-    target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     entity = Column(String, nullable=False)
     entity_id = Column(String, nullable=True)
@@ -26,7 +29,7 @@ class AuditLog(Base):
     ip = Column(String, nullable=True)
     user_agent = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     event_type = Column(String, nullable=True)
     entity_type = Column(String, nullable=True)

@@ -1,10 +1,18 @@
 # My Nanny Update Spec for Fable
 
-Last updated: 2026-06-13
+Last updated: 2026-07-19
 
 ## Purpose
 
 This document summarizes the current product updates and open work for the My Nanny app so it can be uploaded into Fable as a concise planning/spec artifact.
+
+## Launch Decision (2026-07-19)
+
+- Goal: monetize as soon as possible.
+- Decision: full spec must be complete before any live paid booking (no partial/soft launch). This is a deliberate scope-over-speed call, not a default.
+- Execution mode: Claude has direct read/write access to this repo (`~/Desktop/nanny_app`) and is making code changes directly in this session/thread, rather than producing Codex-ready briefs. File structure is being left alone (no restructuring of `app/routers/public.py`); only behavior is being changed.
+- Working cadence: Claude works through the tracked task list autonomously across turns/sessions and checks in at milestone boundaries (M1/M2/M3/M4/final), not after every small task.
+- Audit finding that reset expectations: the app was assumed "stalled/possibly broken" (last commit over a month old, 4 tests failing). Root cause of the failing tests was a sandbox filesystem issue (SQLite over a FUSE-mounted folder), not a code bug — all 17 existing tests pass against a real disk. The app is materially closer to launch-ready than the stale git history suggested. The real blockers are: no live Paystack key configured, SQLite still used as the production datastore, and no automated coverage for the booking status/lifecycle logic.
 
 ## Product Snapshot
 
@@ -67,11 +75,31 @@ My Nanny is a South Africa-first childcare booking platform built with:
 
 ## Open Work / Next Updates
 
-- Finish the frontend helper consolidation and remove remaining duplicated logic.
-- Add broader automated coverage for booking, assignment, availability, refund, and timezone flows.
-- Complete the production migration path from SQLite to Postgres.
-- Finalize a clear cancellation/refund policy for parents, nannies, and admins.
-- Tighten POPIA/privacy handling for sensitive identity, document, and child data.
+Tracked as 14 work items across four milestones, gating full launch. Status as of 2026-07-19:
+
+### Milestone 1: Stabilize Booking Core
+- [in progress] Test coverage for core booking flows — started with full characterization test suite for `app/services/booking_status.py` (the read-side status derivation layer), since it had zero prior coverage and any lifecycle refactor needs a safety net first.
+- [not started] Normalize booking status lifecycle — investigation found `app/routers/public.py` (10,251 lines) writes raw status strings at 50+ call sites across two different vocabularies (`bookings.status` vs `booking_requests.status`), reconciled only at read-time by `booking_status.py`. Sequencing changed: tests before refactor, to avoid regressions in a payment-connected file.
+- [not started] Add structured `requested_nannies_count` column (currently encoded in notes/request payload).
+- [not started] Expire/hide stale adverts (cleanup policy + UI hiding for expired pending adverts).
+
+### Milestone 2: Production Data and Payments
+- [not started] Alembic migrations (replacing the custom `ensure_*_schema` functions in `app/db.py`).
+- [not started] Migrate production DB to Postgres.
+- [not started] Paystack sandbox test plan + live key wiring (`.env` currently has no `PAYSTACK_SECRET_KEY` — this is the single hard blocker to taking real payments).
+- [not started] Refund/cancellation accounting documentation + payment reconciliation report.
+
+### Milestone 3: Operational Trust
+- [not started] WhatsApp/Twilio notification reliability (policy matrix, delivery logging, retry handling).
+- [not started] Admin operational trust: audit visibility, monitoring/logging for failed notifications and payment webhooks, backup/restore plan.
+- [not started] POPIA/privacy compliance pass for identity, document, and child data.
+
+### Milestone 4: UX Consistency
+- [not started] Consolidate frontend date/time and status helpers (partially started in prior work, per below).
+- [not started] Standardize status labels, empty states, and dashboard polish across parent/nanny/admin.
+
+### Final
+- [not started] Full walk of the Section 18 Production Readiness Checklist before declaring launch-ready.
 
 ## Risks To Keep In Mind
 
