@@ -124,7 +124,7 @@
           <div class="muted">Job ID: ${escapeHtml(jobId)}</div>
           <div class="muted">${escapeHtml(start)} to ${escapeHtml(end)}</div>
           <div class="muted statusLine">Your response: ${escapeHtml(responseMeta(r.response_status))}</div>
-          <div class="muted">Booking status: ${escapeHtml(r.booking_status || "-")}</div>
+          <div class="muted">Booking status: ${escapeHtml(window.bookingStatusLabel ? window.bookingStatusLabel(r.booking_status) : (r.booking_status || "-"))}</div>
           <div class="actions">
             ${r.detail_id ? `<button class="btn viewHistoryBookingBtn" data-id="${escapeHtml(r.detail_id || "")}" type="button">View details</button>` : ""}
           </div>

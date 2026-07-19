@@ -31,6 +31,40 @@ function formatDateTimeZA(value) {
 }
 
 window.formatDateTimeZA = formatDateTimeZA;
+
+// Canonical booking status -> human label map. Single source of truth for
+// every page; mirrors the vocabularies in app/services/booking_status.py.
+const BOOKING_STATUS_LABELS = {
+  // Raw write statuses.
+  tbc: "Requested",
+  pending_admin: "Requested",
+  pending: "Requested",
+  approved: "Accepted",
+  accepted: "Accepted",
+  active: "In progress",
+  rejected: "Not selected",
+  // Derived display states.
+  draft: "Draft",
+  broadcast_sent: "Requested",
+  awaiting_acceptance: "Requested",
+  awaiting_payment: "Awaiting payment",
+  payment_failed: "Payment failed",
+  confirmed: "Confirmed",
+  upcoming: "Upcoming",
+  in_progress: "In progress",
+  awaiting_time_confirmation: "Awaiting time confirmation",
+  awaiting_overtime_approval: "Awaiting overtime approval",
+  completed: "Completed",
+  past: "Past",
+  admin_review: "Admin review",
+  cancelled: "Cancelled",
+};
+
+window.bookingStatusLabel = function bookingStatusLabel(status, fallback = "-") {
+  const key = String(status || "").trim().toLowerCase();
+  if (!key) return fallback;
+  return BOOKING_STATUS_LABELS[key] || status;
+};
 window.formatDateTimeDisplay = function formatDateTimeDisplay(value, fallback = "-") {
   if (value == null || value === "") return fallback;
   const rendered = formatDateTimeZA(value);

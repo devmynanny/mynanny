@@ -759,7 +759,7 @@
             <div class="detailRow"><strong>Status:</strong> ${escapeHtml(data?.status || "-")}</div>
             <div class="detailRow"><strong>Parent:</strong> ${escapeHtml(data?.parent?.name || "-")}</div>
             <div class="detailRow"><strong>Nanny:</strong> ${escapeHtml(data?.nanny?.name || "-")} (${escapeHtml(data?.nanny?.email || "-")})</div>
-            <div class="detailRow"><strong>Canonical state:</strong> ${escapeHtml(data?.booking_state || data?.status || "-")}</div>
+            <div class="detailRow"><strong>Canonical state:</strong> ${escapeHtml(window.bookingStatusLabel ? window.bookingStatusLabel(data?.booking_state || data?.status) : (data?.booking_state || data?.status || "-"))}</div>
             <div class="detailRow"><strong>Location:</strong> ${escapeHtml(data?.location?.label || data?.location?.address || "-")}</div>
             <div class="detailRow"><strong>Created:</strong> ${escapeHtml(formatDt(data?.created_at))}</div>
             ${data?.is_overdue ? `<div class="bookingOverdue">Overdue: this request has been waiting more than 6 hours.</div>` : ""}
@@ -778,7 +778,7 @@
             <div class="detailRow" style="margin-bottom:8px;"><strong>Booking ID:</strong> ${escapeHtml(data?.group_id || data?.request_id || "-")}</div>
             ${days.length ? days.map((day) => `
               <div class="detailDay">
-                <div class="detailRow"><strong>Booking day:</strong> ${escapeHtml(formatAdminBookingRange(day.start_dt, day.end_dt))} • ${escapeHtml(day.booking_state || day.booking_time_state || day.status || "-")}</div>
+                <div class="detailRow"><strong>Booking day:</strong> ${escapeHtml(formatAdminBookingRange(day.start_dt, day.end_dt))} • ${escapeHtml(window.bookingStatusLabel ? window.bookingStatusLabel(day.booking_state || day.booking_time_state || day.status) : (day.booking_state || day.booking_time_state || day.status || "-"))}</div>
                 <div class="detailRow">Scheduled: ${escapeHtml(formatDt(day.start_dt))} to ${escapeHtml(formatDt(day.end_dt))}</div>
                 <div class="detailRow">Arrived: ${escapeHtml(formatDt(day.check_in_at))}</div>
                 <div class="detailRow">Finished: ${escapeHtml(formatDt(day.check_out_at))}</div>

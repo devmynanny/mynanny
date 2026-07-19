@@ -272,7 +272,7 @@
             <strong>Booking details and Client expectations</strong>
             <div class="fieldList">${expectationFieldsHtml}</div>
           </div>
-          <div class="muted" style="margin-top:10px;">Request status: ${escapeHtml(r.status || "-")}</div>
+          <div class="muted" style="margin-top:10px;">Request status: ${escapeHtml(window.bookingStatusLabel ? window.bookingStatusLabel(r.status) : (r.status || "-"))}</div>
           ${r.nanny_responded_at ? `<div class="muted">Last updated by you: ${escapeHtml(window.formatDateTimeDisplay(r.nanny_responded_at))}</div>` : ""}
           ${r.nanny_response_note ? `<div class="muted">Your note: ${escapeHtml(r.nanny_response_note)}</div>` : ""}
           ${earningsHtml}

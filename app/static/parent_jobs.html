@@ -210,16 +210,13 @@
     }
 
     function mapStatus(status) {
-      const key = String(status || "").toLowerCase();
-      if (key === "approved" || key === "accepted" || key === "confirmed") return "Accepted";
-      if (key === "tbc" || key === "pending_admin" || key === "awaiting_acceptance") return "Requested";
-      if (key === "awaiting_payment") return "Awaiting payment";
-      if (key === "payment_failed") return "Payment failed";
-      if (key === "in_progress") return "In progress";
-      if (key === "awaiting_overtime_approval") return "Awaiting overtime approval";
-      if (key === "admin_review") return "Admin review";
-      if (key === "completed") return "Completed";
-      if (key === "cancelled") return "Cancelled";
+      // Shared canonical labels from app.js; local fallback preserves the
+      // page's historical "Accepted" wording for confirmed states.
+      if (window.bookingStatusLabel) {
+        const key = String(status || "").toLowerCase();
+        if (key === "confirmed") return "Accepted";
+        return window.bookingStatusLabel(status);
+      }
       return status || "-";
     }
 

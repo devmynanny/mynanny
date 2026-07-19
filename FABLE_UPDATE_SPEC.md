@@ -90,10 +90,10 @@ Tracked as 14 work items across four milestones, gating full launch. Status as o
 - [done] Paystack — webhook signature check hardened (constant-time), webhook tests added, PAYSTACK_TEST_PLAN.md gives key-wiring steps and a 7-step sandbox sequence. Remaining manual step: David adds PAYSTACK_SECRET_KEY and runs the sandbox plan.
 - [done] Accounting — ACCOUNTING.md (field semantics, A/B/C cancellation splits, invariants, monthly close) + `/admin/accounting/reconciliation` per-booking ledger with integrity problem codes.
 
-### Milestone 3: Operational Trust
-- [not started] WhatsApp/Twilio notification reliability (policy matrix, delivery logging, retry handling).
-- [not started] Admin operational trust: audit visibility, monitoring/logging for failed notifications and payment webhooks, backup/restore plan.
-- [not started] POPIA/privacy compliance pass for identity, document, and child data.
+### Milestone 3: Operational Trust — COMPLETE (2026-07-19)
+- [done] Notification reliability — central NOTIFICATION_POLICY matrix (WhatsApp first, email fallback, mandatory in-app for action-required events), message bodies persisted to notification_log, 15-min retry sweep (3-attempt cap, 48h window), Twilio whatsapp: prefix bug fixed. Remaining manual step: David configures Twilio env vars + WhatsApp Business sender approval (Meta lead time).
+- [done] Admin operational trust — impersonation now audit-logged (was completely unaudited) with /admin/ops/impersonations listing; rejected Paystack webhooks audit-logged; /admin/ops/health failure-queue snapshot; BACKUPS.md with restore drill and RPO/RTO.
+- [done] POPIA — critical fix: uploaded identity documents were publicly retrievable by URL; now owner/admin-only with middleware enforcement (photos require login). POPIA.md documents data inventory, controls, retention, data subject requests, breach response, and open company-side obligations (Information Officer registration, privacy policy page, express consent checkbox).
 
 ### Milestone 4: UX Consistency
 - [not started] Consolidate frontend date/time and status helpers (partially started in prior work, per below).
