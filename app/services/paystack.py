@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
 from typing import Optional, Tuple, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 PAYSTACK_BASE_URL = "https://api.paystack.co"
@@ -34,12 +37,15 @@ def _paystack_request(method: str, path: str, payload: Optional[Dict[str, Any]] 
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8")
+            logger.error("Paystack HTTP %s | path=%s | body=%s", e.code, path, body[:500])
             parsed = json.loads(body) if body else {}
             msg = parsed.get("message") or f"Paystack HTTP {e.code}"
             return False, {"message": msg, "status_code": e.code, "raw": body}
-        except Exception:
+        except Exception as inner:
+            logger.error("Paystack HTTP %s | path=%s | failed to read body: %s", e.code, path, inner)
             return False, {"message": f"Paystack HTTP {e.code}"}
     except Exception as e:
+        logger.error("Paystack request failed | path=%s | %s", path, e)
         return False, {"message": str(e)}
 
 
