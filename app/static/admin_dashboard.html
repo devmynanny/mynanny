@@ -693,7 +693,7 @@
       const count = results.length;
       summary.innerHTML = `
         <div><strong>Radius:</strong> ${escapeHtml(data?.radius_km || 30)}km from ${escapeHtml(locationText)}</div>
-        <div style="margin-top:4px;"><strong>Selected dates:</strong> ${escapeHtml(String(schedule.length || 0))} slot(s)</div>
+        <div style="margin-top:4px;"><strong>Selected dates:</strong> ${escapeHtml(String(schedule.length || 0))} slots</div>
         <div style="margin-top:4px;"><strong>Available nannies found:</strong> ${escapeHtml(count)}</div>
       `;
       if (!count) {

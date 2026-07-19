@@ -105,7 +105,7 @@
         <option value="upcoming">Upcoming bookings</option>
         <option value="in_progress">In progress</option>
         <option value="past">Past bookings</option>
-        <option value="cancelled">Cancelations</option>
+        <option value="cancelled">Cancellations</option>
       </select>
     </div>
     <div class="bookingGlance">
@@ -712,10 +712,10 @@
         ["Meal arrangement", form?.meal_option || "-"],
         ["Foods not allowed in home", form?.food_restrictions || "-"],
         ["Dogs at home", form?.dogs_info || "-"],
-        ["House upkeep disclaimer", yesNo(form?.disclaimer_basic_upkeep)],
-        ["Medicine disclaimer", yesNo(form?.disclaimer_medicine)],
-        ["Additional hours disclaimer", yesNo(form?.disclaimer_extra_hours)],
-        ["After-17:00 transport disclaimer", yesNo(form?.disclaimer_transport)],
+        ["House upkeep policy", yesNo(form?.disclaimer_basic_upkeep)],
+        ["Medicine policy", yesNo(form?.disclaimer_medicine)],
+        ["Additional hours policy", yesNo(form?.disclaimer_extra_hours)],
+        ["After 17:00 transport policy", yesNo(form?.disclaimer_transport)],
       ];
       return `<ul class="previewList">${items.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join("")}</ul>`;
     }
@@ -926,10 +926,10 @@
                   <label class="field">Dogs at home<input type="text" data-field="dogs_info" value="${escapeHtml(form.dogs_info || "")}" /></label>
                 </div>
                 <div class="detailGrid" style="margin-top:10px;">
-                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_basic_upkeep" ${form.disclaimer_basic_upkeep ? "checked" : ""} /> House upkeep disclaimer understood</label>
-                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_medicine" ${form.disclaimer_medicine ? "checked" : ""} /> Medicine disclaimer understood</label>
-                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_extra_hours" ${form.disclaimer_extra_hours ? "checked" : ""} /> Additional hours disclaimer understood</label>
-                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_transport" ${form.disclaimer_transport ? "checked" : ""} /> After-17:00 transport disclaimer understood</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_basic_upkeep" ${form.disclaimer_basic_upkeep ? "checked" : ""} /> I understand the house upkeep policy</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_medicine" ${form.disclaimer_medicine ? "checked" : ""} /> I understand the medicine policy</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_extra_hours" ${form.disclaimer_extra_hours ? "checked" : ""} /> I understand the additional hours policy</label>
+                  <label class="checkboxRow"><input type="checkbox" data-field="disclaimer_transport" ${form.disclaimer_transport ? "checked" : ""} /> I understand the after 17:00 transport policy</label>
                 </div>
                 <div class="actions">
                   <button class="btn saveFormBtn" data-id="${r.job_id}">Save form updates</button>
@@ -946,7 +946,7 @@
         { key: "upcoming", label: "Upcoming bookings" },
         { key: "in_progress", label: "In progress" },
         { key: "past", label: "Past bookings" },
-        { key: "cancelled", label: "Cancelations" },
+        { key: "cancelled", label: "Cancellations" },
       ];
       sectionOrder.forEach((section) => {
         if (!sections[section.key].length) return;

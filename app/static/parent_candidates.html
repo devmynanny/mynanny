@@ -233,7 +233,7 @@
         <option value="">Any</option>
         <option value="small_dogs">Yes, we have small dogs</option>
         <option value="calm_big_dogs">Yes, we have calm big dogs</option>
-        <option value="pitbull_rottweiler">I have a rotweiler/pitbul</option>
+        <option value="pitbull_rottweiler">I have a rottweiler / pitbull</option>
         <option value="no_dogs">No, I don't</option>
       </select>
     </div>
@@ -298,7 +298,7 @@
 
   <div id="bookingModal" class="modalBack">
     <div class="modal">
-      <div style="font-weight:700; margin-bottom:8px">Book nanny</div>
+      <div style="font-weight:700; margin-bottom:8px">Request a nanny</div>
       <div class="muted" id="bookingNannyName"></div>
 
       <label class="muted">Requested schedule</label>
@@ -324,7 +324,7 @@
 
       <div id="bookingEstimate" class="estimateBox muted">Calculating estimate...</div>
       <div class="muted" style="margin-top:8px; font-size:14px; line-height:1.5;">
-        Kindly note that afterhours, weekends, public holidays and sleep overs are charged higher than the std rate per day/per hour.<br>
+        Please note that after hours, weekends, public holidays and sleepovers are charged at a higher rate than the standard rate.<br>
         Agency booking fees included.<br>
         Liability insurance fees included.
       </div>
@@ -375,7 +375,7 @@
       <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
         <button class="btn" id="selectPreviewBtn" type="button">Select nanny</button>
         <button class="btn" id="broadcastFavoritesBtn" type="button">Broadcast to my favorites</button>
-        <button class="btn primary" id="bookPreviewBtn" type="button">Book now</button>
+        <button class="btn primary" id="bookPreviewBtn" type="button">Send Request</button>
         <button class="btn secondary" id="closePreviewBtn" type="button">Close</button>
       </div>
     </div>
@@ -1033,7 +1033,7 @@
           ${profileComplete ? (n.location_hint ? `<div class="muted">${escapeHtml(n.location_hint)}</div>` : "") : locLine}
           <div class="summaryText">${escapeHtml(n.profile_summary || n.bio || "No summary yet.")}</div>
           <div class="actions">
-            <button class="btn primary bookBtn" data-nanny-id="${n.nanny_id}" data-nanny-name="${escapeHtml(name)}" ${canBook ? "" : "disabled"}>Book</button>
+            <button class="btn primary bookBtn" data-nanny-id="${n.nanny_id}" data-nanny-name="${escapeHtml(name)}" ${canBook ? "" : "disabled"}>Request</button>
             <button class="btn previewBtn" data-nanny-id="${n.nanny_id}">Preview</button>
             ${canBook ? "" : `<div class=\"muted\">Complete your profile to book</div>`}
           </div>
@@ -1179,13 +1179,20 @@
     }
 
     function showBookingToast(message) {
-      document.querySelectorAll(".bookingToast").forEach((toast) => toast.remove());
+      document.querySelectorAll(".bookingToast").forEach((t) => t.remove());
       const toast = document.createElement("div");
       toast.className = "bookingToast";
       toast.setAttribute("role", "status");
-      toast.textContent = message;
+      toast.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:14px;";
+      const msg = document.createElement("div");
+      msg.textContent = message;
+      const btn = document.createElement("button");
+      btn.textContent = "OK";
+      btn.style.cssText = "padding:8px 28px;border:none;border-radius:8px;background:#fff;color:#1d4ed8;font-weight:700;font-size:0.95rem;cursor:pointer;";
+      btn.onclick = () => toast.remove();
+      toast.appendChild(msg);
+      toast.appendChild(btn);
       document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 5000);
     }
 
     let favorites = new Set();
@@ -1446,7 +1453,7 @@
         const { endpoint, payload } = JSON.parse(raw);
         const res = await fetchJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         if (res?.requires_payment_method) return false;
-        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
+        showBookingToast("Your request has been sent to nannies near you. We'll notify you once a nanny accepts.");
         return true;
       } catch (err) {
         return false;
@@ -1494,7 +1501,7 @@
         if (await handlePaymentMethodRequirement(res, status)) return;
         clearPendingBooking();
         status.textContent = "";
-        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
+        showBookingToast("Your request has been sent to nannies near you. We'll notify you once a nanny accepts.");
       } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
         const p = buildBulkPayload(bookingState.selectedNannyIds);
         savePendingBooking("/booking-requests/bulk", p);
@@ -1502,7 +1509,7 @@
         if (await handlePaymentMethodRequirement(res, status)) return;
         clearPendingBooking();
         status.textContent = "";
-        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
+        showBookingToast("Your request has been sent to nannies near you. We'll notify you once a nanny accepts.");
       } else {
         const p = {
           nanny_id: bookingState.nannyId,
@@ -1515,7 +1522,7 @@
         if (await handlePaymentMethodRequirement(res, status)) return;
         clearPendingBooking();
         status.textContent = "";
-        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
+        showBookingToast("Your request has been sent to nannies near you. We'll notify you once a nanny accepts.");
       }
       document.getElementById("submitBookingBtn").disabled = true;
       setTimeout(closeBookingModal, 300);
