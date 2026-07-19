@@ -7721,6 +7721,11 @@ def create_booking_request_bulk(
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
+    if not _has_saved_parent_card(user):
+        return {
+            "requires_payment_method": True,
+            "message": "Please add a payment method before sending booking requests.",
+        }
 
     windows = _normalize_booking_slots(
         start_dt_value=payload.start_dt,

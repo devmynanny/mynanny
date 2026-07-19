@@ -249,7 +249,7 @@
           ? `<div class="earningsRow"><div class="earningsValue">${
               accepted
                 ? `Total earnings after agency booking fee: ${escapeHtml(formatCurrencyZar(totalWageCents))}`
-                : `Estimated earnings after agency booking fee: ~${escapeHtml(formatCurrencyZar(totalWageCents))}${dailyWageCents > 0 ? ` (about ${escapeHtml(formatCurrencyZar(dailyWageCents))} per day)` : ""}`
+                : `Estimated earnings after agency booking fee: ~${escapeHtml(formatCurrencyZar(totalWageCents))}${dailyWageCents > 0 && dailyWageCents !== totalWageCents ? ` (about ${escapeHtml(formatCurrencyZar(dailyWageCents))} per day)` : ""}`
             }</div></div>`
           : "";
         const card = document.createElement("div");
