@@ -17,6 +17,7 @@ from app import models
 from app.request_context import auth_token_ctx
 from app.services.payout import run_scheduled_payouts
 from app.services.advert_expiry import expire_stale_booking_requests
+from app.services.notifications import retry_failed_notifications
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -140,11 +141,20 @@ def expire_stale_adverts_wrapper() -> None:
         db.close()
 
 
+def retry_failed_notifications_wrapper() -> None:
+    db = SessionLocal()
+    try:
+        retry_failed_notifications(db)
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def _startup_scheduler() -> None:
     if not scheduler.get_jobs():
         scheduler.add_job(run_scheduled_payouts_wrapper, "interval", minutes=30)
         scheduler.add_job(expire_stale_adverts_wrapper, "interval", minutes=30)
+        scheduler.add_job(retry_failed_notifications_wrapper, "interval", minutes=15)
     if not scheduler.running:
         scheduler.start()
 

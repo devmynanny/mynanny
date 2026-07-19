@@ -31,6 +31,41 @@ WHATSAPP_TEMPLATE_NAMES = {
     "review_request",
 }
 
+# ---------------------------------------------------------------------------
+# Notification policy matrix (single source of truth).
+#
+# channels are tried in order until one succeeds (fallback chain).
+# "in_app" entries are ALWAYS written in addition (they are pop-ups for
+# action-required confirmations, not a delivery fallback).
+# Default for unlisted event types: ("whatsapp", "email").
+# ---------------------------------------------------------------------------
+NOTIFICATION_POLICY: dict[str, dict] = {
+    # Payments - critical, user must know immediately.
+    "payment_success": {"channels": ("whatsapp", "email")},
+    "payment_failed": {"channels": ("whatsapp", "email"), "in_app": True},
+    "refund_processed": {"channels": ("whatsapp", "email")},
+    # Booking lifecycle.
+    "booking_confirmed": {"channels": ("whatsapp", "email")},
+    "booking_cancelled": {"channels": ("whatsapp", "email"), "in_app": True},
+    "nanny_accepted": {"channels": ("whatsapp", "email")},
+    "nanny_checked_in": {"channels": ("whatsapp", "email")},
+    # Action required - in-app pop-up mandatory.
+    "overtime_request": {"channels": ("whatsapp", "email"), "in_app": True},
+    "review_request": {"channels": ("whatsapp", "email"), "in_app": True},
+    # Payouts.
+    "payout_pending": {"channels": ("whatsapp", "email")},
+    "payout_sent": {"channels": ("whatsapp", "email")},
+    # Account.
+    "nanny_approved": {"channels": ("whatsapp", "email")},
+    "nanny_reactivated": {"channels": ("whatsapp", "email")},
+}
+
+DEFAULT_POLICY = {"channels": ("whatsapp", "email"), "in_app": False}
+
+# Retry policy for the scheduled sweep.
+RETRY_MAX_ATTEMPTS = 3
+RETRY_WINDOW_HOURS = 48
+
 
 def _notification_log_exists(db: Session) -> bool:
     from app.db import session_table_exists
@@ -51,14 +86,15 @@ def _log_notification(
     status: str,
     error_message: Optional[str] = None,
     reference_id: Optional[int] = None,
+    message: Optional[str] = None,
 ) -> None:
     if not _notification_log_exists(db):
         return
     db.execute(
         text(
             """
-            INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, created_at)
-            VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :created_at)
+            INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, created_at)
+            VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :created_at)
             """
         ),
         {
@@ -68,6 +104,7 @@ def _log_notification(
             "status": status,
             "error_message": error_message,
             "reference_id": reference_id,
+            "message": message,
             "created_at": datetime.utcnow(),
         },
     )
@@ -79,6 +116,13 @@ def _twilio_whatsapp_send(to_number: str, body: str, template_name: Optional[str
     from_number = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
     if not sid or not token or not from_number:
         return False, "Twilio WhatsApp not configured"
+
+    # Twilio requires the whatsapp: prefix on both From and To.
+    if not from_number.startswith("whatsapp:"):
+        from_number = f"whatsapp:{from_number}"
+    to_number = str(to_number).strip()
+    if not to_number.startswith("whatsapp:"):
+        to_number = f"whatsapp:{to_number}"
 
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
     payload = {
@@ -130,6 +174,7 @@ def send_notification(
                 status="failed",
                 error_message="missing phone number",
                 reference_id=reference_id,
+                message=message,
             )
             return False
         ok, error = _twilio_whatsapp_send(phone, message, template_name=template_name)
@@ -141,6 +186,7 @@ def send_notification(
             status="sent" if ok else "failed",
             error_message=None if ok else error[:500],
             reference_id=reference_id,
+            message=message,
         )
         return ok
 
@@ -156,6 +202,7 @@ def send_notification(
                 status="failed",
                 error_message="missing email",
                 reference_id=reference_id,
+                message=message,
             )
             return False
         try:
@@ -167,6 +214,7 @@ def send_notification(
                 channel=channel,
                 status="sent",
                 reference_id=reference_id,
+                message=message,
             )
             return True
         except Exception as exc:
@@ -178,6 +226,7 @@ def send_notification(
                 status="failed",
                 error_message=str(exc)[:500],
                 reference_id=reference_id,
+                message=message,
             )
             return False
 
@@ -206,6 +255,7 @@ def send_notification(
                 channel=channel,
                 status="sent",
                 reference_id=reference_id,
+                message=message,
             )
             return True
         except Exception as exc:
@@ -217,6 +267,7 @@ def send_notification(
                 status="failed",
                 error_message=str(exc)[:500],
                 reference_id=reference_id,
+                message=message,
             )
             return False
 
@@ -228,8 +279,43 @@ def send_notification(
         status="failed",
         error_message="unsupported channel",
         reference_id=reference_id,
+        message=message,
     )
     return False
+
+
+def notify(
+    db: Session,
+    user_id: Optional[int],
+    event_type: str,
+    message: str,
+    reference_id: Optional[int] = None,
+) -> bool:
+    """Policy-driven delivery: consult NOTIFICATION_POLICY for the event's
+    channel fallback chain, write an in-app notification when the policy
+    demands one, and log every attempt (with the message body, enabling the
+    retry sweep). Returns True if any fallback channel delivered."""
+    policy = NOTIFICATION_POLICY.get(event_type, DEFAULT_POLICY)
+
+    delivered = False
+    for channel in policy.get("channels", DEFAULT_POLICY["channels"]):
+        ok = send_notification(
+            db,
+            user_id,
+            event_type,
+            channel,
+            message,
+            template_name=event_type if (channel == "whatsapp" and event_type in WHATSAPP_TEMPLATE_NAMES) else None,
+            reference_id=reference_id,
+        )
+        if ok:
+            delivered = True
+            break
+
+    if policy.get("in_app"):
+        send_notification(db, user_id, event_type, "in_app", message, reference_id=reference_id)
+
+    return delivered
 
 
 def send_critical(
@@ -239,15 +325,60 @@ def send_critical(
     message: str,
     reference_id: Optional[int] = None,
 ) -> bool:
-    whatsapp_ok = send_notification(
-        db,
-        user_id,
-        event_type,
-        "whatsapp",
-        message,
-        template_name=event_type if event_type in WHATSAPP_TEMPLATE_NAMES else None,
-        reference_id=reference_id,
+    # Backward-compatible alias; policy-driven since the notification
+    # reliability work.
+    return notify(db, user_id, event_type, message, reference_id=reference_id)
+
+
+def retry_failed_notifications(
+    db: Session,
+    max_attempts: int = RETRY_MAX_ATTEMPTS,
+    window_hours: int = RETRY_WINDOW_HOURS,
+) -> int:
+    """Scheduled sweep: re-deliver recently failed notifications.
+
+    A (user_id, event_type, reference_id) tuple is retried when:
+    - its most recent rows in the window are all 'failed' (no 'sent' row), and
+    - it has fewer than max_attempts failed attempts, and
+    - a message body was persisted (pre-upgrade rows without one are skipped).
+    Each retry goes through notify(), which logs a fresh attempt row, so
+    attempts are naturally counted. Returns number of tuples retried."""
+    if not _notification_log_exists(db):
+        return 0
+
+    from datetime import timedelta
+
+    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    rows = (
+        db.query(models.NotificationLog)
+        .filter(
+            models.NotificationLog.created_at >= cutoff,
+            models.NotificationLog.channel.in_(["whatsapp", "email"]),
+        )
+        .order_by(models.NotificationLog.created_at.asc())
+        .all()
     )
-    if whatsapp_ok:
-        return True
-    return send_notification(db, user_id, event_type, "email", message, reference_id=reference_id)
+
+    grouped: dict[tuple, dict] = {}
+    for row in rows:
+        key = (row.user_id, row.event_type, row.reference_id)
+        entry = grouped.setdefault(key, {"failed": 0, "sent": False, "message": None})
+        if row.status == "sent":
+            entry["sent"] = True
+        elif row.status == "failed":
+            entry["failed"] += 1
+            if row.message:
+                entry["message"] = row.message
+
+    retried = 0
+    for (user_id, event_type, reference_id), entry in grouped.items():
+        if entry["sent"] or not entry["message"]:
+            continue
+        if entry["failed"] >= max_attempts:
+            continue
+        notify(db, user_id, event_type, entry["message"], reference_id=reference_id)
+        retried += 1
+
+    if retried:
+        db.commit()
+    return retried

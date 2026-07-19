@@ -399,6 +399,8 @@ class NotificationLog(Base):
     status = Column(String, nullable=False)
     error_message = Column(Text, nullable=True)
     reference_id = Column(Integer, nullable=True)
+    # Message body persisted so failed notifications can be retried.
+    message = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 

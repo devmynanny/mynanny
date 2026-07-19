@@ -1091,6 +1091,10 @@ def ensure_notification_log_schema() -> None:
         return
     with engine.begin() as conn:
         if _table_exists(conn, "notification_log"):
+            cols = conn.execute(text("PRAGMA table_info(notification_log)")).fetchall()
+            existing = {row[1] for row in cols}
+            if "message" not in existing:
+                conn.execute(text("ALTER TABLE notification_log ADD COLUMN message TEXT"))
             return
         conn.execute(text("""
             CREATE TABLE notification_log (
@@ -1101,6 +1105,7 @@ def ensure_notification_log_schema() -> None:
               status TEXT NOT NULL,
               error_message TEXT,
               reference_id INTEGER,
+              message TEXT,
               created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY(user_id) REFERENCES users (id)
             )

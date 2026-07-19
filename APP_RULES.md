@@ -95,6 +95,15 @@ It is intended as an operational source of truth for product, support, and engin
 - Calendar rendering uses cached API data and can require refresh after state changes.
 - Admin overview groups/labels bookings and requests by operational status and time state.
 
+## 9A. Notification Rules
+
+- Central policy matrix lives in `app/services/notifications.py::NOTIFICATION_POLICY`.
+- Channel priority per event: WhatsApp (Twilio) first, email fallback. Delivery stops at the first successful channel.
+- Action-required events (`payment_failed`, `booking_cancelled`, `overtime_request`, `review_request`) additionally write an in-app pop-up notification.
+- Every delivery attempt is logged to `notification_log` with the message body.
+- A scheduled sweep (every 15 minutes) retries failed notifications: max 3 attempts per (user, event, reference) tuple within a 48-hour window; stops permanently once any channel delivers.
+- Twilio requires env vars `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`. Until configured, WhatsApp attempts fail fast and email delivers - behavior is unchanged from email-only.
+
 ## 10. Operational Safety Rules
 
 - Preserve backward-compatible request/response shapes unless intentionally changed.

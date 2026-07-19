@@ -84,11 +84,11 @@ Tracked as 14 work items across four milestones, gating full launch. Status as o
 - [done] Stale advert expiry — sweep service (30-min scheduler) marks past open adverts rejected/expired; nanny listing hides them between sweeps. Policy documented in APP_RULES.md 6A.
 - [done, bonus] Fixed fresh-database bootstrap (duplicate audit index creation broke any clean deploy — would have blocked Postgres).
 
-### Milestone 2: Production Data and Payments
-- [not started] Alembic migrations (replacing the custom `ensure_*_schema` functions in `app/db.py`).
-- [not started] Migrate production DB to Postgres.
-- [not started] Paystack sandbox test plan + live key wiring (`.env` currently has no `PAYSTACK_SECRET_KEY` — this is the single hard blocker to taking real payments).
-- [not started] Refund/cancellation accounting documentation + payment reconciliation report.
+### Milestone 2: Production Data and Payments — COMPLETE (2026-07-19)
+- [done] Alembic migrations — baseline covers all 32 tables; env reads DATABASE_URL; verified on fresh SQLite and rendered as valid Postgres DDL. Day-to-day workflow in DEPLOYMENT.md.
+- [done] Postgres production path — engine args dialect-aware, all SQLite-only `ensure_*` gated, 6 runtime `sqlite_master` probes replaced (would have crashed Postgres), render.yaml provisions managed Postgres + runs `alembic upgrade head` preDeploy, FK-safe data-copy script for cutover. Remaining manual step: David deploys and (optionally) copies staging data — runbook in DEPLOYMENT.md.
+- [done] Paystack — webhook signature check hardened (constant-time), webhook tests added, PAYSTACK_TEST_PLAN.md gives key-wiring steps and a 7-step sandbox sequence. Remaining manual step: David adds PAYSTACK_SECRET_KEY and runs the sandbox plan.
+- [done] Accounting — ACCOUNTING.md (field semantics, A/B/C cancellation splits, invariants, monthly close) + `/admin/accounting/reconciliation` per-booking ledger with integrity problem codes.
 
 ### Milestone 3: Operational Trust
 - [not started] WhatsApp/Twilio notification reliability (policy matrix, delivery logging, retry handling).
