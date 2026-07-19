@@ -32,6 +32,7 @@ from app.services.payout import run_scheduled_payouts
 from app.services.paystack import create_supplementary_charge, create_refund, create_transfer_recipient, initialize_transaction, list_banks, verify_transaction
 from app.services.notifications import send_notification
 from app.services.booking_status import booking_state_from_booking, booking_state_from_request, canonical_booking_status
+from app.services.advert_expiry import is_request_expired
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
@@ -4160,6 +4161,12 @@ def list_nanny_me_booking_requests(
         windows = _booking_request_windows(db, req)
         current_response = (getattr(req, "nanny_response_status", None) or "pending").lower()
         if current_response == "accepted" and not include_accepted:
+            continue
+        # Hide expired adverts (start time already passed, not accepted).
+        # Acceptance of these is blocked server-side anyway; the scheduled
+        # sweep marks them rejected/expired, this filter covers the gap
+        # between sweeps.
+        if is_request_expired(req):
             continue
         sibling_winner_exists = False
         if (req.group_id or req.id):

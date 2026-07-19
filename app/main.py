@@ -16,6 +16,7 @@ from app.routers.public import _decode_access_token, ACCESS_COOKIE_NAME, CSRF_CO
 from app import models
 from app.request_context import auth_token_ctx
 from app.services.payout import run_scheduled_payouts
+from app.services.advert_expiry import expire_stale_booking_requests
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -122,10 +123,19 @@ def run_scheduled_payouts_wrapper() -> None:
         db.close()
 
 
+def expire_stale_adverts_wrapper() -> None:
+    db = SessionLocal()
+    try:
+        expire_stale_booking_requests(db)
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def _startup_scheduler() -> None:
     if not scheduler.get_jobs():
         scheduler.add_job(run_scheduled_payouts_wrapper, "interval", minutes=30)
+        scheduler.add_job(expire_stale_adverts_wrapper, "interval", minutes=30)
     if not scheduler.running:
         scheduler.start()
 

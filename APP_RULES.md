@@ -60,6 +60,15 @@ It is intended as an operational source of truth for product, support, and engin
   - `tbc`, `pending_admin`, `approved`, `accepted`, `pending`, `active`, `in_progress`, `cancelled`, `rejected`, `completed`.
 - Overlap checks prevent conflicting assignments.
 
+## 6A. Advert Expiry Rules
+
+- An open booking-request advert (status `tbc` or `pending_admin`, not accepted by a nanny) expires once its requested start time has passed.
+- Expired adverts:
+  - Are hidden from the nanny requests list immediately (filtered at read time).
+  - Are marked `status = rejected` with `admin_reason = "expired"` by a scheduled sweep (every 30 minutes), so reporting can distinguish expiry from human rejection.
+  - Can never be accepted (server blocks acceptance of past windows independently).
+- Requests already accepted by a nanny are never auto-expired.
+
 ## 7. Location Rules
 
 - Parent location is required for matching and booking operations.
