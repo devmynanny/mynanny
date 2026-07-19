@@ -1320,8 +1320,33 @@
       document.getElementById("cardConsentConfirm").onclick = () => { modal.remove(); onConfirm(); };
     }
 
+    const PENDING_BOOKING_KEY = "mn_pending_booking_results";
+
+    function savePendingBooking(endpoint, payload) {
+      try { sessionStorage.setItem(PENDING_BOOKING_KEY, JSON.stringify({ endpoint, payload })); } catch (_) {}
+    }
+
+    function clearPendingBooking() {
+      try { sessionStorage.removeItem(PENDING_BOOKING_KEY); } catch (_) {}
+    }
+
+    async function resubmitPendingBooking() {
+      try {
+        const raw = sessionStorage.getItem(PENDING_BOOKING_KEY);
+        if (!raw) return false;
+        clearPendingBooking();
+        const { endpoint, payload } = JSON.parse(raw);
+        const res = await fetchJson(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        if (res?.requires_payment_method) return false; // shouldn't happen after card save
+        showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+
     async function handlePaymentMethodRequirement(res, statusEl) {
-      if (!res?.requires_payment_method) return false;
+      if (!res?.requires_payment_method) { clearPendingBooking(); return false; }
       await new Promise((resolve) => {
         showCardConsentModal(async () => {
           statusEl.textContent = "Opening secure card setup...";
@@ -1372,94 +1397,64 @@
 
       status.textContent = "Submitting...";
       await persistBookingQuestionnaireProfile(questionnaire);
+      const buildBulkPayload = (nannyIds) => ({
+        nanny_ids: nannyIds,
+        start_dt: slotRange.start_dt,
+        end_dt: slotRange.end_dt,
+        slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
+        notes, location_id: locationId, sleepover,
+        requested_nannies_count: requestedNanniesCount,
+        kids_count: questionnaire.kids_count,
+        responsibilities: questionnaire.responsibilities,
+        adult_present: questionnaire.adult_present,
+        booking_reason: questionnaire.booking_reason,
+        meal_option: questionnaire.meal_option,
+        food_restrictions: questionnaire.food_restrictions,
+        dogs_info: questionnaire.dogs_info,
+        disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
+        disclaimer_medicine: questionnaire.disclaimer_medicine,
+        disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
+        disclaimer_transport: questionnaire.disclaimer_transport,
+      });
       if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length >= 1 && !bookingState.nannyId) {
-        const res = await fetchJson("/booking-requests/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nanny_ids: bookingState.selectedNannyIds,
-            start_dt: slotRange.start_dt,
-            end_dt: slotRange.end_dt,
-            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
-            notes,
-            location_id: locationId,
-            sleepover,
-            requested_nannies_count: requestedNanniesCount,
-            kids_count: questionnaire.kids_count,
-            responsibilities: questionnaire.responsibilities,
-            adult_present: questionnaire.adult_present,
-            booking_reason: questionnaire.booking_reason,
-            meal_option: questionnaire.meal_option,
-            food_restrictions: questionnaire.food_restrictions,
-            dogs_info: questionnaire.dogs_info,
-            disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
-            disclaimer_medicine: questionnaire.disclaimer_medicine,
-            disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
-            disclaimer_transport: questionnaire.disclaimer_transport,
-          })
-        });
+        const p = buildBulkPayload(bookingState.selectedNannyIds);
+        savePendingBooking("/booking-requests/bulk", p);
+        const res = await fetchJson("/booking-requests/bulk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
         if (await handlePaymentMethodRequirement(res, status)) return;
-        const displayId = res?.group_id ?? "—";
+        clearPendingBooking();
         status.textContent = "";
         showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       } else if (bookingState.selectedNannyIds && bookingState.selectedNannyIds.length > 1) {
-        const res = await fetchJson("/booking-requests/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nanny_ids: bookingState.selectedNannyIds,
-            start_dt: slotRange.start_dt,
-            end_dt: slotRange.end_dt,
-            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
-            notes,
-            location_id: locationId,
-            sleepover,
-            requested_nannies_count: requestedNanniesCount,
-            kids_count: questionnaire.kids_count,
-            responsibilities: questionnaire.responsibilities,
-            adult_present: questionnaire.adult_present,
-            booking_reason: questionnaire.booking_reason,
-            meal_option: questionnaire.meal_option,
-            food_restrictions: questionnaire.food_restrictions,
-            dogs_info: questionnaire.dogs_info,
-            disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
-            disclaimer_medicine: questionnaire.disclaimer_medicine,
-            disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
-            disclaimer_transport: questionnaire.disclaimer_transport,
-          })
-        });
+        const p = buildBulkPayload(bookingState.selectedNannyIds);
+        savePendingBooking("/booking-requests/bulk", p);
+        const res = await fetchJson("/booking-requests/bulk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
         if (await handlePaymentMethodRequirement(res, status)) return;
-        const displayId = res?.group_id ?? "—";
+        clearPendingBooking();
         status.textContent = "";
         showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       } else {
-        const res = await fetchJson("/booking-requests", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nanny_id: bookingState.nannyId,
-            start_dt: slotRange.start_dt,
-            end_dt: slotRange.end_dt,
-            slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
-            notes,
-            location_id: locationId,
-            sleepover,
-            requested_nannies_count: requestedNanniesCount,
-            kids_count: questionnaire.kids_count,
-            responsibilities: questionnaire.responsibilities,
-            adult_present: questionnaire.adult_present,
-            booking_reason: questionnaire.booking_reason,
-            meal_option: questionnaire.meal_option,
-            food_restrictions: questionnaire.food_restrictions,
-            dogs_info: questionnaire.dogs_info,
-            disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
-            disclaimer_medicine: questionnaire.disclaimer_medicine,
-            disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
-            disclaimer_transport: questionnaire.disclaimer_transport,
-          })
-        });
+        const p = {
+          nanny_id: bookingState.nannyId,
+          start_dt: slotRange.start_dt, end_dt: slotRange.end_dt,
+          slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
+          notes, location_id: locationId, sleepover,
+          requested_nannies_count: requestedNanniesCount,
+          kids_count: questionnaire.kids_count,
+          responsibilities: questionnaire.responsibilities,
+          adult_present: questionnaire.adult_present,
+          booking_reason: questionnaire.booking_reason,
+          meal_option: questionnaire.meal_option,
+          food_restrictions: questionnaire.food_restrictions,
+          dogs_info: questionnaire.dogs_info,
+          disclaimer_basic_upkeep: questionnaire.disclaimer_basic_upkeep,
+          disclaimer_medicine: questionnaire.disclaimer_medicine,
+          disclaimer_extra_hours: questionnaire.disclaimer_extra_hours,
+          disclaimer_transport: questionnaire.disclaimer_transport,
+        };
+        savePendingBooking("/booking-requests", p);
+        const res = await fetchJson("/booking-requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
         if (await handlePaymentMethodRequirement(res, status)) return;
-        const displayId = res?.group_id ?? res?.booking_request_id ?? "—";
+        clearPendingBooking();
         status.textContent = "";
         showBookingToast("Thank you for your booking. It has now been broadcasted to the Nannies near you. We will notify you once a Nanny accepts your booking");
       }
@@ -1917,11 +1912,14 @@
 
     guard().then(async (me) => {
       currentParentUser = me;
-      // Complete card save if returning from Paystack card setup.
+      // Complete card save if returning from Paystack card setup, then auto-resubmit.
       try {
         const verified = await window.verifyParentPaymentMethodFromUrl();
         if (verified?.ok) {
-          alert(`Card ending ${verified.card_last4 || "----"} saved. Please submit your booking again.`);
+          const resubmitted = await resubmitPendingBooking();
+          if (!resubmitted) {
+            alert(`Card ending ${verified.card_last4 || "----"} saved. Please submit your booking again.`);
+          }
         }
       } catch (err) {
         alert(err.message || "Could not verify your card. Please try again.");
