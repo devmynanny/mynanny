@@ -316,8 +316,8 @@
         <span class="bookingCheckLabelText">Sleepover required (adds R150)</span>
       </label>
 
-      <label class="muted" style="margin-top:8px; display:block;">How many nannies do you need?</label>
-      <input id="requestedNanniesCount" type="number" min="1" step="1" value="1" />
+      <label class="muted" style="margin-top:8px; display:block;" for="requestedNanniesCount">How many nannies do you need?</label>
+      <select id="requestedNanniesCount"><option value="1">1</option></select>
 
       <label class="muted" style="margin-top:8px; display:block;">Notes (optional)</label>
       <input id="bookingNotes" type="text" placeholder="Any notes for the nanny" />
@@ -1131,9 +1131,15 @@
       bookingState.requestedNanniesCount = 1;
       const count = bookingState.selectedNannyIds.length;
       document.getElementById("bookingNannyName").textContent = count > 1 ? `${count} nannies selected` : nannyName;
-      const requestedNanniesInput = document.getElementById("requestedNanniesCount");
-      if (requestedNanniesInput) {
-        requestedNanniesInput.value = String(bookingState.requestedNanniesCount);
+      // Dropdown capped at broadcast audience size: a parent cannot be
+      // matched with more nannies than the job is sent to.
+      const requestedNanniesSelect = document.getElementById("requestedNanniesCount");
+      if (requestedNanniesSelect) {
+        const maxNeeded = Math.max(1, count);
+        requestedNanniesSelect.innerHTML = Array.from({ length: maxNeeded }, (_, i) =>
+          `<option value="${i + 1}">${i + 1}</option>`
+        ).join("");
+        requestedNanniesSelect.value = "1";
       }
       document.getElementById("bookingScheduleSummary").innerHTML = renderScheduleSummary(bookingState.slots);
       const locSelect = document.getElementById("bookingLocation");
@@ -1804,7 +1810,7 @@
     document.getElementById("bookingSleepover").addEventListener("change", () => {
       refreshBookingEstimate().catch(() => {});
     });
-    document.getElementById("requestedNanniesCount").addEventListener("input", () => {
+    document.getElementById("requestedNanniesCount").addEventListener("change", () => {
       refreshBookingEstimate().catch(() => {});
     });
 

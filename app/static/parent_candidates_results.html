@@ -249,6 +249,9 @@
         <span class="bookingCheckLabelText">Sleepover required (adds R150)</span>
       </label>
 
+      <label class="muted" style="margin-top:8px; display:block;" for="requestedNanniesCount">How many nannies do you need?</label>
+      <select id="requestedNanniesCount"><option value="1">1</option></select>
+
       <div class="bookingQuestionGrid">
         <div class="full">
           <label for="bookingResponsibilities">What will the nanny be responsible for</label>
@@ -894,6 +897,12 @@
       return new Intl.NumberFormat("en-ZA", { style: "currency", currency }).format(amount);
     }
 
+    function getRequestedNanniesCount() {
+      const raw = document.getElementById("requestedNanniesCount")?.value;
+      const n = Math.floor(Number(raw));
+      return Number.isFinite(n) && n >= 1 ? n : 1;
+    }
+
     async function refreshBookingEstimate() {
       const estimateEl = document.getElementById("bookingEstimate");
       if (!estimateEl) return;
@@ -903,7 +912,9 @@
         return;
       }
       const slotRange = computeSlotIsoRange(bookingState.slots);
-      const selectedCount = Math.max(1, Array.isArray(bookingState.selectedNannyIds) ? bookingState.selectedNannyIds.length : 1);
+      // Price by how many nannies the parent NEEDS, not how many the
+      // job is broadcast to (only the winners are charged).
+      const requestedCount = getRequestedNanniesCount();
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
       const kidsCount = Number(document.getElementById("bookingKidsCount")?.value || 1);
       estimateEl.textContent = "Calculating estimate...";
@@ -915,14 +926,14 @@
             end_dt: slotRange.end_dt,
             slots: slotRange.slots.map((slot) => ({ starts_at: slot.starts_at, ends_at: slot.ends_at })),
             sleepover,
-            selected_count: selectedCount,
+            requested_nannies_count: requestedCount,
             kids_count: kidsCount,
           }),
         });
         const cur = data?.currency || "ZAR";
         const total = formatCurrencyCents(data?.selected_total_cents, cur);
         estimateEl.innerHTML = `
-          <div><strong>Total${selectedCount > 1 ? ` (${selectedCount} nannies)` : ""}:</strong> ${escapeHtml(total)}</div>
+          <div><strong>Total${requestedCount > 1 ? ` (${requestedCount} nannies requested)` : ""}:</strong> ${escapeHtml(total)}</div>
         `;
       } catch (e) {
         estimateEl.textContent = "Estimate unavailable right now.";
@@ -934,6 +945,16 @@
       bookingState.nannyName = nannyName;
       bookingState.selectedNannyIds = Array.isArray(selectedIds) ? selectedIds : (nannyId ? [nannyId] : []);
       const count = bookingState.selectedNannyIds.length;
+      // Dropdown capped at broadcast audience size: a parent cannot be
+      // matched with more nannies than the job is sent to.
+      const requestedNanniesSelect = document.getElementById("requestedNanniesCount");
+      if (requestedNanniesSelect) {
+        const maxNeeded = Math.max(1, count);
+        requestedNanniesSelect.innerHTML = Array.from({ length: maxNeeded }, (_, i) =>
+          `<option value="${i + 1}">${i + 1}</option>`
+        ).join("");
+        requestedNanniesSelect.value = "1";
+      }
       document.getElementById("bookingNannyName").textContent = count > 1 ? `${count} nannies selected` : nannyName;
       document.getElementById("submitBookingBtn").textContent = count > 1
         ? "Proceed and broadcast to selected nannies"
@@ -1317,6 +1338,7 @@
       const notes = buildSleepoverNotes("");
       const locationId = locSelect ? Number(locSelect.value) : null;
       const sleepover = document.getElementById("bookingSleepover")?.checked || false;
+      const requestedNanniesCount = getRequestedNanniesCount();
 
       status.textContent = "Submitting...";
       await persistBookingQuestionnaireProfile(questionnaire);
@@ -1332,6 +1354,7 @@
             notes,
             location_id: locationId,
             sleepover,
+            requested_nannies_count: requestedNanniesCount,
             kids_count: questionnaire.kids_count,
             responsibilities: questionnaire.responsibilities,
             adult_present: questionnaire.adult_present,
@@ -1361,6 +1384,7 @@
             notes,
             location_id: locationId,
             sleepover,
+            requested_nannies_count: requestedNanniesCount,
             kids_count: questionnaire.kids_count,
             responsibilities: questionnaire.responsibilities,
             adult_present: questionnaire.adult_present,
@@ -1390,6 +1414,7 @@
             notes,
             location_id: locationId,
             sleepover,
+            requested_nannies_count: requestedNanniesCount,
             kids_count: questionnaire.kids_count,
             responsibilities: questionnaire.responsibilities,
             adult_present: questionnaire.adult_present,
@@ -1813,6 +1838,9 @@
       refreshBookingEstimate().catch(() => {});
     });
     document.getElementById("bookingKidsCount").addEventListener("change", () => {
+      refreshBookingEstimate().catch(() => {});
+    });
+    document.getElementById("requestedNanniesCount").addEventListener("change", () => {
       refreshBookingEstimate().catch(() => {});
     });
 

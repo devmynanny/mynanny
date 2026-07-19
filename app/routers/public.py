@@ -7673,13 +7673,10 @@ def estimate_booking_request(
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
-    if not _has_saved_parent_card(user):
-        return {
-            "requires_payment_method": True,
-            "message": "Please add a payment method before sending booking requests.",
-            "created": [],
-            "errors": [],
-        }
+    # No saved-card gate here: an estimate is read-only pricing. The card
+    # requirement is enforced at submission time, where the parent is sent
+    # through Paystack card setup contextually. Gating the estimate also
+    # returned a shape that violated BookingEstimateResponse (500).
 
     windows = _normalize_booking_slots(
         start_dt_value=payload.start_dt,
