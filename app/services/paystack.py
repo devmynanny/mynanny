@@ -34,9 +34,11 @@ def _paystack_request(method: str, path: str, payload: Optional[Dict[str, Any]] 
     except urllib.error.HTTPError as e:
         try:
             body = e.read().decode("utf-8")
-            return False, json.loads(body) if body else {"message": "Paystack error"}
+            parsed = json.loads(body) if body else {}
+            msg = parsed.get("message") or f"Paystack HTTP {e.code}"
+            return False, {"message": msg, "status_code": e.code, "raw": body}
         except Exception:
-            return False, {"message": "Paystack error"}
+            return False, {"message": f"Paystack HTTP {e.code}"}
     except Exception as e:
         return False, {"message": str(e)}
 

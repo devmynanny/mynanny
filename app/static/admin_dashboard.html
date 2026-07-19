@@ -184,7 +184,12 @@
         <div id="pastBookingsList"></div>
       </div>
       <div class="bookingSectionGroup" data-booking-filter="cancelled">
-        <div class="bookingSectionTitle">Cancelations</div>
+        <div class="bookingSectionTitle" style="display:flex;align-items:center;gap:12px;">
+          Cancelations
+          <label style="font-size:0.85rem;font-weight:normal;display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="hideCancelledToggle"> Hide cancelled
+          </label>
+        </div>
         <div id="cancelledBookingsList"></div>
       </div>
       <div class="bookingSectionGroup" data-booking-filter="unsuccessful">
@@ -461,12 +466,22 @@
 
     function applyBookingSectionFilter() {
       const selected = document.getElementById("bookingSectionFilter")?.value || "";
+      const hideCancelled = document.getElementById("hideCancelledToggle")?.checked || false;
       document.querySelectorAll(".bookingSectionGroup").forEach((section) => {
         const key = section.getAttribute("data-booking-filter");
+        if (key === "cancelled" && hideCancelled) {
+          section.classList.add("hidden");
+          return;
+        }
         const shouldShow = !!selected && selected === key;
         section.classList.toggle("hidden", !shouldShow);
       });
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const toggle = document.getElementById("hideCancelledToggle");
+      if (toggle) toggle.addEventListener("change", applyBookingSectionFilter);
+    });
 
     function renderBookingCollection(containerId, list, options = {}) {
       const container = document.getElementById(containerId);
