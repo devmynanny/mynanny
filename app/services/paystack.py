@@ -28,6 +28,8 @@ def _paystack_request(method: str, path: str, payload: Optional[Dict[str, Any]] 
         headers={
             "Authorization": f"Bearer {secret}",
             "Content-Type": "application/json",
+            "User-Agent": "python-requests/2.31.0",
+            "Accept": "application/json",
         },
     )
     try:
