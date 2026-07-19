@@ -1630,27 +1630,66 @@ def notify_booking_nanny_response(
             "declined": "declined",
             "deciding": "marked the booking as still deciding",
         }.get(response, response)
-        subject = f"Nanny response for booking request #{req.id}"
-        body = "\n".join(
+        start_text = req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else "-")
+        end_text = req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else "-")
+
+        # Admin email: full internal detail.
+        admin_subject = f"Nanny response for booking request #{req.id}"
+        admin_body = "\n".join(
             [
                 f"{nanny_name} has {response_label}.",
                 f"booking_request_id: {req.id}",
-                f"start: {req.start_dt or (req.requested_starts_at.isoformat() if req.requested_starts_at else '-')}",
-                f"end: {req.end_dt or (req.requested_ends_at.isoformat() if req.requested_ends_at else '-')}",
+                f"start: {start_text}",
+                f"end: {end_text}",
                 f"response_note: {getattr(req, 'nanny_response_note', None) or '-'}",
                 f"admin_link: {app_base_url()}/static/admin_dashboard.html",
             ]
         )
-        recipients = []
+        for admin_addr in (admins or []):
+            if admin_addr:
+                client.send(EmailMessage(to=[admin_addr], subject=admin_subject, body=admin_body))
+
+        # Parent email: friendly, actionable, no internal fields.
         if parent and getattr(parent, "email", None):
-            recipients.append(parent.email)
-        recipients.extend(admins or [])
-        sent = set()
-        for recipient in recipients:
-            if not recipient or recipient in sent:
-                continue
-            sent.add(recipient)
-            client.send(EmailMessage(to=[recipient], subject=subject, body=body))
+            # Count how many nannies in the same broadcast still have the request open.
+            open_count = 0
+            try:
+                group_id_value = req.group_id or req.id
+                open_count = (
+                    db.query(models.BookingRequest)
+                    .filter(
+                        models.BookingRequest.group_id == group_id_value,
+                        models.BookingRequest.id != req.id,
+                        models.BookingRequest.status.in_(["tbc", "pending_admin"]),
+                    )
+                    .count()
+                )
+            except Exception:
+                open_count = 0
+            jobs_link = f"{app_base_url()}/static/parent_jobs.html"
+            if response == "accepted":
+                parent_subject = "Great news — a nanny has accepted your booking"
+                parent_lines = [
+                    f"{nanny_name} has accepted your booking request.",
+                    "You can view the details and contact your nanny from your bookings page:",
+                    jobs_link,
+                ]
+            elif response == "declined":
+                parent_subject = "Update on your booking request"
+                parent_lines = [f"{nanny_name} is unable to take your booking."]
+                if open_count > 0:
+                    parent_lines.append(f"{open_count} other nann{'y' if open_count == 1 else 'ies'} still have your request and may still accept.")
+                else:
+                    parent_lines.append("No other nannies currently have this request. You may want to send it to more nannies from your bookings page.")
+                parent_lines.append(jobs_link)
+            else:
+                parent_subject = "Update on your booking request"
+                parent_lines = [
+                    f"{nanny_name} has seen your request and is still deciding.",
+                    "We will let you know as soon as there is an answer.",
+                    jobs_link,
+                ]
+            client.send(EmailMessage(to=[parent.email], subject=parent_subject, body="\n".join(parent_lines)))
     except Exception as e:
         print(f"[EMAIL][BOOKING_NANNY_RESPONSE_FAIL] {e!r}")
     finally:
@@ -2466,7 +2505,8 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
         db.query(models.BookingRequest)
         .filter(
             models.BookingRequest.parent_user_id == user.id,
-            models.BookingRequest.nanny_response_status == "payment_pending",
+            models.BookingRequest.admin_reason == "payment_failed",
+            models.BookingRequest.status.in_(["tbc", "pending_admin"]),
         )
         .all()
     )
@@ -2476,6 +2516,26 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
             amount_cents = int(req.total_cents or ((req.wage_cents or 0) + (req.booking_fee_cents or 0)) or 0)
             if amount_cents <= 0:
                 _log.warning("payment_pending retry: req %s has no amount, skipping", req.id)
+                continue
+
+            # Guard: another nanny may have won this group in the meantime
+            group_id_value = req.group_id or req.id
+            sibling_winner = (
+                db.query(models.BookingRequest)
+                .filter(
+                    models.BookingRequest.group_id == group_id_value,
+                    models.BookingRequest.id != req.id,
+                    models.BookingRequest.status == "approved",
+                    models.BookingRequest.nanny_response_status == "accepted",
+                )
+                .first()
+            )
+            if sibling_winner:
+                req.admin_reason = "filled"
+                req.status = "rejected"
+                req.admin_decided_at = datetime.utcnow()
+                db.commit()
+                results.append({"req_id": req.id, "ok": False, "reason": "already_filled"})
                 continue
 
             payment_reference = _new_booking_payment_reference(req.id)
@@ -5313,8 +5373,10 @@ def accept_nanny_booking_request(
     charge_result = _paystack_data(charge_data)
     charge_status = str(charge_result.get("status") or "").lower()
     if not charge_ok or charge_status != "success":
+        # Marker for the retry-on-card-save flow: status stays open ('tbc'),
+        # admin_reason='payment_failed' identifies requests awaiting a payment retry.
+        # (nanny_response_status has a DB check constraint; do not invent new values.)
         req.admin_reason = "payment_failed"
-        req.nanny_response_status = "payment_pending"
         req.nanny_responded_at = datetime.utcnow()
         req.paystack_reference = charge_result.get("reference") or payment_reference
         req.paystack_transaction_id = str(charge_result.get("id")) if charge_result.get("id") is not None else None
@@ -6351,7 +6413,14 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 ],
             }
             entry = grouped[gid]
-        entry["requested_nannies"].append({"id": req.nanny_id, "name": nanny_u.name})
+        _resp = (getattr(req, "nanny_response_status", None) or "pending").lower()
+        if req.status == "rejected" and _resp not in ("declined",):
+            _resp = "unavailable" if req.admin_reason in ("filled", "filled_higher_rating", "expired") else _resp
+        entry["requested_nannies"].append({
+            "id": req.nanny_id,
+            "name": nanny_u.name,
+            "response_status": _resp,
+        })
         if status == "approved":
             entry["status"] = "approved"
             entry["booking_state"] = "confirmed"
@@ -6553,17 +6622,30 @@ def cancel_parent_booking_request(
                 )
             except Exception:
                 pass
-        if int(outcome["nanny_retained_cents"]) > 0:
+        # Always tell the accepted nanny her booking is cancelled, regardless of
+        # whether she retains a fee — otherwise she may still travel to the job.
+        was_accepted = (getattr(req, "nanny_response_status", None) or "").lower() == "accepted" or req.admin_reason == "accepted_by_nanny"
+        if req.nanny_id and (was_accepted or int(outcome["nanny_retained_cents"]) > 0):
             nanny_row = db.query(models.Nanny).filter(models.Nanny.id == req.nanny_id).first()
             nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
+            retained = int(outcome["nanny_retained_cents"])
+            lines = ["The client has cancelled this booking. It has been removed from your calendar."]
+            if retained > 0:
+                lines.append(f"Because it was cancelled at short notice, you retain R{(retained/100):.2f}.")
             _send_cancellation_notice(
                 to_email=getattr(nanny_user, "email", None),
-                subject=f"Cancellation update for booking request #{req.id}",
-                lines=[
-                    "A parent cancelled this booking.",
-                    f"You retain R{(int(outcome['nanny_retained_cents'])/100):.2f}.",
-                ],
+                subject=f"Booking cancelled by client (request #{req.id})",
+                lines=lines,
             )
+            if nanny_user:
+                send_notification(
+                    db,
+                    nanny_user.id,
+                    "booking_cancelled",
+                    "email",
+                    "The client has cancelled your booking. Please check your calendar — this job no longer takes place." + (f" You retain R{(retained/100):.2f} for the late cancellation." if retained > 0 else ""),
+                    reference_id=int(req.id),
+                )
 
     db.commit()
     log_audit(
