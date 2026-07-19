@@ -411,6 +411,7 @@ class ParentBookingRequestScheduleUpdate(BaseModel):
     end_dt: Optional[str] = None
     slots: Optional[List[BookingSlot]] = None
     sleepover: Optional[bool] = None
+    force: Optional[bool] = False  # bypass availability mismatch warning
 
 
 class AdminNannyApplicationUpdateRequest(BaseModel):

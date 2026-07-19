@@ -6443,10 +6443,23 @@ def update_parent_booking_request_schedule(
     start_dt = min(w[0] for w in windows)
     end_dt = max(w[1] for w in windows)
 
+    unavailable_nanny_ids = []
     for req in editable_rows:
         for slot_start, slot_end in windows:
             if not _is_nanny_available(db, req.nanny_id, slot_start, slot_end, user.id):
-                raise HTTPException(status_code=409, detail="One or more requested nannies are not available for the new time")
+                if req.nanny_id not in unavailable_nanny_ids:
+                    unavailable_nanny_ids.append(req.nanny_id)
+                break
+    if unavailable_nanny_ids and not payload.force:
+        total = len(editable_rows)
+        unavail_count = len(unavailable_nanny_ids)
+        return {
+            "ok": False,
+            "requires_confirmation": True,
+            "unavailable_count": unavail_count,
+            "total_count": total,
+            "message": f"{unavail_count} of {total} nannies in this broadcast may not be available at the new time. They will remain in the broadcast but may decline.",
+        }
 
     before_obj = {
         "start_dt": editable_rows[0].start_dt,
