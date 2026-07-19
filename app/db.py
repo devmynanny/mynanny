@@ -1227,14 +1227,16 @@ def ensure_bootstrap_admin() -> None:
                       name = COALESCE(NULLIF(name, ''), :name),
                       role = 'admin',
                       password_hash = :password_hash,
-                      is_admin = 1,
-                      is_active = 1
+                      is_admin = :is_admin,
+                      is_active = :is_active
                     WHERE id = :user_id
                 """),
                 {
                     "user_id": existing[0],
                     "name": email.split("@", 1)[0],
                     "password_hash": password_hash,
+                    "is_admin": True,
+                    "is_active": True,
                 },
             )
             return
@@ -1242,11 +1244,13 @@ def ensure_bootstrap_admin() -> None:
         conn.execute(
             text("""
                 INSERT INTO users (name, role, email, password_hash, is_admin, is_active)
-                VALUES (:name, 'admin', :email, :password_hash, 1, 1)
+                VALUES (:name, 'admin', :email, :password_hash, :is_admin, :is_active)
             """),
             {
                 "name": email.split("@", 1)[0],
                 "email": email,
                 "password_hash": password_hash,
+                "is_admin": True,
+                "is_active": True,
             },
         )
