@@ -680,6 +680,109 @@ def accounting_summary(
     }
 
 
+@router.get("/accounting/reconciliation", dependencies=[Depends(require_admin)])
+def accounting_reconciliation(
+    range: Optional[str] = Query(default="month"),
+    start: Optional[str] = Query(default=None),
+    end: Optional[str] = Query(default=None),
+    only_mismatches: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """Per-booking money ledger with integrity checks.
+
+    For every paid booking request in the window, reconstructs where each
+    cent went (fee, wage, retained splits, refund, payout, debt deduction)
+    and flags rows whose money in does not equal money accounted for.
+    See ACCOUNTING.md for the field semantics.
+    """
+    start_dt, end_dt = _resolve_reporting_window(report_range=range, start=start, end=end)
+
+    reqs = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.payment_status == "paid",
+            models.BookingRequest.paid_at.isnot(None),
+            models.BookingRequest.paid_at >= start_dt,
+            models.BookingRequest.paid_at <= end_dt,
+        )
+        .order_by(models.BookingRequest.paid_at.asc())
+        .all()
+    )
+
+    rows = []
+    mismatch_count = 0
+    for req in reqs:
+        total_paid = int(req.total_cents or 0)
+        fee = int(req.booking_fee_cents or 0)
+        wage = int(req.wage_cents or 0)
+        company_retained = req.company_retained_cents
+        nanny_retained = req.nanny_retained_cents
+        refund = int(req.refund_cents or 0) if req.refund_status == "processed" else 0
+
+        bookings = (
+            db.query(models.Booking)
+            .filter(models.Booking.booking_request_id == req.id)
+            .all()
+        )
+        payout_released = sum(
+            int(b.payout_amount_cents or 0)
+            for b in bookings
+            if b.payout_released_at is not None
+        )
+        debt_deducted = sum(
+            int(b.payout_debt_deducted_cents or 0)
+            for b in bookings
+            if b.payout_released_at is not None
+        )
+
+        problems = []
+        if total_paid <= 0:
+            problems.append("paid_with_zero_total")
+        if total_paid and fee + wage != total_paid:
+            problems.append("fee_plus_wage_mismatch")
+        if req.status == "cancelled":
+            retained_total = int(company_retained or 0) + int(nanny_retained or 0)
+            if req.refund_status == "processed" and retained_total + refund != total_paid:
+                problems.append("cancel_split_mismatch")
+            if company_retained is None and nanny_retained is None and refund == 0:
+                problems.append("cancelled_paid_but_no_split_recorded")
+        else:
+            # Non-cancelled completed bookings: released payout + debt
+            # deduction should never exceed the wage portion.
+            if payout_released and payout_released + debt_deducted > wage:
+                problems.append("payout_exceeds_wage")
+
+        if problems:
+            mismatch_count += 1
+        if only_mismatches and not problems:
+            continue
+
+        rows.append({
+            "booking_request_id": req.id,
+            "status": req.status,
+            "paid_at": req.paid_at.isoformat() if req.paid_at else None,
+            "paystack_reference": req.paystack_reference,
+            "total_paid_cents": total_paid,
+            "booking_fee_cents": fee,
+            "wage_cents": wage,
+            "company_retained_cents": company_retained,
+            "nanny_retained_cents": nanny_retained,
+            "refund_status": req.refund_status,
+            "refund_cents": refund,
+            "payout_released_cents": payout_released,
+            "debt_deducted_cents": debt_deducted,
+            "problems": problems,
+        })
+
+    return {
+        "range_start": start_dt.isoformat(),
+        "range_end": end_dt.isoformat(),
+        "row_count": len(rows),
+        "mismatch_count": mismatch_count,
+        "results": rows,
+    }
+
+
 @router.get("/accounting/payouts", dependencies=[Depends(require_admin)])
 def accounting_payouts(
     range: Optional[str] = Query(default="month"),
