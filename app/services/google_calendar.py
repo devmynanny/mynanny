@@ -8,6 +8,7 @@ from urllib.parse import quote
 import requests
 
 from app import models
+from app.utils.time import utc_now
 
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 DEFAULT_CALENDAR_ID = "sayhi@mynanny.co.za"
@@ -122,7 +123,7 @@ def sync_booking_to_google_calendar(db, booking) -> Optional[str]:
     if not event_id:
         raise RuntimeError("Google Calendar sync did not return an event ID")
     booking.google_calendar_event_id = event_id
-    booking.google_calendar_synced_at = datetime.utcnow()
+    booking.google_calendar_synced_at = utc_now()
     booking.google_calendar_sync_error = None
     db.commit()
     return event_id

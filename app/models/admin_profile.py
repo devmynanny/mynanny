@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, Integer, DateTime, Boolean, ForeignKey, String
 from sqlalchemy.orm import relationship
 
 from app.db import Base
+from app.utils.time import utc_now
 
 
 class AdminProfile(Base):
@@ -15,6 +14,6 @@ class AdminProfile(Base):
 
     is_superadmin = Column(Boolean, default=False, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     user = relationship("User")

@@ -5,6 +5,7 @@ from sqlalchemy import asc
 from sqlalchemy.orm import Session
 
 from app import models
+from app.utils.time import utc_now
 
 
 def deduct_debt_from_payout(db: Session, nanny_id: int, payout_cents: int, booking_id: int | None = None) -> dict:
@@ -33,7 +34,7 @@ def deduct_debt_from_payout(db: Session, nanny_id: int, payout_cents: int, booki
         deducted = min(remaining, balance)
         debt.balance_cents = balance - deducted
         debt.status = "settled" if debt.balance_cents <= 0 else "partially_paid"
-        debt.updated_at = datetime.utcnow()
+        debt.updated_at = utc_now()
         total_deducted += deducted
         remaining -= deducted
         deduction = models.DebtDeductionLog(

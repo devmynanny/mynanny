@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.utils.email import EmailMessage, admin_emails, get_email_client
+from app.utils.time import utc_now
 
 
 def _base_rating_for_nanny(db: Session, nanny_id: int) -> float:
@@ -53,7 +54,7 @@ def _log_notification_best_effort(
             "status": status,
             "error_message": error_message,
             "reference_id": reference_id,
-            "created_at": datetime.utcnow(),
+            "created_at": utc_now(),
         },
     )
 
@@ -109,7 +110,7 @@ def apply_demerit(
         weight=float(weight),
         cumulative_demerit_pct=float(new_cumulative),
         applied_by=str(applied_by),
-        applied_at=datetime.utcnow(),
+        applied_at=utc_now(),
     )
     db.add(log)
 
@@ -117,7 +118,7 @@ def apply_demerit(
     displayed_rating = base_rating * (1.0 - new_cumulative)
     if displayed_rating < 2.5:
         nanny.is_suspended = True
-        nanny.suspended_at = datetime.utcnow()
+        nanny.suspended_at = utc_now()
         nanny.suspension_reason = "rating_below_threshold"
         _notify_admin_best_effort(
             db,
@@ -149,11 +150,11 @@ def apply_cancellation_weight(
             weight=float(weight),
             cumulative_demerit_pct=float(getattr(nanny, "rating_demerit_pct", 0.0) or 0.0),
             applied_by="system",
-            applied_at=datetime.utcnow(),
+            applied_at=utc_now(),
         )
     )
 
-    cutoff = datetime.utcnow() - timedelta(days=180)
+    cutoff = utc_now() - timedelta(days=180)
     weighted_total_180d = (
         db.query(func.coalesce(func.sum(models.NannyDemeritLog.weight), 0.0))
         .filter(

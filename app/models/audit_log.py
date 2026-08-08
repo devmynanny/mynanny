@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Index
 from sqlalchemy.orm import relationship
 
 from app.db import Base
+from app.utils.time import utc_now
 
 
 class AuditLog(Base):
@@ -29,7 +28,7 @@ class AuditLog(Base):
     ip = Column(String, nullable=True)
     user_agent = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
 
     event_type = Column(String, nullable=True)
     entity_type = Column(String, nullable=True)

@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import models
+from app.utils.time import utc_now
 from app.utils.email import EmailMessage, get_email_client
 
 WHATSAPP_TEMPLATE_NAMES = {
@@ -124,7 +125,7 @@ def _log_notification(
             "error_message": error_message,
             "reference_id": reference_id,
             "message": message,
-            "created_at": datetime.utcnow(),
+            "created_at": utc_now(),
         },
     )
 
@@ -264,7 +265,7 @@ def send_notification(
                         "title": event_type.replace("_", " ").title(),
                         "body": message,
                         "action_url": None,
-                        "created_at": datetime.utcnow(),
+                        "created_at": utc_now(),
                     },
                 )
             _log_notification(
@@ -367,7 +368,7 @@ def retry_failed_notifications(
 
     from datetime import timedelta
 
-    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
+    cutoff = utc_now() - timedelta(hours=window_hours)
     rows = (
         db.query(models.NotificationLog)
         .filter(

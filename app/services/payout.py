@@ -8,6 +8,7 @@ from app import models
 from app.services.paystack import create_transfer
 from app.services.debt import deduct_debt_from_payout
 from app.services.notifications import send_notification
+from app.utils.time import utc_now
 from app.utils.email import EmailMessage, admin_emails, get_email_client
 
 
@@ -42,7 +43,7 @@ def _log_notification_best_effort(
             "status": status,
             "error_message": error_message,
             "reference_id": reference_id,
-            "created_at": datetime.utcnow(),
+            "created_at": utc_now(),
         },
     )
 
@@ -131,7 +132,7 @@ def _transfer_to_nanny_bank(
 
 
 def run_scheduled_payouts(db: Session) -> None:
-    now = datetime.utcnow()
+    now = utc_now()
 
     bookings = (
         db.query(models.Booking)
@@ -167,7 +168,7 @@ def run_scheduled_payouts(db: Session) -> None:
                 )
                 if not transferred:
                     raise RuntimeError("payout transfer failed")
-                booking.payout_released_at = datetime.utcnow()
+                booking.payout_released_at = utc_now()
                 nanny_user = _nanny_user(db, int(booking.nanny_id))
                 if nanny_user:
                     send_notification(
@@ -208,7 +209,7 @@ def run_scheduled_payouts(db: Session) -> None:
                 )
                 if not transferred:
                     raise RuntimeError("overrun transfer failed")
-                booking.overrun_released_at = datetime.utcnow()
+                booking.overrun_released_at = utc_now()
                 nanny_user = _nanny_user(db, int(booking.nanny_id))
                 if nanny_user:
                     send_notification(

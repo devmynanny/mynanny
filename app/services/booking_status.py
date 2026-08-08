@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
+
+from app.utils.time import utc_now
 
 
 CANONICAL_BOOKING_STATUSES = (
@@ -77,25 +79,33 @@ def canonical_booking_status(status: str | None) -> str:
 
 def _as_dt(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
-        return value
-    if not value:
+        parsed = value
+    elif not value:
         return None
-    try:
-        text = str(value).strip()
-        if not text:
+    else:
+        try:
+            text = str(value).strip()
+            if not text:
+                return None
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            if " " in text and "T" not in text:
+                text = text.replace(" ", "T")
+            parsed = datetime.fromisoformat(text)
+        except Exception:
             return None
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        if " " in text and "T" not in text:
-            text = text.replace(" ", "T")
-        return datetime.fromisoformat(text)
-    except Exception:
-        return None
+    if parsed.tzinfo is not None:
+        # Columns like BookingRequest.requested_starts_at are stored tz-aware
+        # and come back aware on Postgres, naive on SQLite. Normalize to the
+        # naive-UTC convention used by `current` below so comparisons never
+        # raise on either backend.
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
 
 
 def booking_state_from_booking(booking: Any, now: Optional[datetime] = None) -> str:
     status = canonical_booking_status(getattr(booking, "status", None))
-    current = now or datetime.utcnow()
+    current = now or utc_now()
     check_in_at = _as_dt(getattr(booking, "check_in_at", None))
     check_out_at = _as_dt(getattr(booking, "check_out_at", None))
     start_dt = _as_dt(getattr(booking, "starts_at", None) or getattr(booking, "start_dt", None))
@@ -140,7 +150,7 @@ def booking_state_from_request(request: Any, now: Optional[datetime] = None) -> 
     status = canonical_booking_status(getattr(request, "status", None))
     payment_status = str(getattr(request, "payment_status", None) or "").strip().lower()
     response_status = str(getattr(request, "nanny_response_status", None) or "").strip().lower()
-    current = now or datetime.utcnow()
+    current = now or utc_now()
     start_dt = _as_dt(getattr(request, "requested_starts_at", None) or getattr(request, "start_dt", None))
     end_dt = _as_dt(getattr(request, "requested_ends_at", None) or getattr(request, "end_dt", None))
     paid_at = _as_dt(getattr(request, "paid_at", None))

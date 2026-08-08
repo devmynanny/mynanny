@@ -23,6 +23,7 @@ from app import models, schemas
 from app.request_context import auth_token_ctx
 from app.schemas import NannyReviewsResponse, SetParentAreaRequest, SetParentDefaultLocationRequest, ParentLocationResponse, NannyLocationResponse, ReviewOut, ReviewCreate, SetNannyAreasRequest, CreateNannyProfileRequest, UpdateNannyProfileRequest, BulkBookingRequest, SearchNanniesResponse, NannyMeProfileUpdate, NannyMeProfileResponse, BookingRequestCreate, BookingRequestReject, BookingRequestBulkCreate
 from app.utils.email import EmailMessage, admin_emails, app_base_url, get_email_client
+from app.utils.time import utc_now
 from app import security
 from app.services.audit import log_audit, log_profile_update, log_booking_request_status_change, log_booking_status_change
 from app.services.cancellation import calculate_cancellation_outcome
@@ -396,7 +397,7 @@ def get_rating_12m_for_nanny(db: Session, nanny_id: int):
     """
     Returns (average_rating_12m, review_count_12m) for a nanny over the last 12 months, using only approved reviews.
     """
-    window_start = datetime.utcnow() - timedelta(days=365)
+    window_start = utc_now() - timedelta(days=365)
     q = (
         db.query(
             func.avg(models.Review.stars).label("avg_stars"),
@@ -619,7 +620,7 @@ def _booking_time_state(
     check_out_at: Optional[datetime] = None,
     now: Optional[datetime] = None,
 ) -> str:
-    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
+    current = _as_utc_aware(now or utc_now()) or datetime.now(timezone.utc)
     start_dt = _as_utc_aware(start_dt)
     end_dt = _as_utc_aware(end_dt)
     check_in_at = _as_utc_aware(check_in_at)
@@ -638,7 +639,7 @@ def _booking_time_state(
 
 
 def _booking_group_time_state(bookings: List[object], *, now: Optional[datetime] = None) -> str:
-    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
+    current = _as_utc_aware(now or utc_now()) or datetime.now(timezone.utc)
     earliest_start: Optional[datetime] = None
     all_past = True
     for booking in bookings:
@@ -663,7 +664,7 @@ def _booking_group_time_state(bookings: List[object], *, now: Optional[datetime]
 
 
 def _booking_group_time_state_from_items(items: List[dict], *, now: Optional[datetime] = None) -> str:
-    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
+    current = _as_utc_aware(now or utc_now()) or datetime.now(timezone.utc)
     earliest_start: Optional[datetime] = None
     all_past = True
     for item in items:
@@ -711,7 +712,7 @@ def _booking_group_time_state_from_items(items: List[dict], *, now: Optional[dat
 
 
 def _booking_group_matches_tomorrow(items: List[dict], *, tomorrow: date, now: Optional[datetime] = None, local_tz: Optional[ZoneInfo] = None) -> bool:
-    current = _as_utc_aware(now or datetime.utcnow()) or datetime.now(timezone.utc)
+    current = _as_utc_aware(now or utc_now()) or datetime.now(timezone.utc)
     tz = local_tz or ZoneInfo("Africa/Johannesburg")
     earliest_start: Optional[datetime] = None
     for item in items:
@@ -1035,7 +1036,7 @@ def _normalize_booking_slots(
 
 
 def _validate_booking_windows_not_in_past(windows: List[tuple]) -> None:
-    now_utc = datetime.utcnow()
+    now_utc = utc_now()
     for slot_start, _slot_end in (windows or []):
         if _naive_utc(slot_start) <= now_utc:
             raise HTTPException(
@@ -1246,7 +1247,7 @@ def _validate_sa_id(id_number: str, dob_value: Optional[date] = None) -> Optiona
     mm = int(s[2:4])
     dd = int(s[4:6])
     # infer century
-    today = datetime.utcnow().date()
+    today = utc_now().date()
     century = 2000 if yy <= (today.year % 100) else 1900
     try:
         dob = date(century + yy, mm, dd)
@@ -1470,7 +1471,7 @@ def _log_notification_best_effort(
             "status": status,
             "error_message": error_message,
             "reference_id": reference_id,
-            "created_at": datetime.utcnow(),
+            "created_at": utc_now(),
         },
     )
 
@@ -1908,7 +1909,7 @@ def _cancel_related_bookings_for_request(
     reason: str,
 ) -> List[models.Booking]:
     cancelled: List[models.Booking] = []
-    now = datetime.utcnow()
+    now = utc_now()
     for booking in _find_related_bookings_for_request(db, req):
         if booking.status in ("completed", "cancelled", "rejected"):
             continue
@@ -2533,7 +2534,7 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
             if sibling_winner:
                 req.admin_reason = "filled"
                 req.status = "rejected"
-                req.admin_decided_at = datetime.utcnow()
+                req.admin_decided_at = utc_now()
                 db.commit()
                 results.append({"req_id": req.id, "ok": False, "reason": "already_filled"})
                 continue
@@ -2582,12 +2583,12 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
 
             req.status = "approved"
             req.admin_reason = "accepted_by_nanny"
-            req.admin_decided_at = datetime.utcnow()
+            req.admin_decided_at = utc_now()
             req.nanny_response_status = "accepted"
-            req.nanny_responded_at = datetime.utcnow()
+            req.nanny_responded_at = utc_now()
             req.nanny_response_note = None
             req.payment_status = "paid"
-            req.paid_at = datetime.utcnow()
+            req.paid_at = utc_now()
             req.paystack_reference = charge_result.get("reference") or payment_reference
             if charge_result.get("id") is not None:
                 req.paystack_transaction_id = str(charge_result.get("id"))
@@ -2636,7 +2637,7 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
                     if any(_overlaps(s, e, other_start, other_end) for s, e in windows):
                         other.status = "rejected"
                         other.admin_reason = "filled"
-                        other.admin_decided_at = datetime.utcnow()
+                        other.admin_decided_at = utc_now()
 
                 # Block nanny's availability
                 for slot_start, slot_end in windows:
@@ -2714,7 +2715,7 @@ def verify_parent_payment_method(
     user.paystack_customer_code = customer_data.get("customer_code") or result.get("customer_code")
     user.card_last4 = authorization_data.get("last4")
     user.card_brand = authorization_data.get("card_type") or authorization_data.get("brand")
-    user.card_saved_at = datetime.utcnow()
+    user.card_saved_at = utc_now()
 
     refund_status = "not_requested"
     transaction_id = result.get("id") or result.get("transaction")
@@ -4675,7 +4676,7 @@ def nanny_check_in_booking(
         }
 
     before_status = booking.status
-    booking.check_in_at = datetime.utcnow()
+    booking.check_in_at = utc_now()
     booking.check_in_lat = float(payload.lat)
     booking.check_in_lng = float(payload.lng)
     booking.check_in_distance_m = float(round(distance_m, 2))
@@ -4727,7 +4728,7 @@ def nanny_check_out_booking(
         }
 
     before_status = booking.status
-    now_utc = datetime.utcnow()
+    now_utc = utc_now()
     booking.check_out_at = now_utc
     booking.check_out_lat = float(payload.lat)
     booking.check_out_lng = float(payload.lng)
@@ -4868,11 +4869,11 @@ def parent_confirm_booking_check_in(
         except Exception:
             raise HTTPException(status_code=400, detail="Please provide the corrected arrival time")
     if payload.confirmed:
-        booking.check_in_confirmed_at = datetime.utcnow()
+        booking.check_in_confirmed_at = utc_now()
         booking.check_in_confirmed_by_user_id = user.id
     elif corrected_time is not None:
         booking.check_in_at = corrected_time
-        booking.check_in_confirmed_at = datetime.utcnow()
+        booking.check_in_confirmed_at = utc_now()
         booking.check_in_confirmed_by_user_id = user.id
     else:
         booking.check_in_at = None
@@ -4924,11 +4925,11 @@ def parent_confirm_booking_check_out(
         except Exception:
             raise HTTPException(status_code=400, detail="Please provide the corrected completion time")
     if payload.confirmed:
-        booking.check_out_confirmed_at = datetime.utcnow()
+        booking.check_out_confirmed_at = utc_now()
         booking.check_out_confirmed_by_user_id = user.id
     elif corrected_time is not None:
         booking.check_out_at = corrected_time
-        booking.check_out_confirmed_at = datetime.utcnow()
+        booking.check_out_confirmed_at = utc_now()
         booking.check_out_confirmed_by_user_id = user.id
     else:
         booking.check_out_at = None
@@ -4996,13 +4997,13 @@ def parent_agree_overtime(
     settings = _get_pricing_settings(db)
     booking.overrun_status = "charged"
     booking.overrun_paystack_ref = str(charge_result.get("reference") or payment_reference)
-    booking.overrun_confirmed_at = datetime.utcnow()
-    booking.overrun_resolved_at = datetime.utcnow()
+    booking.overrun_confirmed_at = utc_now()
+    booking.overrun_resolved_at = utc_now()
     booking.overrun_resolved_by = user.id
-    booking.overrun_hold_until = datetime.utcnow() + timedelta(hours=max(1, int(settings.get("overrun_hold_hours") or 24)))
+    booking.overrun_hold_until = utc_now() + timedelta(hours=max(1, int(settings.get("overrun_hold_hours") or 24)))
     booking.status = "completed"
     payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
-    booking.payout_hold_until = datetime.utcnow() + timedelta(hours=payout_hold_hours)
+    booking.payout_hold_until = utc_now() + timedelta(hours=payout_hold_hours)
     related_request = None
     if getattr(booking, "booking_request_id", None):
         related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
@@ -5036,10 +5037,10 @@ def parent_query_overtime(
         raise HTTPException(status_code=400, detail="No overtime approval is pending for this booking")
 
     booking.overrun_status = "queried"
-    booking.overrun_queried_at = datetime.utcnow()
+    booking.overrun_queried_at = utc_now()
     booking.status = "admin_review"
     booking.overrun_disputed = True
-    booking.overrun_dispute_raised_at = datetime.utcnow()
+    booking.overrun_dispute_raised_at = utc_now()
     if getattr(booking, "booking_request_id", None):
         related_request = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
         if related_request:
@@ -5106,11 +5107,11 @@ def parent_dispute_payout(
     booking = _parent_owned_booking_or_404(db, booking_id, user.id)
     if not getattr(booking, "payout_hold_until", None):
         raise HTTPException(status_code=400, detail="No payout hold exists for this booking")
-    if datetime.utcnow() >= booking.payout_hold_until:
+    if utc_now() >= booking.payout_hold_until:
         raise HTTPException(status_code=400, detail="Payout dispute window has expired")
 
     booking.payout_disputed = True
-    booking.payout_dispute_raised_at = datetime.utcnow()
+    booking.payout_dispute_raised_at = utc_now()
     db.commit()
 
     admins = admin_emails()
@@ -5170,7 +5171,7 @@ def nanny_cancel_booking(
 
     before_status = booking.status
     booking.status = "cancelled"
-    booking.cancelled_at = datetime.utcnow()
+    booking.cancelled_at = utc_now()
     booking.cancellation_reason = reason
     booking.cancellation_actor_role = "nanny"
     booking.cancellation_actor_user_id = user.id
@@ -5191,13 +5192,13 @@ def nanny_cancel_booking(
         scenario = outcome["scenario"]
         related_request.status = "cancelled"
         related_request.admin_reason = reason
-        related_request.admin_decided_at = datetime.utcnow()
-        related_request.cancelled_at = datetime.utcnow()
+        related_request.admin_decided_at = utc_now()
+        related_request.cancelled_at = utc_now()
         related_request.company_retained_cents = int(outcome["company_retained_cents"])
         related_request.nanny_retained_cents = int(outcome["nanny_retained_cents"])
         related_request.refund_cents = int(outcome["parent_refund_cents"])
         related_request.refund_status = "pending_review"
-        related_request.refund_requested_at = datetime.utcnow()
+        related_request.refund_requested_at = utc_now()
 
         if scenario == "A":
             apply_cancellation_weight(db, int(related_request.nanny_id), 0.5)
@@ -5377,7 +5378,7 @@ def accept_nanny_booking_request(
         # admin_reason='payment_failed' identifies requests awaiting a payment retry.
         # (nanny_response_status has a DB check constraint; do not invent new values.)
         req.admin_reason = "payment_failed"
-        req.nanny_responded_at = datetime.utcnow()
+        req.nanny_responded_at = utc_now()
         req.paystack_reference = charge_result.get("reference") or payment_reference
         req.paystack_transaction_id = str(charge_result.get("id")) if charge_result.get("id") is not None else None
         db.commit()
@@ -5426,7 +5427,7 @@ def accept_nanny_booking_request(
                 continue
             other_req.status = "rejected"
             other_req.admin_reason = "filled_higher_rating"
-            other_req.admin_decided_at = datetime.utcnow()
+            other_req.admin_decided_at = utc_now()
         return winner
 
     location = None
@@ -5438,13 +5439,13 @@ def accept_nanny_booking_request(
     req.status = "approved"
     req.start_dt = req.start_dt or _to_iso_z(start_dt)
     req.end_dt = req.end_dt or _to_iso_z(end_dt)
-    req.admin_decided_at = datetime.utcnow()
+    req.admin_decided_at = utc_now()
     req.admin_reason = "accepted_by_nanny"
     req.nanny_response_status = "accepted"
-    req.nanny_responded_at = datetime.utcnow()
+    req.nanny_responded_at = utc_now()
     req.nanny_response_note = None
     req.payment_status = "paid"
-    req.paid_at = datetime.utcnow()
+    req.paid_at = utc_now()
     req.paystack_reference = charge_result.get("reference") or payment_reference
     if charge_result.get("id") is not None:
         req.paystack_transaction_id = str(charge_result.get("id"))
@@ -5497,7 +5498,7 @@ def accept_nanny_booking_request(
             if any(_overlaps(slot_start, slot_end, other_start, other_end) for slot_start, slot_end in windows):
                 other.status = "rejected"
                 other.admin_reason = "filled"
-                other.admin_decided_at = datetime.utcnow()
+                other.admin_decided_at = utc_now()
 
         for slot_start, slot_end in windows:
             block_row = models.NannyAvailability(
@@ -5591,14 +5592,14 @@ def respond_nanny_booking_request(
     before_status = req.status
     before_response = getattr(req, "nanny_response_status", None) or "pending"
     req.nanny_response_status = response_value
-    req.nanny_responded_at = datetime.utcnow()
+    req.nanny_responded_at = utc_now()
     req.nanny_response_note = reason
 
     changed_fields = ["nanny_response_status", "nanny_responded_at", "nanny_response_note"]
     if response_value == "declined":
         req.status = "rejected"
         req.admin_reason = reason or "declined_by_nanny"
-        req.admin_decided_at = datetime.utcnow()
+        req.admin_decided_at = utc_now()
         changed_fields.append("status")
         _cancel_related_bookings_for_request(
             db,
@@ -5635,7 +5636,7 @@ def get_nanny_reviews(nanny_id: int, db: Session = Depends(get_db)):
     if not nanny:
         raise HTTPException(status_code=404, detail="Nanny not found")
 
-    window_start = datetime.utcnow() - timedelta(days=365)
+    window_start = utc_now() - timedelta(days=365)
     reviews_query = (
         db.query(models.Review)
         .filter(
@@ -6110,7 +6111,7 @@ def set_parent_default_location(payload: SetParentDefaultLocationRequest, db: Se
         db.add(existing)
     existing.lat = payload.lat
     existing.lng = payload.lng
-    existing.location_confirmed_at = datetime.utcnow().isoformat()
+    existing.location_confirmed_at = utc_now().isoformat()
     existing.location_confirm_version = payload.confirm_version
     db.commit()
     return {"ok": True}
@@ -6390,7 +6391,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 continue
             other_req.status = "rejected"
             other_req.admin_reason = "filled_higher_rating"
-            other_req.admin_decided_at = datetime.utcnow()
+            other_req.admin_decided_at = utc_now()
             any_changes = True
     if any_changes:
         db.commit()
@@ -6611,7 +6612,7 @@ def cancel_parent_booking_request(
     if not rows:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    now_utc = datetime.utcnow()
+    now_utc = utc_now()
     latest_end_times: List[datetime] = []
     for req in rows:
         windows = _booking_request_windows(db, req)
@@ -6641,13 +6642,13 @@ def cancel_parent_booking_request(
         )
         req.status = "cancelled"
         req.admin_reason = reason
-        req.admin_decided_at = datetime.utcnow()
-        req.cancelled_at = datetime.utcnow()
+        req.admin_decided_at = utc_now()
+        req.cancelled_at = utc_now()
         req.company_retained_cents = int(outcome["company_retained_cents"])
         req.nanny_retained_cents = int(outcome["nanny_retained_cents"])
         req.refund_cents = int(outcome["parent_refund_cents"])
         req.refund_status = "pending_review"
-        req.refund_requested_at = datetime.utcnow()
+        req.refund_requested_at = utc_now()
         _cancel_related_bookings_for_request(
             db,
             req,
@@ -7812,7 +7813,7 @@ def create_bulk_booking_request(payload: BulkBookingRequest, request: Request, d
         if slot.ends_at <= slot.starts_at:
             errors.append({"index": i, "error": "ends_at must be after starts_at"})
             continue
-        if _naive_utc(slot.starts_at) <= datetime.utcnow():
+        if _naive_utc(slot.starts_at) <= utc_now():
             errors.append({"index": i, "error": "start time has already passed"})
             continue
         existing = (
@@ -7850,7 +7851,7 @@ def create_bulk_booking_request(payload: BulkBookingRequest, request: Request, d
         except Exception:
             pass
     else:
-        now = datetime.utcnow()
+        now = utc_now()
         req.requested_starts_at = now
         req.requested_ends_at = now
     db.commit()
@@ -8260,7 +8261,7 @@ def approve_booking_request(
     req.start_dt = req.start_dt or _to_iso_z(start_dt)
     req.end_dt = req.end_dt or _to_iso_z(end_dt)
     req.admin_user_id = admin.id
-    req.admin_decided_at = datetime.utcnow()
+    req.admin_decided_at = utc_now()
 
     db.commit()
     for slot_start, slot_end in windows:
@@ -8355,7 +8356,7 @@ def reject_booking_request(
     req.status = "rejected"
     req.admin_reason = reason
     req.admin_user_id = admin.id
-    req.admin_decided_at = datetime.utcnow()
+    req.admin_decided_at = utc_now()
 
     booking_id = None
     if payload.assign_nanny_id:
@@ -8373,7 +8374,7 @@ def reject_booking_request(
             booking_request_id=req.id,
             nanny_id=payload.assign_nanny_id,
             client_user_id=req.parent_user_id,
-            day=req.requested_starts_at.date() if req.requested_starts_at else datetime.utcnow().date(),
+            day=req.requested_starts_at.date() if req.requested_starts_at else utc_now().date(),
             status="pending",
             price_cents=0,
             starts_at=req.requested_starts_at,
@@ -8504,7 +8505,7 @@ def assign_booking_request_nanny(
         if group_req.status not in ("cancelled", "completed"):
             group_req.status = "rejected"
             group_req.admin_reason = "filled"
-            group_req.admin_decided_at = datetime.utcnow()
+            group_req.admin_decided_at = utc_now()
 
     if previous_nanny_id and previous_nanny_id != selected_nanny_id:
         cancelled_previous_bookings = _cancel_related_bookings_for_request(
@@ -8526,7 +8527,7 @@ def assign_booking_request_nanny(
     req.start_dt = req.start_dt or _to_iso_z(start_dt)
     req.end_dt = req.end_dt or _to_iso_z(end_dt)
     req.admin_user_id = admin.id
-    req.admin_decided_at = datetime.utcnow()
+    req.admin_decided_at = utc_now()
 
     existing_bookings = _find_related_bookings_for_request(db, req)
     reusable_bookings = [b for b in existing_bookings if b.status not in ("cancelled", "rejected", "completed")]
@@ -8710,13 +8711,13 @@ def cancel_admin_booking_request(
         group_req.status = "cancelled"
         group_req.admin_reason = reason
         group_req.admin_user_id = admin.id
-        group_req.admin_decided_at = datetime.utcnow()
-        group_req.cancelled_at = datetime.utcnow()
+        group_req.admin_decided_at = utc_now()
+        group_req.cancelled_at = utc_now()
         group_req.company_retained_cents = int(outcome["company_retained_cents"])
         group_req.nanny_retained_cents = int(outcome["nanny_retained_cents"])
         group_req.refund_cents = int(outcome["parent_refund_cents"])
         group_req.refund_status = "pending_review"
-        group_req.refund_requested_at = datetime.utcnow()
+        group_req.refund_requested_at = utc_now()
 
         parent_user = db.query(models.User).filter(models.User.id == group_req.parent_user_id).first()
         nanny_row = db.query(models.Nanny).filter(models.Nanny.id == group_req.nanny_id).first()
@@ -8792,7 +8793,7 @@ def admin_mark_nanny_no_show(
         raise HTTPException(status_code=400, detail="Booking cannot be marked as no-show in its current state")
 
     before_status = booking.status
-    now_utc = datetime.utcnow()
+    now_utc = utc_now()
     booking.status = "cancelled"
     booking.cancelled_at = now_utc
     booking.cancellation_reason = "nanny_no_show"
@@ -8929,7 +8930,7 @@ def admin_mark_parent_no_show(
         raise HTTPException(status_code=400, detail="Nanny must have checked in before parent no-show can be marked")
 
     before_status = booking.status
-    now_utc = datetime.utcnow()
+    now_utc = utc_now()
     settings = _get_pricing_settings(db)
     payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
 
@@ -9108,7 +9109,7 @@ def list_pending_booking_requests(
 
     results = []
     for req, parent, nanny in rows:
-        is_overdue = bool(getattr(req, "created_at", None) and (datetime.utcnow() - req.created_at) >= timedelta(hours=6))
+        is_overdue = bool(getattr(req, "created_at", None) and (utc_now() - req.created_at) >= timedelta(hours=6))
         results.append({
             "id": req.id,
             "parent_name": parent.name,
@@ -9123,7 +9124,7 @@ def list_pending_booking_requests(
 
 
 def _mark_overdue_booking_requests_notified(db: Session, request_rows: List[tuple]) -> None:
-    now = datetime.utcnow()
+    now = utc_now()
     changed = False
     for req, parent, nanny in request_rows:
         if req.status not in ("tbc", "pending_admin"):
@@ -9173,7 +9174,7 @@ def get_admin_booking_request_detail(
     questionnaire = _parse_booking_questionnaire_notes(getattr(req, "client_notes", None))
     created_at = getattr(req, "created_at", None)
     request_booking_state = booking_state_from_request(req)
-    is_overdue = bool(created_at and (datetime.utcnow() - created_at) >= timedelta(hours=6) and request_booking_state in ("awaiting_acceptance", "broadcast_sent"))
+    is_overdue = bool(created_at and (utc_now() - created_at) >= timedelta(hours=6) and request_booking_state in ("awaiting_acceptance", "broadcast_sent"))
 
     return {
         "request_id": req.id,
@@ -9371,7 +9372,7 @@ def list_admin_bookings_overview(
 ):
     require_admin(authorization, db)
 
-    now = datetime.utcnow()
+    now = utc_now()
     local_tz = ZoneInfo("Africa/Johannesburg")
     local_today = datetime.now(local_tz).date()
     tomorrow = local_today + timedelta(days=1)
@@ -9889,7 +9890,7 @@ def approve_nanny(
         )
 
     profile.is_approved = 1
-    profile.approved_at = datetime.utcnow().isoformat()
+    profile.approved_at = utc_now().isoformat()
     nanny.approved = True
 
     db.commit()
@@ -10099,10 +10100,10 @@ def admin_set_nanny_approval(
     if profile:
         profile.application_status = "approved" if nanny.approved else "pending"
         profile.admin_reason = None
-        profile.reviewed_at = datetime.utcnow().isoformat()
+        profile.reviewed_at = utc_now().isoformat()
         profile.reviewed_by_user_id = None
         profile.is_approved = 1 if nanny.approved else 0
-        profile.approved_at = datetime.utcnow().isoformat() if nanny.approved else None
+        profile.approved_at = utc_now().isoformat() if nanny.approved else None
     db.commit()
     db.refresh(nanny)
     return {"nanny_id": nanny.id, "approved": nanny.approved}
@@ -10137,7 +10138,7 @@ def admin_lift_nanny_suspension(
     }
 
     nanny.is_suspended = False
-    nanny.suspension_lifted_at = datetime.utcnow()
+    nanny.suspension_lifted_at = utc_now()
     nanny.suspension_lifted_by = admin.id
 
     db.commit()
@@ -10235,13 +10236,13 @@ def admin_set_nanny_application_status(
 
     profile.application_status = payload.status
     profile.admin_reason = (payload.reason or "").strip() or None
-    profile.reviewed_at = datetime.utcnow().isoformat()
+    profile.reviewed_at = utc_now().isoformat()
     profile.reviewed_by_user_id = admin.id
 
     if payload.status == "approved":
         nanny.approved = True
         profile.is_approved = 1
-        profile.approved_at = datetime.utcnow().isoformat()
+        profile.approved_at = utc_now().isoformat()
     else:
         nanny.approved = False
         profile.is_approved = 0
@@ -10346,7 +10347,7 @@ def admin_create_invite(
     if existing and bool(getattr(existing, "is_admin", False)):
         raise HTTPException(status_code=409, detail="User is already an admin")
 
-    now = datetime.utcnow()
+    now = utc_now()
     db.query(models.AdminInvite).filter(
         models.AdminInvite.email == email,
         models.AdminInvite.status == "pending",
@@ -10397,7 +10398,7 @@ def get_admin_invite(token: str, db: Session = Depends(get_db)):
     invite = db.query(models.AdminInvite).filter(models.AdminInvite.token == token).first()
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")
-    now = datetime.utcnow()
+    now = utc_now()
     if invite.status == "pending" and invite.expires_at < now:
         invite.status = "expired"
         db.commit()
@@ -10418,7 +10419,7 @@ def accept_admin_invite(
     invite = db.query(models.AdminInvite).filter(models.AdminInvite.token == payload.token).first()
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")
-    now = datetime.utcnow()
+    now = utc_now()
     if invite.status != "pending":
         raise HTTPException(status_code=400, detail="Invite is not pending")
     if invite.expires_at and invite.expires_at < now:
@@ -10555,7 +10556,7 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         if not req:
             return {"ok": True}
         req.payment_status = "paid"
-        req.paid_at = req.paid_at or datetime.utcnow()
+        req.paid_at = req.paid_at or utc_now()
         if tx_ref:
             req.paystack_reference = str(tx_ref)
         if tx_id is not None:
@@ -10593,10 +10594,10 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         req.paystack_refund_reference = str(refund_ref)
     if event == "refund.processed":
         req.refund_status = "processed"
-        req.refund_processed_at = datetime.utcnow()
+        req.refund_processed_at = utc_now()
     elif event == "refund.failed":
         req.refund_status = "failed"
-        req.refund_failed_at = datetime.utcnow()
+        req.refund_failed_at = utc_now()
         req.refund_failure_reason = data.get("message") or data.get("gateway_response")
         admins = admin_emails()
         if admins:

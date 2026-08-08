@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Index
 
 from app.db import Base
+from app.utils.time import utc_now
 
 
 class AdminInvite(Base):
@@ -12,7 +11,7 @@ class AdminInvite(Base):
     email = Column(String, nullable=False, index=True)
     token = Column(String, nullable=False, unique=True, index=True)
     status = Column(String, nullable=False, default="pending")  # pending, accepted, cancelled, expired
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
     expires_at = Column(DateTime, nullable=False)
     accepted_at = Column(DateTime, nullable=True)
 

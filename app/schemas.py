@@ -77,7 +77,7 @@ class BookingSlot(BaseModel):
 class BulkBookingRequest(BaseModel):
     parent_user_id: int
     nanny_id: int
-    slots: List[BookingSlot] = Field(min_items=1)
+    slots: List[BookingSlot] = Field(min_length=1)
     client_notes: Optional[str] = None
 
 class UpdateNannyProfileRequest(BaseModel):

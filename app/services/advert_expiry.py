@@ -18,6 +18,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app import models
+from app.utils.time import utc_now
 
 EXPIRED_ADMIN_REASON = "expired"
 
@@ -56,7 +57,7 @@ def is_request_expired(req: models.BookingRequest, now: Optional[datetime] = Non
     start = _request_start(req)
     if start is None:
         return False
-    return start <= (now or datetime.utcnow())
+    return start <= (now or utc_now())
 
 
 def _notification_already_sent(db: Session, user_id: int, event_type: str, reference_id: int) -> bool:
@@ -88,7 +89,7 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
 
     from app.services.notifications import send_notification
 
-    current = now or datetime.utcnow()
+    current = now or utc_now()
     candidates = (
         db.query(models.BookingRequest)
         .filter(models.BookingRequest.status.in_(["tbc", "pending_admin"]))

@@ -12,6 +12,7 @@ from app.routers.public import require_admin as require_admin_user, _require_use
 from app.services.audit import log_audit
 from app.services.paystack import create_refund
 from app.utils.email import EmailMessage, get_email_client
+from app.utils.time import utc_now
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -87,7 +88,7 @@ def _log_notification_best_effort(
             "status": status,
             "error_message": error_message,
             "reference_id": reference_id,
-            "created_at": datetime.utcnow(),
+            "created_at": utc_now(),
         },
     )
 
@@ -395,7 +396,7 @@ def report_jobs(
     end: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    now = datetime.utcnow()
+    now = utc_now()
     if start and end:
         try:
             start_dt = datetime.fromisoformat(start)
@@ -428,8 +429,8 @@ def report_jobs(
     total = len(rows)
     accepted = len([r for r in rows if r.status == "approved"])
     cancelled = len([r for r in rows if r.status == "cancelled"])
-    completed = len([r for r in rows if r.end_dt and _parse_iso_dt(r.end_dt) < now])
-    in_progress = len([r for r in rows if r.start_dt and r.end_dt and _parse_iso_dt(r.start_dt) <= now <= _parse_iso_dt(r.end_dt)])
+    completed = len([r for r in rows if r.end_dt and _normalize_reporting_dt(_parse_iso_dt(r.end_dt)) < now])
+    in_progress = len([r for r in rows if r.start_dt and r.end_dt and _normalize_reporting_dt(_parse_iso_dt(r.start_dt)) <= now <= _normalize_reporting_dt(_parse_iso_dt(r.end_dt))])
 
     company_income = 0
     nanny_income = 0
@@ -477,7 +478,7 @@ def _resolve_reporting_window(
     start: Optional[str],
     end: Optional[str],
 ) -> tuple[datetime, datetime]:
-    now = datetime.utcnow()
+    now = utc_now()
     if start and end:
         try:
             start_dt = _normalize_reporting_dt(_parse_iso_dt(start))
@@ -524,8 +525,8 @@ def accounting_summary(
     total_paid_jobs = len(paid_rows)
     accepted = len([r for r in paid_rows if r.status == "approved"])
     cancelled = len([r for r in paid_rows if r.status == "cancelled"])
-    completed = len([r for r in paid_rows if r.end_dt and _parse_iso_dt(r.end_dt) < datetime.utcnow()])
-    in_progress = len([r for r in paid_rows if r.start_dt and r.end_dt and _parse_iso_dt(r.start_dt) <= datetime.utcnow() <= _parse_iso_dt(r.end_dt)])
+    completed = len([r for r in paid_rows if r.end_dt and _normalize_reporting_dt(_parse_iso_dt(r.end_dt)) < utc_now()])
+    in_progress = len([r for r in paid_rows if r.start_dt and r.end_dt and _normalize_reporting_dt(_parse_iso_dt(r.start_dt)) <= utc_now() <= _normalize_reporting_dt(_parse_iso_dt(r.end_dt))])
 
     company_income_cents = 0
     nanny_income_cents = 0
@@ -687,7 +688,7 @@ def ops_health(db: Session = Depends(get_db)):
     Surfaces the failure queues that otherwise go unnoticed: undelivered
     notifications, rejected payment webhooks, stuck payouts, refunds
     awaiting review, stale adverts, and recent impersonation activity."""
-    now = datetime.utcnow()
+    now = utc_now()
     day_ago = now - timedelta(hours=24)
     week_ago = now - timedelta(days=7)
 
@@ -779,7 +780,7 @@ def ops_impersonations(
     db: Session = Depends(get_db),
 ):
     """Recent impersonation sessions: who impersonated whom, when, from where."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utc_now() - timedelta(days=days)
     rows = (
         db.query(models.AuditLog)
         .filter(
@@ -917,7 +918,7 @@ def accounting_payouts(
 ):
     start_dt, end_dt = _resolve_reporting_window(report_range=range, start=start, end=end)
     status_key = (status or "all").strip().lower()
-    now = datetime.utcnow()
+    now = utc_now()
 
     payout_rows = (
         db.query(models.Booking)
@@ -1109,12 +1110,12 @@ def refund_booking_request(
 
     req.refund_cents = refund_amount
     req.refund_status = "pending"
-    req.refund_requested_at = datetime.utcnow()
+    req.refund_requested_at = utc_now()
 
     ok, data = create_refund(str(transaction), int(refund_amount))
     if not ok:
         req.refund_status = "failed"
-        req.refund_failed_at = datetime.utcnow()
+        req.refund_failed_at = utc_now()
         req.refund_failure_reason = data.get("message") if isinstance(data, dict) else "Paystack error"
         db.commit()
         raise HTTPException(status_code=400, detail=req.refund_failure_reason or "Paystack refund failed")
@@ -1183,7 +1184,7 @@ def approve_refund(
     if req.refund_status not in ("pending_review", None):
         raise HTTPException(status_code=400, detail="Refund is not pending review")
 
-    req.refund_reviewed_at = datetime.utcnow()
+    req.refund_reviewed_at = utc_now()
     req.refund_reviewed_by = admin_user.id
     req.refund_review_reason = payload.reason if payload else None
     db.commit()
@@ -1242,7 +1243,7 @@ def deny_refund(
         raise HTTPException(status_code=400, detail="Refund is not pending review")
 
     req.refund_status = "denied"
-    req.refund_reviewed_at = datetime.utcnow()
+    req.refund_reviewed_at = utc_now()
     req.refund_reviewed_by = admin_user.id
     req.refund_review_reason = payload.reason if payload else None
     db.commit()
