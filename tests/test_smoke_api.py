@@ -9,7 +9,7 @@ client = TestClient(app)
 def test_root_redirects_to_login() -> None:
     response = client.get("/", follow_redirects=False)
     assert response.status_code == 307
-    assert response.headers.get("location") == "/static/login.html"
+    assert response.headers.get("location") == "/static/v2/login.html"
 
 
 def test_auth_me_requires_authentication() -> None:

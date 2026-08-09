@@ -13,6 +13,7 @@ class AdminProfile(Base):
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
 
     is_superadmin = Column(Boolean, default=False, nullable=False)
+    access_level = Column(String, default="operations", nullable=False)
 
     created_at = Column(DateTime, default=utc_now, nullable=False)
 

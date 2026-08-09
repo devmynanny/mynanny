@@ -9,12 +9,6 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
-    # Persistent disk kept ONLY for uploaded documents/photos.
-    # The database now lives in managed Postgres (below), not on this disk.
-    disk:
-      name: app-data
-      mountPath: /opt/render/project/src/app/static/uploads
-      sizeGB: 1
     envVars:
       - key: APP_ENV
         value: staging
@@ -30,6 +24,31 @@ services:
         sync: false
       - key: PAYSTACK_SECRET_KEY
         sync: false
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: S3_BUCKET
+        value: my-nanny-production-uploads-337903911181-af-south-1-an
+      - key: S3_REGION
+        value: af-south-1
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+
+  - type: web
+    name: mynanny-v2
+    runtime: node
+    plan: starter
+    rootDir: v2
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: BACKEND_URL
+        value: https://mynanny.onrender.com
 
 databases:
   - name: mynanny-db

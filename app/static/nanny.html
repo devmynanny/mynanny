@@ -170,6 +170,15 @@
           <input id="fullName" style="width:100%; padding:8px;" placeholder="Full name" />
           <input id="phone" style="width:100%; padding:8px;" placeholder="Phone number" />
           <input id="phoneAlt" style="width:100%; padding:8px;" placeholder="Alternative phone number" />
+          <label class="small" style="margin-top:8px;">Preferred contact method</label>
+          <select id="messagingChannel" style="width:100%; padding:8px;">
+            <option value="whatsapp">WhatsApp</option>
+            <option value="telegram" id="telegramOption" disabled>Telegram</option>
+          </select>
+          <div style="margin-top:6px; display:flex; align-items:center; gap:10px;">
+            <button class="btn" id="connectTelegramBtn" type="button">Connect Telegram</button>
+            <span id="telegramStatus" class="small"></span>
+          </div>
         </div>
         <div style="min-width:220px;">
           <label class="small">Gender</label>
@@ -1599,6 +1608,49 @@
         }
       });
 
+      async function loadMessagingPreferences() {
+        const me = await fetchJson("/auth/me");
+        const select = document.getElementById("messagingChannel");
+        const telegramOption = document.getElementById("telegramOption");
+        const telegramStatus = document.getElementById("telegramStatus");
+        const connectBtn = document.getElementById("connectTelegramBtn");
+
+        telegramOption.disabled = !me.telegram_linked;
+        select.value = me.preferred_messaging_channel || "whatsapp";
+        if (me.telegram_linked) {
+          telegramStatus.textContent = "Connected";
+          connectBtn.style.display = "none";
+        } else {
+          telegramStatus.textContent = "";
+          connectBtn.style.display = "inline-block";
+        }
+      }
+
+      document.getElementById("connectTelegramBtn").addEventListener("click", async () => {
+        const statusEl = document.getElementById("telegramStatus");
+        try {
+          const data = await fetchJson("/me/telegram/connect", { method: "POST" });
+          window.open(data.deep_link, "_blank");
+          statusEl.textContent = "Open Telegram, tap Start, then come back and refresh this page.";
+        } catch (e) {
+          statusEl.textContent = e?.message || "Failed to generate link";
+        }
+      });
+
+      document.getElementById("messagingChannel").addEventListener("change", async (e) => {
+        const channel = e.target.value;
+        try {
+          await fetchJson("/me/messaging-channel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channel }),
+          });
+        } catch (err) {
+          alert(err?.message || "Failed to update preference");
+          loadMessagingPreferences();
+        }
+      });
+
       guard().then(async () => {
         const params = new URLSearchParams(window.location.search);
         const fromOps = params.get("from") === "ops";
@@ -1713,6 +1765,7 @@
             document.getElementById("previousJobsList").appendChild(createPreviousJobCard({}));
           });
         }
+        await loadMessagingPreferences().catch(() => {});
       }).catch(() => {});
     </script>
     <script>

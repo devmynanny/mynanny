@@ -18,6 +18,7 @@ class AdminInvite(Base):
     invited_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     accepted_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     reason = Column(Text, nullable=True)
+    access_level = Column(String, nullable=False, default="operations")
 
     __table_args__ = (
         Index("ix_admin_invites_email_status", "email", "status"),

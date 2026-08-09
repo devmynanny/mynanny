@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import base64
 import json
-import os
 from datetime import datetime
 from typing import Optional
-from urllib import request as urllib_request
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -15,6 +10,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.utils.time import utc_now
 from app.utils.email import EmailMessage, get_email_client
+from app.services import messaging
 
 WHATSAPP_TEMPLATE_NAMES = {
     "nanny_accepted",
@@ -48,39 +44,42 @@ WHATSAPP_TEMPLATE_NAMES = {
 # channels are tried in order until one succeeds (fallback chain).
 # "in_app" entries are ALWAYS written in addition (they are pop-ups for
 # action-required confirmations, not a delivery fallback).
-# Default for unlisted event types: ("whatsapp", "email").
+# Default for unlisted event types: ("chat", "email").
 # ---------------------------------------------------------------------------
 NOTIFICATION_POLICY: dict[str, dict] = {
     # Payments - critical, user must know immediately.
-    "payment_success": {"channels": ("whatsapp", "email")},
-    "payment_failed": {"channels": ("whatsapp", "email"), "in_app": True},
-    "refund_processed": {"channels": ("whatsapp", "email")},
+    "payment_success": {"channels": ("chat", "email")},
+    "payment_failed": {"channels": ("chat", "email"), "in_app": True},
+    "refund_processed": {"channels": ("chat", "email")},
     # Booking lifecycle.
-    "booking_confirmed": {"channels": ("whatsapp", "email")},
-    "booking_cancelled": {"channels": ("whatsapp", "email"), "in_app": True},
-    "nanny_accepted": {"channels": ("whatsapp", "email")},
-    "nanny_checked_in": {"channels": ("whatsapp", "email")},
+    "booking_confirmed": {"channels": ("chat", "email")},
+    "booking_cancelled": {"channels": ("chat", "email"), "in_app": True},
+    "nanny_accepted": {"channels": ("chat", "email")},
+    "nanny_checked_in": {"channels": ("chat", "email")},
     # Action required - in-app pop-up mandatory.
-    "overtime_request": {"channels": ("whatsapp", "email"), "in_app": True},
-    "review_request": {"channels": ("whatsapp", "email"), "in_app": True},
+    "overtime_request": {"channels": ("chat", "email"), "in_app": True},
+    "review_request": {"channels": ("chat", "email"), "in_app": True},
     # Request lifecycle - parent must act or know quickly.
-    "new_booking_request": {"channels": ("whatsapp", "email")},
-    "nanny_declined": {"channels": ("whatsapp", "email")},
-    "no_nanny_yet": {"channels": ("whatsapp", "email"), "in_app": True},
-    "request_expired": {"channels": ("whatsapp", "email"), "in_app": True},
-    "deciding_reminder": {"channels": ("whatsapp", "email")},
+    "new_booking_request": {"channels": ("chat", "email")},
+    "nanny_declined": {"channels": ("chat", "email")},
+    "no_nanny_yet": {"channels": ("chat", "email"), "in_app": True},
+    "request_expired": {"channels": ("chat", "email"), "in_app": True},
+    "deciding_reminder": {"channels": ("chat", "email")},
     # Payment retry flow.
-    "payment_pending": {"channels": ("whatsapp", "email")},
-    "booking_cancelled_nanny": {"channels": ("whatsapp", "email"), "in_app": True},
+    "payment_pending": {"channels": ("chat", "email")},
+    "booking_cancelled_nanny": {"channels": ("chat", "email"), "in_app": True},
     # Payouts.
-    "payout_pending": {"channels": ("whatsapp", "email")},
-    "payout_sent": {"channels": ("whatsapp", "email")},
+    "payout_pending": {"channels": ("chat", "email")},
+    "payout_sent": {"channels": ("chat", "email")},
     # Account.
-    "nanny_approved": {"channels": ("whatsapp", "email")},
-    "nanny_reactivated": {"channels": ("whatsapp", "email")},
+    "nanny_approved": {"channels": ("chat", "email")},
+    "nanny_reactivated": {"channels": ("chat", "email")},
+    "passport_expiry_warning": {"channels": ("chat", "email"), "in_app": True},
+    "passport_expired_suspension": {"channels": ("chat", "email"), "in_app": True},
+    "passport_renewal_approved": {"channels": ("chat", "email"), "in_app": True},
 }
 
-DEFAULT_POLICY = {"channels": ("whatsapp", "email"), "in_app": False}
+DEFAULT_POLICY = {"channels": ("chat", "email"), "in_app": False}
 
 # Retry policy for the scheduled sweep.
 RETRY_MAX_ATTEMPTS = 3
@@ -130,47 +129,14 @@ def _log_notification(
     )
 
 
-def _twilio_whatsapp_send(to_number: str, body: str, template_name: Optional[str] = None) -> tuple[bool, str]:
-    sid = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
-    token = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
-    from_number = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
-    if not sid or not token or not from_number:
-        return False, "Twilio WhatsApp not configured"
-
-    # Twilio requires the whatsapp: prefix on both From and To.
-    if not from_number.startswith("whatsapp:"):
-        from_number = f"whatsapp:{from_number}"
-    to_number = str(to_number).strip()
-    if not to_number.startswith("whatsapp:"):
-        to_number = f"whatsapp:{to_number}"
-
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    payload = {
-        "From": from_number,
-        "To": to_number,
-        "Body": body,
-    }
-    if template_name:
-        payload["Body"] = body
-    data = "&".join(f"{k}={quote(str(v))}" for k, v in payload.items()).encode("utf-8")
-    auth = base64.b64encode(f"{sid}:{token}".encode("utf-8")).decode("ascii")
-    req = urllib_request.Request(
-        url,
-        data=data,
-        headers={
-            "Authorization": f"Basic {auth}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        method="POST",
-    )
-    try:
-        with urllib_request.urlopen(req, timeout=20) as res:
-            res.read()
-        return True, ""
-    except (HTTPError, URLError) as exc:
-        return False, str(exc)
-    except Exception as exc:
-        return False, str(exc)
+def _resolve_chat_channel(db: Session, user_id: Optional[int]) -> str:
+    """Resolve the abstract "chat" policy slot to the user's actual
+    preferred messaging channel (whatsapp default)."""
+    if not user_id:
+        return "whatsapp"
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    pref = getattr(user, "preferred_messaging_channel", None) if user else None
+    return pref or "whatsapp"
 
 
 def send_notification(
@@ -197,7 +163,35 @@ def send_notification(
                 message=message,
             )
             return False
-        ok, error = _twilio_whatsapp_send(phone, message, template_name=template_name)
+        ok, error = messaging.send_whatsapp_message(phone, message, template_name=template_name)
+        _log_notification(
+            db,
+            user_id=user_id,
+            event_type=event_type,
+            channel=channel,
+            status="sent" if ok else "failed",
+            error_message=None if ok else error[:500],
+            reference_id=reference_id,
+            message=message,
+        )
+        return ok
+
+    if channel == "telegram":
+        user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
+        chat_id = getattr(user, "telegram_chat_id", None) if user else None
+        if not chat_id:
+            _log_notification(
+                db,
+                user_id=user_id,
+                event_type=event_type,
+                channel=channel,
+                status="failed",
+                error_message="missing telegram chat id - not linked",
+                reference_id=reference_id,
+                message=message,
+            )
+            return False
+        ok, error = messaging.send_telegram_message(chat_id, message)
         _log_notification(
             db,
             user_id=user_id,
@@ -319,13 +313,14 @@ def notify(
 
     delivered = False
     for channel in policy.get("channels", DEFAULT_POLICY["channels"]):
+        resolved_channel = _resolve_chat_channel(db, user_id) if channel == "chat" else channel
         ok = send_notification(
             db,
             user_id,
             event_type,
-            channel,
+            resolved_channel,
             message,
-            template_name=event_type if (channel == "whatsapp" and event_type in WHATSAPP_TEMPLATE_NAMES) else None,
+            template_name=event_type if (resolved_channel == "whatsapp" and event_type in WHATSAPP_TEMPLATE_NAMES) else None,
             reference_id=reference_id,
         )
         if ok:
@@ -373,7 +368,7 @@ def retry_failed_notifications(
         db.query(models.NotificationLog)
         .filter(
             models.NotificationLog.created_at >= cutoff,
-            models.NotificationLog.channel.in_(["whatsapp", "email"]),
+            models.NotificationLog.channel.in_(["whatsapp", "telegram", "email"]),
         )
         .order_by(models.NotificationLog.created_at.asc())
         .all()

@@ -1,7 +1,7 @@
 """
 Tests for policy-driven notify(), message persistence, and the retry sweep.
 
-External channels are stubbed at the service level (_twilio_whatsapp_send,
+External channels are stubbed at the service level (messaging.send_whatsapp_message,
 email client) so no network calls happen.
 """
 
@@ -65,7 +65,7 @@ def _log_rows(db, user_id):
 def test_notify_falls_back_to_email_when_whatsapp_fails(db, monkeypatch):
     user = _seed_user(db)
     email_client = _FakeEmailClient()
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (False, "not configured"))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (False, "not configured"))
     monkeypatch.setattr(notif, "get_email_client", lambda: email_client)
 
     ok = notif.notify(db, user.id, "payment_success", "Payment received", reference_id=1)
@@ -84,7 +84,7 @@ def test_notify_falls_back_to_email_when_whatsapp_fails(db, monkeypatch):
 def test_notify_stops_at_first_successful_channel(db, monkeypatch):
     user = _seed_user(db)
     email_client = _FakeEmailClient()
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (True, ""))
     monkeypatch.setattr(notif, "get_email_client", lambda: email_client)
 
     ok = notif.notify(db, user.id, "payment_success", "Paid", reference_id=2)
@@ -98,7 +98,7 @@ def test_notify_stops_at_first_successful_channel(db, monkeypatch):
 
 def test_notify_writes_in_app_for_action_required_events(db, monkeypatch):
     user = _seed_user(db)
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (True, ""))
 
     notif.notify(db, user.id, "overtime_request", "Please confirm overtime", reference_id=3)
     db.commit()
@@ -115,7 +115,7 @@ def test_notify_writes_in_app_for_action_required_events(db, monkeypatch):
 def test_retry_sweep_resends_failed_and_respects_success(db, monkeypatch):
     user = _seed_user(db)
     email_client = _FakeEmailClient(fail=True)
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (False, "down"))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (False, "down"))
     monkeypatch.setattr(notif, "get_email_client", lambda: email_client)
 
     # First attempt: both channels fail.
@@ -124,7 +124,7 @@ def test_retry_sweep_resends_failed_and_respects_success(db, monkeypatch):
     assert ok is False
 
     # Channels recover; sweep should re-deliver.
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (True, ""))
     retried = notif.retry_failed_notifications(db)
     assert retried == 1
 
@@ -138,7 +138,7 @@ def test_retry_sweep_resends_failed_and_respects_success(db, monkeypatch):
 def test_retry_sweep_caps_attempts(db, monkeypatch):
     user = _seed_user(db)
     email_client = _FakeEmailClient(fail=True)
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (False, "down"))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (False, "down"))
     monkeypatch.setattr(notif, "get_email_client", lambda: email_client)
 
     notif.notify(db, user.id, "booking_confirmed", "Confirmed!", reference_id=88)
@@ -160,7 +160,7 @@ def test_retry_sweep_caps_attempts(db, monkeypatch):
 
 def test_send_critical_is_policy_driven_alias(db, monkeypatch):
     user = _seed_user(db)
-    monkeypatch.setattr(notif, "_twilio_whatsapp_send", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (True, ""))
     ok = notif.send_critical(db, user.id, "payout_sent", "Money on the way", reference_id=9)
     db.commit()
     assert ok is True

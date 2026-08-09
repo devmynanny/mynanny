@@ -64,6 +64,7 @@ Admins can:
 - Approve, reject, cancel, or manually assign booking requests.
 - See available nannies for manual assignment sorted by distance and rating.
 - Open nanny profiles and contact nannies by WhatsApp/phone where phone numbers exist.
+- View and reply to WhatsApp/Telegram message history with parents and nannies from a dedicated conversations inbox (`admin_conversations.html`).
 - Manage pricing settings and nanny tags.
 - Review refunds and reports.
 - View audit logs and operational history.
@@ -289,12 +290,13 @@ Admin-completed or admin-locked nanny onboarding fields:
 - [admin_tickets.html](/Users/daviddiener/Desktop/nanny_app/app/static/admin_tickets.html): complaints/tickets.
 - [admin_integrations.html](/Users/daviddiener/Desktop/nanny_app/app/static/admin_integrations.html): external integrations.
 - [admin_invite.html](/Users/daviddiener/Desktop/nanny_app/app/static/admin_invite.html): admin invite acceptance.
+- [admin_conversations.html](/Users/daviddiener/Desktop/nanny_app/app/static/admin_conversations.html): WhatsApp/Telegram conversation inbox - list, thread view, and reply.
 
 ## 5. Core Data Model
 
 Important tables/models:
 
-- `users`: account, role, auth, phone, active/admin flags.
+- `users`: account, role, auth, phone, active/admin flags, `preferred_messaging_channel` (whatsapp/telegram), `telegram_chat_id`.
 - `nannies`: nanny entity linked to user and approval flag.
 - `nanny_profiles`: profile details, documents, location, availability context, qualifications/tags/languages.
 - `parent_profiles`: parent/family profile and booking form defaults.
@@ -308,6 +310,9 @@ Important tables/models:
 - `pricing_settings`: booking rates, fee percentages, cancellation settings.
 - `audit_logs`: operational change history.
 - `admin_invites`, `admin_profiles`, `app_settings`.
+- `conversations`: one row per (channel, external_id) - a WhatsApp phone number or Telegram chat ID, optionally matched to a `user_id`. Survives a user switching their preferred channel (old channel's conversation just stops receiving new outbound traffic).
+- `messages`: individual inbound/outbound messages within a conversation, with delivery status and the provider's message ID (dedupe key for webhook retries).
+- `telegram_link_tokens`: single-use, 15-minute-lived tokens for the Telegram account-linking deep-link flow.
 
 ## 6. Booking Concepts
 
@@ -472,9 +477,19 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 
 ### Email/Notifications
 
-- Utility email functions exist in the backend.
-- Current notification delivery is mostly email-based, with some WhatsApp support for check-in notifications.
-- Notification sending is trigger-driven inside route handlers rather than managed through a central notification table, queue, or scheduler.
+- `NOTIFICATION_POLICY` (`app/services/notifications.py`) is the single source of truth for which channels fire per event type (~20 event types covering payments, booking lifecycle, payouts, and account status), tried in order until one succeeds, with in-app notifications written in addition for action-required events.
+- Every send attempt is logged to `notification_log` (with the message body, enabling retries) and every event's channel slot resolves to the user's `preferred_messaging_channel` (WhatsApp or Telegram) before falling back to email.
+- A scheduled sweep (every 15 minutes) retries failed sends, capped at 3 attempts per user/event/reference within a 48-hour window.
+- A separate, older WhatsApp send path (`_send_whatsapp_message` in `app/routers/public.py`, driven by a generic configurable webhook rather than Twilio) still exists for nanny-checked-in notifications only - it predates and does not go through `NOTIFICATION_POLICY` or the channel preference. Worth consolidating eventually, not yet done.
+
+### WhatsApp / Telegram Messaging
+
+- Two-way conversation history with parents and nannies, visible to admins in a dedicated inbox (`admin_conversations.html`), with reply capability from the app.
+- WhatsApp: Twilio Business API. Outbound sends via Twilio's REST API directly (no SDK dependency); inbound messages arrive via a signature-verified webhook (`POST /whatsapp/webhook`) and are matched to a platform user by phone number.
+- Telegram: a bot (token from @BotFather, no Meta-style approval process required) receives inbound messages via a secret-token-verified webhook (`POST /telegram/webhook/{secret}`). Users link their Telegram account through a one-time deep link (`t.me/<bot>?start=<token>`) generated from their profile page - Telegram bots cannot message a user who hasn't first messaged the bot, unlike WhatsApp where a captured phone number is enough.
+- Each parent/nanny picks one preferred channel (WhatsApp or Telegram, mutually exclusive) from their profile page; this governs both the admin inbox's default send channel and all automated system notifications for that user.
+- WhatsApp Business's 24-hour customer-service window applies to admin replies (and, once live, to system notifications too - see gap below): free-form messages can only be sent within 24 hours of the customer's last inbound message, otherwise a pre-approved template is required. The admin reply endpoint checks this proactively and fails clearly rather than silently.
+- As of this writing, WhatsApp Business/Meta approval for the sending number was still pending, so the WhatsApp half is code-complete but not yet carrying real traffic. Telegram has no equivalent external approval blocker.
 
 ### Current Notification Trigger Matrix
 
@@ -492,12 +507,15 @@ Current implementation uses `wage_cents`/`daily_wage_cents` from booking request
 
 ### Notification Gaps
 
-- There is no single notification policy table that defines every trigger, recipient, channel, template, fallback, and retry rule.
-- There is no in-app notification center yet.
-- There is no durable notification log for delivery status, retries, or failed messages.
 - Overdue unaccepted booking alerts are triggered when admin routes are viewed, not by a scheduled worker.
 - Parent/admin cancellation, refund approval/denial, payment success/failure, profile approval, document rejection, and booking completion notifications need a formal trigger decision.
-- WhatsApp is not yet a fully generalized notification channel across all critical events.
+- The in-app notification table (`in_app_notifications`) is written to for action-required events, but there is still no frontend surfacing it to users (no bell icon, no notification list) - it's a write-only backend feature today.
+- The legacy non-Twilio WhatsApp path for nanny-checked-in notifications does not respect `preferred_messaging_channel` - it always sends WhatsApp regardless of what the nanny chose.
+- WhatsApp Business's `template_name` support is currently a no-op in the send path (every WhatsApp send, notifications and admin replies alike, is free-form) - harmless before Meta approval lands, but once WhatsApp is live, sends outside the 24-hour customer-service window will start failing until real template support is built.
+- No conversation assignment/ownership model - any admin can reply to any WhatsApp/Telegram conversation, with no "being handled by admin X" indicator.
+- No explicit resolved/closed status for conversations - just unread-count-driven triage.
+- Unmatched inbound senders (phone numbers/Telegram accounts that don't match a platform user) appear in the admin inbox unfiltered - no spam/wrong-number suppression.
+- Message retention for `messages`/`conversations` has no defined policy (kept indefinitely, same as `notification_log`) - worth a POPIA look given this is consumer messaging content, not just system logs.
 
 ## 15A. Cancellation and Refund Policy in Code
 
@@ -701,6 +719,10 @@ The app collects high-sensitivity personal information, including SA ID numbers,
 - What is the official policy for late check-out, extra hours, and parent confirmation disputes?
 - What is the official cancellation/refund policy by time window?
 - Should manual admin reassignment notify all previously broadcasted nannies?
+- Should admin WhatsApp/Telegram conversations be assignable to a specific admin, or is any-admin-can-reply acceptable long term?
+- Should conversations support an explicit resolved/closed state, or is unread-count triage sufficient?
+- Should unmatched inbound senders (unrecognized phone numbers/Telegram accounts) be hidden from the admin inbox by default, or is surfacing them (current behavior) preferred for catching wrong numbers/prospective users?
+- What retention period applies to WhatsApp/Telegram message content, given it's consumer messaging data under POPIA rather than system logs?
 
 ## 21. Immediate Loose Ends From Recent Work
 

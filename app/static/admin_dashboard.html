@@ -80,6 +80,7 @@
       <button class="btn" id="reportsBtn" type="button">Reports</button>
       <button class="btn" id="pricingBtn" type="button">Pricing</button>
       <button class="btn" id="integrationsBtn" type="button">Integrations</button>
+      <button class="btn" id="conversationsBtn" type="button">Conversations</button>
       <button class="btn" id="createAdminBtn" type="button">Create admin</button>
       <button class="btn" id="btnChangeLogs" type="button" onclick="window.location.href='/static/admin_audit.html'">Change logs</button>
     </div>
@@ -306,6 +307,13 @@
     if (integrationsBtn) {
       integrationsBtn.addEventListener("click", () => {
         window.location.href = "/static/admin_integrations.html";
+      });
+    }
+
+    const conversationsBtn = document.getElementById("conversationsBtn");
+    if (conversationsBtn) {
+      conversationsBtn.addEventListener("click", () => {
+        window.location.href = "/static/admin_conversations.html";
       });
     }
 

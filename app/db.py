@@ -108,6 +108,10 @@ def _table_exists(conn, name: str) -> bool:
     return sa_inspect(conn).has_table(name)
 
 
+def _column_names(conn, table_name: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()}
+
+
 def session_table_exists(db, name: str) -> bool:
     """Dialect-agnostic table-existence check for an ORM Session.
 
@@ -465,6 +469,9 @@ def ensure_nannies_schema() -> None:
         add_col("profile_complete", "BOOLEAN NOT NULL DEFAULT 0")
         add_col("availability_complete", "BOOLEAN NOT NULL DEFAULT 0")
         add_col("banking_complete", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("video_screening_complete", "BOOLEAN NOT NULL DEFAULT 0")
+        add_col("video_screening_json", "TEXT")
+        add_col("video_screening_submitted_at", "DATETIME")
 
 
 def ensure_nanny_profiles_schema() -> None:
@@ -512,6 +519,7 @@ def ensure_nanny_profiles_schema() -> None:
         add_col("police_clearance_document_url", "TEXT")
         add_col("drivers_license_document_url", "TEXT")
         add_col("certificates_json", "TEXT")
+        add_col("document_approvals_json", "TEXT")
         add_col("previous_jobs_json", "TEXT")
 
 
@@ -648,6 +656,29 @@ def ensure_admin_invites_schema() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_admin_invites_email_status ON admin_invites(email, status)"))
 
 
+def ensure_admin_access_schema() -> None:
+    if not _is_sqlite():
+        return
+    with engine.begin() as conn:
+        if _table_exists(conn, "admin_invites"):
+            cols = _column_names(conn, "admin_invites")
+            if "access_level" not in cols:
+                conn.execute(text("ALTER TABLE admin_invites ADD COLUMN access_level TEXT NOT NULL DEFAULT 'operations'"))
+        if _table_exists(conn, "admin_profiles"):
+            cols = _column_names(conn, "admin_profiles")
+            if "access_level" not in cols:
+                conn.execute(text("ALTER TABLE admin_profiles ADD COLUMN access_level TEXT NOT NULL DEFAULT 'operations'"))
+        if _table_exists(conn, "app_settings"):
+            cols = _column_names(conn, "app_settings")
+            if "trust_config_json" not in cols:
+                conn.execute(text("ALTER TABLE app_settings ADD COLUMN trust_config_json TEXT"))
+        for table_name in ("nanny_tags", "qualifications"):
+            if _table_exists(conn, table_name):
+                cols = _column_names(conn, table_name)
+                if "is_active" not in cols:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1"))
+
+
 def ensure_users_schema() -> None:
     if not _is_sqlite():
         # Postgres schema is managed by Alembic (alembic upgrade head);
@@ -674,6 +705,91 @@ def ensure_users_schema() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN card_brand TEXT"))
         if "card_saved_at" not in existing:
             conn.execute(text("ALTER TABLE users ADD COLUMN card_saved_at DATETIME"))
+        if "preferred_messaging_channel" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN preferred_messaging_channel TEXT DEFAULT 'whatsapp'"))
+        if "telegram_chat_id" not in existing:
+            conn.execute(text("ALTER TABLE users ADD COLUMN telegram_chat_id TEXT"))
+        # SQLite can't add a UNIQUE constraint via ALTER TABLE ADD COLUMN.
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_telegram_chat_id ON users(telegram_chat_id)"))
+
+
+def ensure_conversations_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
+    with engine.begin() as conn:
+        if _table_exists(conn, "conversations"):
+            return
+        conn.execute(text("""
+            CREATE TABLE conversations (
+              id INTEGER NOT NULL PRIMARY KEY,
+              channel TEXT NOT NULL,
+              external_id TEXT NOT NULL,
+              user_id INTEGER,
+              last_message_at DATETIME,
+              last_inbound_at DATETIME,
+              last_outbound_at DATETIME,
+              unread_count INTEGER NOT NULL DEFAULT 0,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(user_id) REFERENCES users (id),
+              UNIQUE(channel, external_id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_user_id ON conversations(user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_last_message_at ON conversations(last_message_at)"))
+
+
+def ensure_messages_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
+    with engine.begin() as conn:
+        if _table_exists(conn, "messages"):
+            return
+        conn.execute(text("""
+            CREATE TABLE messages (
+              id INTEGER NOT NULL PRIMARY KEY,
+              conversation_id INTEGER NOT NULL,
+              direction TEXT NOT NULL,
+              channel TEXT NOT NULL,
+              body TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'received',
+              external_message_id TEXT,
+              sender_user_id INTEGER,
+              error_message TEXT,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(conversation_id) REFERENCES conversations (id),
+              FOREIGN KEY(sender_user_id) REFERENCES users (id),
+              UNIQUE(channel, external_message_id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_messages_conversation_id_created_at ON messages(conversation_id, created_at)"))
+
+
+def ensure_telegram_link_tokens_schema() -> None:
+    if not _is_sqlite():
+        # Postgres schema is managed by Alembic (alembic upgrade head);
+        # these legacy in-place migrations are SQLite-only.
+        return
+    with engine.begin() as conn:
+        if _table_exists(conn, "telegram_link_tokens"):
+            return
+        conn.execute(text("""
+            CREATE TABLE telegram_link_tokens (
+              id INTEGER NOT NULL PRIMARY KEY,
+              user_id INTEGER NOT NULL,
+              token TEXT NOT NULL UNIQUE,
+              created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              expires_at DATETIME NOT NULL,
+              consumed_at DATETIME,
+              consumed_chat_id TEXT,
+              FOREIGN KEY(user_id) REFERENCES users (id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_link_tokens_user_id ON telegram_link_tokens(user_id)"))
 
 
 def ensure_languages_seed() -> None:
@@ -744,8 +860,6 @@ def ensure_qualifications_seed() -> None:
             "Pediatric CPR/First aid",
             "Studying",
         ]
-        desired_lowers = {name.lower() for name in qualifications}
-
         for name in qualifications:
             existing = existing_by_lower.get(name.lower())
             if existing:
@@ -755,14 +869,7 @@ def ensure_qualifications_seed() -> None:
                         {"name": name, "id": existing["id"]},
                     )
             else:
-                conn.execute(text("INSERT INTO qualifications (name) VALUES (:name)"), {"name": name})
-
-        extra_ids = [row["id"] for key, row in existing_by_lower.items() if key not in desired_lowers]
-        if extra_ids:
-            placeholders = ", ".join([f":id_{i}" for i in range(len(extra_ids))])
-            params = {f"id_{i}": value for i, value in enumerate(extra_ids)}
-            conn.execute(text(f"DELETE FROM nanny_profile_qualifications WHERE qualification_id IN ({placeholders})"), params)
-            conn.execute(text(f"DELETE FROM qualifications WHERE id IN ({placeholders})"), params)
+                conn.execute(text("INSERT INTO qualifications (name, is_active) VALUES (:name, 1)"), {"name": name})
 
 
 def ensure_parent_favorites_schema() -> None:

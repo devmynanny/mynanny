@@ -4,3 +4,7 @@ __pycache__/
 .env
 .env.*
 .DS_Store
+.Rhistory
+.aws-backups/
+app/static/uploads/**
+app/static/v2/

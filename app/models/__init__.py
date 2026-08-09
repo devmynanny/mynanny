@@ -25,6 +25,7 @@ from app.db import Base
 from sqlalchemy import UniqueConstraint
 from sqlalchemy.sql import func
 from app.services.booking_status import BOOKING_WRITE_STATUSES
+from app.services.messaging_status import PREFERRED_MESSAGING_CHANNELS
 
 # ---------------- USERS ----------------
 
@@ -38,7 +39,7 @@ class User(Base):
     password_hash = Column(String, nullable=False)
 
     is_admin = Column(Boolean, nullable=False, default=False)
-    is_active = Column(Boolean, nullable=False, default=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
 
     phone = Column(String, nullable=True)
     phone_alt = Column(String, nullable=True)
@@ -54,7 +55,18 @@ class User(Base):
     last_initial = Column(String, nullable=True)
     profile_photo_url = Column(String, nullable=True)
 
+    preferred_messaging_channel = Column(String, nullable=False, default="whatsapp")
+    telegram_chat_id = Column(String, nullable=True, unique=True)
+
     admin_profile = relationship("AdminProfile", back_populates="user", uselist=False)
+
+    @validates("preferred_messaging_channel")
+    def _validate_preferred_messaging_channel(self, key, value):
+        if value is not None and value not in PREFERRED_MESSAGING_CHANNELS:
+            raise ValueError(
+                f"Invalid preferred_messaging_channel {value!r}; allowed: {sorted(PREFERRED_MESSAGING_CHANNELS)}"
+            )
+        return value
 
 
 # ---------------- CORE ENTITIES ----------------
@@ -78,6 +90,9 @@ class Nanny(Base):
     profile_complete = Column(Boolean, nullable=False, default=False)
     availability_complete = Column(Boolean, nullable=False, default=False)
     banking_complete = Column(Boolean, nullable=False, default=False)
+    video_screening_complete = Column(Boolean, nullable=False, default=False)
+    video_screening_json = Column(Text, nullable=True)
+    video_screening_submitted_at = Column(DateTime, nullable=True)
 
     profile = relationship("NannyProfile", back_populates="nanny", uselist=False)
 
@@ -205,6 +220,7 @@ class Qualification(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
 
 
 class NannyTag(Base):
@@ -212,6 +228,7 @@ class NannyTag(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True)
 
 
 class Language(Base):
@@ -422,6 +439,7 @@ class AppSettings(Base):
     id = Column(Integer, primary_key=True)
     google_maps_api_key = Column(Text, nullable=True)
     google_calendar_id = Column(Text, nullable=True)
+    trust_config_json = Column(Text, nullable=True)
 
 
 class ParentLocation(Base):
@@ -508,6 +526,7 @@ class NannyProfile(Base):
     police_clearance_document_url = Column(String, nullable=True)
     drivers_license_document_url = Column(String, nullable=True)
     certificates_json = Column(Text, nullable=True)
+    document_approvals_json = Column(Text, nullable=True)
     previous_jobs_json = Column(Text, nullable=True)
 
     lat = Column(Float, nullable=True)
@@ -538,4 +557,5 @@ class NannyProfile(Base):
 from app.models.admin_profile import AdminProfile
 from app.models.admin_invite import AdminInvite
 from app.models.audit_log import AuditLog
+from app.models.messaging import Conversation, Message, TelegramLinkToken
 from . import availability

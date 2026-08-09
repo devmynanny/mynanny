@@ -1,8 +1,8 @@
 import os
 from datetime import date, time, datetime, timedelta, timezone
 import json
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Header
+from typing import Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import and_, func, or_, Numeric, text
@@ -11,6 +11,9 @@ from app import models
 from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny, _ensure_default_nanny_tags
 from app.services.audit import log_audit
 from app.services.paystack import create_refund
+from app.services import conversations, messaging
+from app.services.passport_compliance import run_passport_compliance
+from app.services.trust import DEFAULT_TRUST_BADGES, get_trust_config as load_trust_config
 from app.utils.email import EmailMessage, get_email_client
 from app.utils.time import utc_now
 
@@ -31,8 +34,24 @@ class GoogleMapsSettingsPayload(BaseModel):
     google_calendar_id: Optional[str] = None
 
 
-class NannyTagPayload(BaseModel):
-    name: str
+class LookupPayload(BaseModel):
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class TrustBadgePayload(BaseModel):
+    key: str
+    label: str
+    required: bool = False
+    parent_visible: bool = True
+
+
+class TrustConfigPayload(BaseModel):
+    badges: list[TrustBadgePayload]
+
+
+class AdminAccessPayload(BaseModel):
+    access_level: Literal["operations", "finance", "superadmin"]
 
 
 class NannyDebtCreatePayload(BaseModel):
@@ -54,7 +73,33 @@ def get_db():
 		db.close()
 
 def require_admin(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
-	require_admin_user(authorization, db)
+    return require_admin_user(authorization, db)
+
+
+def _admin_access_level(user: models.User, db: Session) -> str:
+    profile = db.query(models.AdminProfile).filter(models.AdminProfile.user_id == user.id).first()
+    if not profile:
+        # Administrators created before scoped access existed retain full access.
+        return "superadmin"
+    if bool(getattr(profile, "is_superadmin", False)):
+        return "superadmin"
+    return (getattr(profile, "access_level", None) or "operations").strip().lower()
+
+
+def _require_admin_access(authorization: Optional[str], db: Session, allowed: set[str]) -> models.User:
+    user = require_admin_user(authorization, db)
+    level = _admin_access_level(user, db)
+    if level != "superadmin" and level not in allowed:
+        raise HTTPException(status_code=403, detail="Your admin access level does not permit this action")
+    return user
+
+
+def require_finance(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    return _require_admin_access(authorization, db, {"finance"})
+
+
+def require_superadmin(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    return _require_admin_access(authorization, db, set())
 
 
 def _notification_log_exists(db: Session) -> bool:
@@ -93,7 +138,7 @@ def _log_notification_best_effort(
     )
 
 
-@router.get("/integrations/google-maps", dependencies=[Depends(require_admin)])
+@router.get("/integrations/google-maps", dependencies=[Depends(require_superadmin)])
 def get_google_maps_settings(db: Session = Depends(get_db)):
     row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
     db_key = (getattr(row, "google_maps_api_key", None) or "").strip() if row else ""
@@ -111,7 +156,7 @@ def get_google_maps_settings(db: Session = Depends(get_db)):
     }
 
 
-@router.put("/integrations/google-maps", dependencies=[Depends(require_admin)])
+@router.put("/integrations/google-maps", dependencies=[Depends(require_superadmin)])
 def update_google_maps_settings(payload: GoogleMapsSettingsPayload, db: Session = Depends(get_db)):
     row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
     if not row:
@@ -120,8 +165,9 @@ def update_google_maps_settings(payload: GoogleMapsSettingsPayload, db: Session 
         db.commit()
         db.refresh(row)
 
-    key = (payload.google_maps_api_key or "").strip()
-    row.google_maps_api_key = key or None
+    if "google_maps_api_key" in payload.model_fields_set:
+        key = (payload.google_maps_api_key or "").strip()
+        row.google_maps_api_key = key or None
     if "google_calendar_id" in payload.model_fields_set:
         calendar_id = (payload.google_calendar_id or "").strip()
         row.google_calendar_id = calendar_id or None
@@ -134,7 +180,7 @@ def update_google_maps_settings(payload: GoogleMapsSettingsPayload, db: Session 
     }
 
 
-@router.get("/pricing", dependencies=[Depends(require_admin)])
+@router.get("/pricing", dependencies=[Depends(require_superadmin)])
 def get_pricing_settings(db: Session = Depends(get_db)):
     row = db.query(models.PricingSettings).first()
     if not row:
@@ -183,10 +229,18 @@ def get_pricing_settings(db: Session = Depends(get_db)):
         "booking_fee_pct_6_10": float(row.booking_fee_pct_6_10),
         "booking_fee_pct_10_plus": float(row.booking_fee_pct_10_plus),
         "cancellation_fee_window_hours": int(getattr(row, "cancellation_fee_window_hours", 15) or 15),
+        "overrun_hourly_weekday": int(getattr(row, "overrun_hourly_weekday", 4500) or 4500),
+        "overrun_hourly_weekend": int(getattr(row, "overrun_hourly_weekend", 5000) or 5000),
+        "overrun_hold_hours": int(getattr(row, "overrun_hold_hours", 24) or 24),
+        "payout_hold_hours": int(getattr(row, "payout_hold_hours", 24) or 24),
+        "transport_fee_17_20": int(getattr(row, "transport_fee_17_20", 5000) or 5000),
+        "transport_fee_after_20": int(getattr(row, "transport_fee_after_20", 8000) or 8000),
+        "transport_threshold_1": int(getattr(row, "transport_threshold_1", 17) or 17),
+        "transport_threshold_2": int(getattr(row, "transport_threshold_2", 20) or 20),
     }
 
 
-@router.put("/pricing", dependencies=[Depends(require_admin)])
+@router.put("/pricing", dependencies=[Depends(require_superadmin)])
 def update_pricing_settings(payload: dict, db: Session = Depends(get_db)):
     row = db.query(models.PricingSettings).first()
     if not row:
@@ -195,22 +249,50 @@ def update_pricing_settings(payload: dict, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(row)
 
-    for key in [
+    allowed_keys = [
         "weekday_half_day","weekday_full_day","weekend_half_day","weekend_full_day",
         "sleepover_add","sleepover_only_weekday","sleepover_only_weekend","sleepover_extra_hour_over14",
         "after17_weekday","after17_weekend","over9_weekday","over9_weekend",
         "sleepover_start_hour","sleepover_end_hour","sleepover_after7_hourly",
         "booking_fee_pct_1_5","booking_fee_pct_6_10","booking_fee_pct_10_plus",
-        "cancellation_fee_window_hours",
-    ]:
+        "cancellation_fee_window_hours","overrun_hourly_weekday","overrun_hourly_weekend",
+        "overrun_hold_hours","payout_hold_hours","transport_fee_17_20",
+        "transport_fee_after_20","transport_threshold_1","transport_threshold_2",
+    ]
+    percentage_keys = {
+        "booking_fee_pct_1_5", "booking_fee_pct_6_10", "booking_fee_pct_10_plus",
+    }
+    hour_keys = {
+        "sleepover_start_hour", "sleepover_end_hour",
+        "transport_threshold_1", "transport_threshold_2",
+    }
+
+    validated = {}
+    for key in allowed_keys:
         if key in payload:
             value = payload[key]
-            if key == "cancellation_fee_window_hours":
-                try:
-                    value = max(0, int(value))
-                except Exception:
-                    raise HTTPException(status_code=400, detail="cancellation_fee_window_hours must be a valid number")
-            setattr(row, key, value)
+            try:
+                value = float(value) if key in percentage_keys else int(value)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key} must be a valid number")
+            if value < 0:
+                raise HTTPException(status_code=400, detail=f"{key} cannot be negative")
+            if key in percentage_keys and value > 1:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 1")
+            if key in hour_keys and value > 23:
+                raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 23")
+            validated[key] = value
+
+    first_threshold = validated.get("transport_threshold_1", row.transport_threshold_1)
+    second_threshold = validated.get("transport_threshold_2", row.transport_threshold_2)
+    if first_threshold >= second_threshold:
+        raise HTTPException(
+            status_code=400,
+            detail="The first safe-transport threshold must be earlier than the second threshold",
+        )
+
+    for key, value in validated.items():
+        setattr(row, key, value)
     db.commit()
     return {"ok": True}
 
@@ -319,46 +401,51 @@ def admin_update_nanny_debt(
     }
 
 
-@router.get("/nanny-tags", dependencies=[Depends(require_admin)])
+@router.get("/nanny-tags", dependencies=[Depends(require_superadmin)])
 def admin_list_nanny_tags(db: Session = Depends(get_db)):
     rows = _ensure_default_nanny_tags(db)
-    return [{"id": row.id, "name": row.name} for row in rows]
+    return [{"id": row.id, "name": row.name, "is_active": bool(row.is_active)} for row in rows]
 
 
-@router.post("/nanny-tags", dependencies=[Depends(require_admin)])
-def admin_create_nanny_tag(payload: NannyTagPayload, db: Session = Depends(get_db)):
+@router.post("/nanny-tags", dependencies=[Depends(require_superadmin)])
+def admin_create_nanny_tag(payload: LookupPayload, request: Request, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    admin = require_admin_user(authorization, db)
     name = (payload.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Tag name is required")
     existing = db.query(models.NannyTag).filter(func.lower(models.NannyTag.name) == name.lower()).first()
     if existing:
         raise HTTPException(status_code=400, detail="Tag already exists")
-    row = models.NannyTag(name=name)
+    row = models.NannyTag(name=name, is_active=True)
     db.add(row)
     db.commit()
     db.refresh(row)
-    return {"id": row.id, "name": row.name}
+    log_audit(db, actor_user=admin, target_user_id=None, entity="nanny_tags", entity_id=row.id, action="create", before_obj={}, after_obj={"name": row.name, "is_active": True}, changed_fields=["name", "is_active"], request=request)
+    return {"id": row.id, "name": row.name, "is_active": True}
 
 
-@router.patch("/nanny-tags/{tag_id}", dependencies=[Depends(require_admin)])
-def admin_update_nanny_tag(tag_id: int, payload: NannyTagPayload, db: Session = Depends(get_db)):
+@router.patch("/nanny-tags/{tag_id}", dependencies=[Depends(require_superadmin)])
+def admin_update_nanny_tag(tag_id: int, payload: LookupPayload, request: Request, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    admin = require_admin_user(authorization, db)
     row = db.query(models.NannyTag).filter(models.NannyTag.id == tag_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Tag not found")
-    name = (payload.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Tag name is required")
-    existing = (
-        db.query(models.NannyTag)
-        .filter(func.lower(models.NannyTag.name) == name.lower(), models.NannyTag.id != tag_id)
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=400, detail="Tag already exists")
-    row.name = name
+    before = {"name": row.name, "is_active": bool(row.is_active)}
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Tag name is required")
+        existing = db.query(models.NannyTag).filter(func.lower(models.NannyTag.name) == name.lower(), models.NannyTag.id != tag_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Tag already exists")
+        row.name = name
+    if payload.is_active is not None:
+        row.is_active = payload.is_active
     db.commit()
     db.refresh(row)
-    return {"id": row.id, "name": row.name}
+    after = {"name": row.name, "is_active": bool(row.is_active)}
+    log_audit(db, actor_user=admin, target_user_id=None, entity="nanny_tags", entity_id=row.id, action="update", before_obj=before, after_obj=after, changed_fields=[key for key in after if before.get(key) != after.get(key)], request=request)
+    return {"id": row.id, "name": row.name, "is_active": bool(row.is_active)}
 
 
 @router.delete("/nanny-tags/{tag_id}", dependencies=[Depends(require_admin)])
@@ -385,6 +472,120 @@ def admin_delete_nanny_tag(tag_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Tag is used in at least one parent profile")
 
     db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/qualifications", dependencies=[Depends(require_superadmin)])
+def admin_list_qualifications(db: Session = Depends(get_db)):
+    rows = db.query(models.Qualification).order_by(models.Qualification.name.asc()).all()
+    return [{"id": row.id, "name": row.name, "is_active": bool(row.is_active)} for row in rows]
+
+
+@router.post("/qualifications", dependencies=[Depends(require_superadmin)])
+def admin_create_qualification(payload: LookupPayload, request: Request, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    admin = require_admin_user(authorization, db)
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Qualification name is required")
+    if db.query(models.Qualification).filter(func.lower(models.Qualification.name) == name.lower()).first():
+        raise HTTPException(status_code=409, detail="Qualification already exists")
+    row = models.Qualification(name=name, is_active=True)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    log_audit(db, actor_user=admin, target_user_id=None, entity="qualifications", entity_id=row.id, action="create", before_obj={}, after_obj={"name": row.name, "is_active": True}, changed_fields=["name", "is_active"], request=request)
+    return {"id": row.id, "name": row.name, "is_active": True}
+
+
+@router.patch("/qualifications/{qualification_id}", dependencies=[Depends(require_superadmin)])
+def admin_update_qualification(qualification_id: int, payload: LookupPayload, request: Request, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    admin = require_admin_user(authorization, db)
+    row = db.query(models.Qualification).filter(models.Qualification.id == qualification_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Qualification not found")
+    before = {"name": row.name, "is_active": bool(row.is_active)}
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Qualification name is required")
+        duplicate = db.query(models.Qualification).filter(func.lower(models.Qualification.name) == name.lower(), models.Qualification.id != qualification_id).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Qualification already exists")
+        row.name = name
+    if payload.is_active is not None:
+        row.is_active = payload.is_active
+    db.commit()
+    db.refresh(row)
+    after = {"name": row.name, "is_active": bool(row.is_active)}
+    log_audit(db, actor_user=admin, target_user_id=None, entity="qualifications", entity_id=row.id, action="update", before_obj=before, after_obj=after, changed_fields=[key for key in after if before.get(key) != after.get(key)], request=request)
+    return {"id": row.id, "name": row.name, "is_active": bool(row.is_active)}
+
+
+@router.get("/trust-config", dependencies=[Depends(require_superadmin)])
+def get_trust_config(db: Session = Depends(get_db)):
+    return {"badges": load_trust_config(db)}
+
+
+@router.put("/trust-config", dependencies=[Depends(require_superadmin)])
+def update_trust_config(payload: TrustConfigPayload, request: Request, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    admin = require_admin_user(authorization, db)
+    keys = [badge.key.strip() for badge in payload.badges]
+    if not keys or any(not key for key in keys) or len(keys) != len(set(keys)):
+        raise HTTPException(status_code=400, detail="Badge keys must be present and unique")
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not row:
+        row = models.AppSettings(id=1)
+        db.add(row)
+    before = {"badges": load_trust_config(db)}
+    row.trust_config_json = json.dumps({"badges": [badge.model_dump() for badge in payload.badges]})
+    db.commit()
+    after = {"badges": [badge.model_dump() for badge in payload.badges]}
+    log_audit(db, actor_user=admin, target_user_id=None, entity="app_settings", entity_id=1, action="trust_config_update", before_obj=before, after_obj=after, changed_fields=["badges"], request=request)
+    return {"ok": True, "badges": [badge.model_dump() for badge in payload.badges]}
+
+
+@router.get("/access/me", dependencies=[Depends(require_admin)])
+def admin_access_me(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user = require_admin_user(authorization, db)
+    return {"access_level": _admin_access_level(user, db)}
+
+
+@router.get("/team", dependencies=[Depends(require_superadmin)])
+def admin_team(db: Session = Depends(get_db)):
+    users = db.query(models.User).filter(models.User.is_admin.is_(True)).order_by(models.User.name.asc()).all()
+    profiles = {p.user_id: p for p in db.query(models.AdminProfile).all()}
+    invites = db.query(models.AdminInvite).filter(models.AdminInvite.status == "pending").order_by(models.AdminInvite.created_at.desc()).all()
+    return {
+        "admins": [{"id": u.id, "name": u.name, "email": u.email, "is_active": bool(u.is_active), "access_level": _admin_access_level(u, db)} for u in users],
+        "pending_invites": [{"id": i.id, "email": i.email, "access_level": i.access_level, "reason": i.reason, "expires_at": i.expires_at} for i in invites],
+    }
+
+
+@router.patch("/team/{user_id}/access", dependencies=[Depends(require_superadmin)])
+def update_admin_access(user_id: int, payload: AdminAccessPayload, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    actor = require_admin_user(authorization, db)
+    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_admin.is_(True)).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Administrator not found")
+    if actor.id == user.id and payload.access_level != "superadmin":
+        raise HTTPException(status_code=400, detail="You cannot remove your own superadmin access")
+    profile = db.query(models.AdminProfile).filter(models.AdminProfile.user_id == user.id).first()
+    if not profile:
+        profile = models.AdminProfile(user_id=user.id)
+        db.add(profile)
+    profile.access_level = payload.access_level
+    profile.is_superadmin = payload.access_level == "superadmin"
+    db.commit()
+    return {"ok": True, "access_level": payload.access_level}
+
+
+@router.post("/invites/{invite_id}/cancel", dependencies=[Depends(require_superadmin)])
+def cancel_admin_invite(invite_id: int, db: Session = Depends(get_db)):
+    invite = db.query(models.AdminInvite).filter(models.AdminInvite.id == invite_id, models.AdminInvite.status == "pending").first()
+    if not invite:
+        raise HTTPException(status_code=404, detail="Pending invite not found")
+    invite.status = "cancelled"
     db.commit()
     return {"ok": True}
 
@@ -503,7 +704,7 @@ def _resolve_reporting_window(
     return start_dt, now
 
 
-@router.get("/accounting/summary", dependencies=[Depends(require_admin)])
+@router.get("/accounting/summary", dependencies=[Depends(require_finance)])
 def accounting_summary(
     range: Optional[str] = Query(default="month"),
     start: Optional[str] = Query(default=None),
@@ -774,6 +975,76 @@ def ops_health(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/passport-compliance", dependencies=[Depends(require_admin)])
+def passport_compliance_queue(db: Session = Depends(get_db)):
+    today = date.today()
+    rows = (
+        db.query(models.Nanny, models.NannyProfile, models.User)
+        .join(models.NannyProfile, models.NannyProfile.nanny_id == models.Nanny.id)
+        .join(models.User, models.User.id == models.Nanny.user_id)
+        .all()
+    )
+    results = []
+    for nanny, profile, user in rows:
+        if str(profile.nationality or "").strip().lower() == "south african":
+            continue
+        try:
+            expiry = date.fromisoformat(str(profile.passport_expiry or "")[:10])
+        except ValueError:
+            expiry = None
+        try:
+            approvals = json.loads(profile.document_approvals_json or "{}")
+        except Exception:
+            approvals = {}
+        approval = approvals.get("passport_document_url") or {}
+        approved = bool(approval.get("approved"))
+        approved_expiry = approval.get("approved_expiry")
+        current_expiry = expiry.isoformat() if expiry else None
+        replacement_pending = bool(profile.passport_document_url) and (
+            not approved or approved_expiry != current_expiry
+        )
+        days_remaining = (expiry - today).days if expiry else None
+        if replacement_pending:
+            state = "awaiting_approval"
+        elif nanny.is_suspended:
+            state = "suspended"
+        elif days_remaining is None:
+            state = "missing_expiry"
+        elif days_remaining <= 0:
+            state = "expired"
+        elif days_remaining <= 90:
+            state = "expiring"
+        else:
+            state = "valid"
+        results.append({
+            "user_id": user.id,
+            "nanny_id": nanny.id,
+            "profile_id": profile.id,
+            "name": user.name,
+            "email": user.email,
+            "nationality": profile.nationality,
+            "passport_expiry": current_expiry,
+            "days_remaining": days_remaining,
+            "passport_uploaded": bool(profile.passport_document_url),
+            "passport_approved": approved and approved_expiry == current_expiry,
+            "replacement_pending": replacement_pending,
+            "is_suspended": bool(nanny.is_suspended),
+            "suspension_reason": nanny.suspension_reason,
+            "state": state,
+        })
+    priority = {"suspended": 0, "expired": 1, "awaiting_approval": 2, "missing_expiry": 3, "expiring": 4, "valid": 5}
+    results.sort(key=lambda row: (priority.get(row["state"], 9), row["days_remaining"] if row["days_remaining"] is not None else -9999))
+    return {
+        "results": results,
+        "counts": {state: len([row for row in results if row["state"] == state]) for state in priority},
+    }
+
+
+@router.post("/passport-compliance/run", dependencies=[Depends(require_admin)])
+def run_passport_compliance_now(db: Session = Depends(get_db)):
+    return run_passport_compliance(db)
+
+
 @router.get("/ops/impersonations", dependencies=[Depends(require_admin)])
 def ops_impersonations(
     days: int = Query(default=30, ge=1, le=365),
@@ -805,7 +1076,7 @@ def ops_impersonations(
     }
 
 
-@router.get("/accounting/reconciliation", dependencies=[Depends(require_admin)])
+@router.get("/accounting/reconciliation", dependencies=[Depends(require_finance)])
 def accounting_reconciliation(
     range: Optional[str] = Query(default="month"),
     start: Optional[str] = Query(default=None),
@@ -908,7 +1179,7 @@ def accounting_reconciliation(
     }
 
 
-@router.get("/accounting/payouts", dependencies=[Depends(require_admin)])
+@router.get("/accounting/payouts", dependencies=[Depends(require_finance)])
 def accounting_payouts(
     range: Optional[str] = Query(default="month"),
     start: Optional[str] = Query(default=None),
@@ -1055,7 +1326,7 @@ def accounting_payouts(
     }
 
 
-@router.post("/booking-requests/{job_id}/refund", dependencies=[Depends(require_admin)])
+@router.post("/booking-requests/{job_id}/refund", dependencies=[Depends(require_finance)])
 def refund_booking_request(
     job_id: int,
     payload: Optional[RefundRequest] = None,
@@ -1144,7 +1415,7 @@ def refund_booking_request(
     return {"ok": True, "refund_status": req.refund_status, "refund_cents": req.refund_cents}
 
 
-@router.get("/refunds", dependencies=[Depends(require_admin)])
+@router.get("/refunds", dependencies=[Depends(require_finance)])
 def list_refunds(status: Optional[str] = Query(default="pending_review"), db: Session = Depends(get_db)):
     q = db.query(models.BookingRequest).filter(models.BookingRequest.payment_status == "paid")
     if status:
@@ -1165,7 +1436,7 @@ def list_refunds(status: Optional[str] = Query(default="pending_review"), db: Se
     return {"results": results}
 
 
-@router.post("/booking-requests/{job_id}/refund/approve", dependencies=[Depends(require_admin)])
+@router.post("/booking-requests/{job_id}/refund/approve", dependencies=[Depends(require_finance)])
 def approve_refund(
     job_id: int,
     payload: Optional[RefundDecision] = None,
@@ -1223,7 +1494,7 @@ def approve_refund(
     return result
 
 
-@router.post("/booking-requests/{job_id}/refund/deny", dependencies=[Depends(require_admin)])
+@router.post("/booking-requests/{job_id}/refund/deny", dependencies=[Depends(require_finance)])
 def deny_refund(
     job_id: int,
     payload: Optional[RefundDecision] = None,
@@ -1374,7 +1645,7 @@ def list_reviews(approved: bool = Query(False), db: Session = Depends(get_db)):
 	return db.query(models.Review).filter_by(approved=approved).order_by(models.Review.created_at.desc()).all()
 
 
-@router.get("/audit-logs", dependencies=[Depends(require_admin)])
+@router.get("/audit-logs", dependencies=[Depends(require_superadmin)])
 def list_audit_logs(
 	entity: Optional[str] = Query(default=None),
 	entity_id: Optional[str] = Query(default=None),
@@ -1458,7 +1729,7 @@ def list_audit_logs(
 	return {"total": total, "results": results}
 
 
-@router.get("/audit-logs/{audit_id}", dependencies=[Depends(require_admin)])
+@router.get("/audit-logs/{audit_id}", dependencies=[Depends(require_superadmin)])
 def get_audit_log(audit_id: int, db: Session = Depends(get_db)):
 	log = db.query(models.AuditLog).filter(models.AuditLog.id == audit_id).first()
 	if not log:
@@ -1487,3 +1758,175 @@ def get_audit_log(audit_id: int, db: Session = Depends(get_db)):
 		"ip": log.ip,
 		"user_agent": log.user_agent,
 	}
+
+
+class ConversationReplyPayload(BaseModel):
+    body: str
+
+
+class ConversationOpenPayload(BaseModel):
+    user_id: int
+    channel: str = "whatsapp"
+
+
+@router.post("/conversations/open", dependencies=[Depends(require_admin)])
+def open_user_conversation(payload: ConversationOpenPayload, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    channel = (payload.channel or "whatsapp").strip().lower()
+    if channel == "telegram":
+        external_id = str(getattr(user, "telegram_chat_id", "") or "").strip()
+    elif channel == "whatsapp":
+        profile = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user.id).first()
+        external_id = str(getattr(profile, "phone", None) or getattr(user, "phone", None) or "").strip()
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported conversation channel")
+    if not external_id:
+        raise HTTPException(status_code=409, detail=f"{user.name} does not have a {channel} contact linked")
+    conversation = conversations.find_or_create_conversation(db, channel=channel, external_id=external_id)
+    if conversation.user_id is None:
+        conversation.user_id = user.id
+        db.commit()
+    return {"conversation_id": conversation.id, "channel": channel, "external_id": external_id}
+
+
+@router.get("/conversations", dependencies=[Depends(require_admin)])
+def list_conversations(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.Conversation)
+        .order_by(models.Conversation.last_message_at.desc().nullslast(), models.Conversation.created_at.desc())
+        .all()
+    )
+    results = []
+    for c in rows:
+        user = db.query(models.User).filter(models.User.id == c.user_id).first() if c.user_id else None
+        last_message = (
+            db.query(models.Message)
+            .filter(models.Message.conversation_id == c.id)
+            .order_by(models.Message.created_at.desc())
+            .first()
+        )
+        results.append({
+            "id": c.id,
+            "channel": c.channel,
+            "external_id": c.external_id,
+            "user_id": c.user_id,
+            "user_name": user.name if user else None,
+            "user_role": user.role if user else None,
+            "last_message_at": c.last_message_at,
+            "last_inbound_at": c.last_inbound_at,
+            "unread_count": c.unread_count,
+            "last_message_preview": last_message.body[:200] if last_message else None,
+            "last_message_direction": last_message.direction if last_message else None,
+        })
+    return {"results": results}
+
+
+@router.get("/conversations/{conversation_id}/messages", dependencies=[Depends(require_admin)])
+def get_conversation_messages(conversation_id: int, db: Session = Depends(get_db)):
+    conv = db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    rows = (
+        db.query(models.Message)
+        .filter(models.Message.conversation_id == conversation_id)
+        .order_by(models.Message.created_at.asc())
+        .all()
+    )
+
+    # Opening the thread is the mark-as-read action for v1 - no separate endpoint.
+    if conv.unread_count:
+        conv.unread_count = 0
+        db.commit()
+
+    user = db.query(models.User).filter(models.User.id == conv.user_id).first() if conv.user_id else None
+    return {
+        "conversation": {
+            "id": conv.id,
+            "channel": conv.channel,
+            "external_id": conv.external_id,
+            "user_id": conv.user_id,
+            "user_name": user.name if user else None,
+            "last_inbound_at": conv.last_inbound_at,
+        },
+        "results": [
+            {
+                "id": m.id,
+                "direction": m.direction,
+                "body": m.body,
+                "status": m.status,
+                "error_message": m.error_message,
+                "created_at": m.created_at,
+            }
+            for m in rows
+        ],
+    }
+
+
+@router.post("/conversations/{conversation_id}/reply", dependencies=[Depends(require_admin)])
+def reply_to_conversation(
+    conversation_id: int,
+    payload: ConversationReplyPayload,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin_user = _require_user(authorization, db)
+    conv = db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    body = (payload.body or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Message body is required")
+
+    if conv.channel == "whatsapp" and (
+        not conv.last_inbound_at or (utc_now() - conv.last_inbound_at) > timedelta(hours=24)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This WhatsApp conversation is outside the 24-hour window - the customer "
+                "needs to message first before a free-form reply can be sent."
+            ),
+        )
+
+    ok, error = messaging.send_chat_message(conv.channel, conv.external_id, body)
+    if not ok and conv.channel == "whatsapp" and "63016" in (error or ""):
+        # Twilio's window-violation error code - translate into the same clear
+        # message as the proactive check above, in case last_inbound_at drifted.
+        error = (
+            "This WhatsApp conversation is outside the 24-hour window - the customer "
+            "needs to message first before a free-form reply can be sent."
+        )
+
+    message = models.Message(
+        conversation_id=conv.id,
+        direction="outbound",
+        channel=conv.channel,
+        body=body,
+        status="sent" if ok else "failed",
+        error_message=None if ok else (error or "")[:500],
+        sender_user_id=admin_user.id,
+    )
+    db.add(message)
+
+    if ok:
+        now = utc_now()
+        conv.last_outbound_at = now
+        conv.last_message_at = now
+
+    db.commit()
+    db.refresh(message)
+
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Failed to send: {error}")
+
+    return {
+        "id": message.id,
+        "direction": message.direction,
+        "body": message.body,
+        "status": message.status,
+        "created_at": message.created_at,
+    }

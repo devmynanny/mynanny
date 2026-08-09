@@ -6,18 +6,20 @@ import os
 
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pathlib import Path
 from app.routes import router
-from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_users_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_pricing_settings_seed, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_nanny_debt_schema, ensure_debt_deduction_log_schema, ensure_notification_log_schema, ensure_in_app_notifications_schema, ensure_client_reviews_schema, ensure_bootstrap_admin
+from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_admin_access_schema, ensure_users_schema, ensure_conversations_schema, ensure_messages_schema, ensure_telegram_link_tokens_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_pricing_settings_seed, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_nanny_debt_schema, ensure_debt_deduction_log_schema, ensure_notification_log_schema, ensure_in_app_notifications_schema, ensure_client_reviews_schema, ensure_bootstrap_admin
 from app.routers.public import _decode_access_token, ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app import models
 from app.request_context import auth_token_ctx
 from app.services.payout import run_scheduled_payouts
 from app.services.advert_expiry import expire_stale_booking_requests
 from app.services.notifications import retry_failed_notifications
+from app.services.passport_compliance import run_passport_compliance
+from app.services.storage import open_media
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -26,6 +28,16 @@ STATIC_DIR = BASE_DIR / "static"
 app = FastAPI()
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 scheduler = AsyncIOScheduler()
+
+# Unauthenticated inbound webhooks (external services can't do cookie/CSRF
+# auth) - exempted from the CSRF double-submit check below. Each of these
+# routes is responsible for its own signature/secret verification.
+UNAUTHENTICATED_WEBHOOK_PATHS = {"/paystack/webhook", "/whatsapp/webhook"}
+UNAUTHENTICATED_WEBHOOK_PATH_PREFIXES = ("/telegram/webhook/",)
+
+
+def _is_unauthenticated_webhook_path(path: str) -> bool:
+    return path in UNAUTHENTICATED_WEBHOOK_PATHS or path.startswith(UNAUTHENTICATED_WEBHOOK_PATH_PREFIXES)
 
 # POPIA access control for uploaded files served from /static/uploads/.
 # Identity/vetting documents are restricted to their owner and admins;
@@ -43,7 +55,7 @@ SENSITIVE_UPLOAD_PREFIXES = (
 
 def _upload_access_status(path: str, user: dict | None) -> int | None:
     """Return an HTTP status to reject with, or None to allow."""
-    if not path.startswith("/static/uploads/"):
+    if not path.startswith("/static/uploads/") and not path.startswith("/media/"):
         return None
     if user is None:
         return 401
@@ -83,7 +95,7 @@ async def attach_request_user(request: Request, call_next):
         request.method not in SAFE_METHODS
         and access_cookie
         and not has_bearer
-        and request.url.path != "/paystack/webhook"
+        and not _is_unauthenticated_webhook_path(request.url.path)
     ):
         csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
         csrf_header = request.headers.get(CSRF_HEADER_NAME) or request.headers.get(CSRF_HEADER_NAME.lower())
@@ -145,7 +157,11 @@ ensure_nannies_schema()
 ensure_nanny_profiles_schema()
 ensure_parent_profiles_schema()
 ensure_admin_invites_schema()
+ensure_admin_access_schema()
 ensure_users_schema()
+ensure_conversations_schema()
+ensure_messages_schema()
+ensure_telegram_link_tokens_schema()
 ensure_languages_seed()
 ensure_qualifications_seed()
 ensure_parent_favorites_schema()
@@ -162,6 +178,21 @@ ensure_client_reviews_schema()
 ensure_bootstrap_admin()
 
 app.include_router(router)
+
+
+@app.get("/media/{key:path}")
+def private_media(key: str, request: Request):
+    denied_status = _upload_access_status(f"/media/{key}", request.state.user)
+    if denied_status is not None:
+        return JSONResponse(status_code=denied_status, content={"detail": "Not authorized to access this file"})
+    try:
+        stream, content_type, content_length = open_media(key)
+    except (FileNotFoundError, ValueError):
+        return JSONResponse(status_code=404, content={"detail": "File not found"})
+    headers = {"Cache-Control": "private, max-age=300"}
+    if content_length is not None:
+        headers["Content-Length"] = str(content_length)
+    return StreamingResponse(stream, media_type=content_type or "application/octet-stream", headers=headers)
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -190,12 +221,22 @@ def retry_failed_notifications_wrapper() -> None:
         db.close()
 
 
+def passport_compliance_wrapper() -> None:
+    db = SessionLocal()
+    try:
+        run_passport_compliance(db)
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def _startup_scheduler() -> None:
     if not scheduler.get_jobs():
         scheduler.add_job(run_scheduled_payouts_wrapper, "interval", minutes=30)
         scheduler.add_job(expire_stale_adverts_wrapper, "interval", minutes=30)
         scheduler.add_job(retry_failed_notifications_wrapper, "interval", minutes=15)
+        scheduler.add_job(passport_compliance_wrapper, "interval", hours=24)
+        passport_compliance_wrapper()
     if not scheduler.running:
         scheduler.start()
 
@@ -208,4 +249,4 @@ async def _shutdown_scheduler() -> None:
 
 @app.get("/")
 def home():
-    return RedirectResponse(url="/static/login.html", status_code=307)
+    return RedirectResponse(url="/static/v2/login.html", status_code=307)

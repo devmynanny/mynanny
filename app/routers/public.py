@@ -4,8 +4,10 @@ import os
 import json
 import hmac
 import hashlib
+import base64
 import secrets
 import uuid
+import tempfile
 from functools import cmp_to_key
 from urllib.request import urlopen, Request as UrlRequest
 from urllib.parse import urlencode
@@ -13,7 +15,7 @@ from pathlib import Path
 from typing import Optional, List, Union
 from datetime import date, datetime, timedelta, timezone, time as dt_time
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, File, UploadFile, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, File, Form, UploadFile, Response
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, text, distinct, or_
@@ -31,12 +33,114 @@ from app.services.demerit import apply_demerit, apply_cancellation_weight, apply
 from app.services.google_calendar import sync_booking_to_google_calendar
 from app.services.payout import run_scheduled_payouts
 from app.services.paystack import create_supplementary_charge, create_refund, create_transfer_recipient, initialize_transaction, list_banks, verify_transaction
-from app.services.notifications import send_notification
+from app.services.trust import build_nanny_trust_badges, nanny_meets_required_trust
+from app.services.notifications import notify, send_notification
+from app.services import conversations
+from app.services import messaging
 from app.services.booking_status import booking_state_from_booking, booking_state_from_request, canonical_booking_status
+from app.services.messaging_status import PREFERRED_MESSAGING_CHANNELS
 from app.services.advert_expiry import is_request_expired
+from app.services.storage import store_bytes, store_file
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
+
+
+def _store_uploaded_file(file: UploadFile, key: str) -> str:
+    try:
+        return store_bytes(key, file.file.read(), file.content_type)
+    finally:
+        try:
+            file.file.close()
+        except Exception:
+            pass
+
+
+def _notification_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _notification_action_url(title: str, action_url: Optional[str]) -> Optional[str]:
+    if action_url:
+        return action_url
+    normalized = (title or "").lower()
+    if "passport" in normalized or "profile" in normalized or "account" in normalized:
+        return "/profile"
+    if "interview" in normalized:
+        return "/interview"
+    if "request" in normalized and "review" not in normalized:
+        return "/requests"
+    if any(word in normalized for word in ("booking", "check-in", "overtime", "refund", "payment", "review")):
+        return "/bookings"
+    return None
+
+
+@router.get("/notifications")
+def list_my_notifications(
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=100),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(_notification_db),
+):
+    user = _require_user(authorization, db)
+    query = db.query(models.InAppNotification).filter(models.InAppNotification.user_id == user.id)
+    if unread_only:
+        query = query.filter(models.InAppNotification.read == False)  # noqa: E712
+    rows = query.order_by(models.InAppNotification.created_at.desc()).limit(limit).all()
+    unread_count = db.query(func.count(models.InAppNotification.id)).filter(
+        models.InAppNotification.user_id == user.id,
+        models.InAppNotification.read == False,  # noqa: E712
+    ).scalar() or 0
+    return {
+        "unread_count": int(unread_count),
+        "results": [
+            {
+                "id": row.id,
+                "title": row.title,
+                "body": row.body,
+                "action_url": _notification_action_url(row.title, row.action_url),
+                "read": bool(row.read),
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.patch("/notifications/{notification_id}/read")
+def mark_my_notification_read(
+    notification_id: int,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(_notification_db),
+):
+    user = _require_user(authorization, db)
+    row = db.query(models.InAppNotification).filter(
+        models.InAppNotification.id == notification_id,
+        models.InAppNotification.user_id == user.id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    row.read = True
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/notifications/read-all")
+def mark_all_my_notifications_read(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(_notification_db),
+):
+    user = _require_user(authorization, db)
+    updated = db.query(models.InAppNotification).filter(
+        models.InAppNotification.user_id == user.id,
+        models.InAppNotification.read == False,  # noqa: E712
+    ).update({models.InAppNotification.read: True}, synchronize_session=False)
+    db.commit()
+    return {"ok": True, "updated": updated}
 
 
 def _current_job_availability_allows_bookings(value: Optional[str]) -> bool:
@@ -181,8 +285,6 @@ def _public_nanny_name(full_name: Optional[str]) -> str:
 def _ensure_default_nanny_tags(db: Session) -> List[models.NannyTag]:
     rows = db.query(models.NannyTag).all()
     by_lower = {((row.name or "").strip().lower()): row for row in rows}
-    desired_lowers = {name.lower() for name in DEFAULT_NANNY_TAGS}
-
     for name in DEFAULT_NANNY_TAGS:
         existing = by_lower.get(name.lower())
         if existing:
@@ -194,20 +296,9 @@ def _ensure_default_nanny_tags(db: Session) -> List[models.NannyTag]:
             db.flush()
             by_lower[name.lower()] = row
 
-    extra_rows = [row for row in rows if ((row.name or "").strip().lower()) not in desired_lowers]
-    extra_ids = [row.id for row in extra_rows]
-    if extra_ids:
-        db.execute(
-            models.nanny_profile_tags.delete().where(models.nanny_profile_tags.c.tag_id.in_(extra_ids))
-        )
-        for row in extra_rows:
-            db.delete(row)
-
     db.commit()
 
-    synced_rows = db.query(models.NannyTag).all()
-    synced_by_lower = {((row.name or "").strip().lower()): row for row in synced_rows}
-    return [synced_by_lower[name.lower()] for name in DEFAULT_NANNY_TAGS if name.lower() in synced_by_lower]
+    return db.query(models.NannyTag).order_by(models.NannyTag.name.asc()).all()
 
 def get_google_maps_browser_api_key() -> tuple[Optional[str], Optional[str]]:
     db = SessionLocal()
@@ -264,7 +355,7 @@ def google_reverse_geocode(lat: float, lng: float) -> dict:
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Reverse geocode failed: {e}")
+        return {"status": "ERROR", "error_message": f"Reverse geocode failed: {e}"}
 
     return data
 
@@ -2145,14 +2236,14 @@ def notify_admin_parent_denied_booking_time(
 
 @router.get("/qualifications")
 def list_qualifications(db: Session = Depends(get_db)):
-    rows = db.query(models.Qualification).order_by(models.Qualification.name.asc()).all()
+    rows = db.query(models.Qualification).filter(models.Qualification.is_active.is_(True)).order_by(models.Qualification.name.asc()).all()
     return [{"id": r.id, "name": r.name} for r in rows]
 
 
 @router.get("/nanny-tags")
 def list_nanny_tags(db: Session = Depends(get_db)):
     rows = _ensure_default_nanny_tags(db)
-    return [{"id": r.id, "name": r.name} for r in rows]
+    return [{"id": r.id, "name": r.name} for r in rows if bool(r.is_active)]
 
 
 @router.get("/languages")
@@ -2268,31 +2359,16 @@ def auth_signup(payload: schemas.SignupRequest, request: Request, response: Resp
         has_own_kids = payload.has_own_kids if payload.has_own_kids is not None else None
         own_kids_details = _norm_text(payload.own_kids_details)
 
-        if not _norm_text(payload.gender):
-            raise HTTPException(status_code=400, detail="Gender is required")
-        if not _norm_text(payload.ethnicity):
-            raise HTTPException(status_code=400, detail="Race is required")
-        if not _norm_text(payload.job_type):
-            raise HTTPException(status_code=400, detail="Job type is required")
-        if not _norm_text(payload.police_clearance_status):
-            raise HTTPException(status_code=400, detail="Police clearance status is required")
-        if not _norm_text(payload.my_nanny_training_status):
-            raise HTTPException(status_code=400, detail="Training status is required")
-        if has_own_car is True and has_drivers_license is None:
-            raise HTTPException(status_code=400, detail="Driver's license status is required")
-        if has_own_kids is True and not own_kids_details:
-            raise HTTPException(status_code=400, detail="Please share how old your children are and where they stay")
-
-        if nat == "south african":
+        # Account creation is intentionally lightweight. Eligibility is collected
+        # privately after authentication through PATCH /nannies/me/profile.
+        if nat == "south african" and payload.sa_id_number:
             if not payload.sa_id_number:
                 raise HTTPException(status_code=400, detail="South African ID number is required")
             err = _validate_sa_id(payload.sa_id_number)
             if err:
                 raise HTTPException(status_code=400, detail=err)
-        elif nat:
-            if not payload.passport_number:
-                raise HTTPException(status_code=400, detail="Passport number is required")
-            if permit_status not in {"permit", "waiver", "receipt"}:
+        elif nat and payload.passport_number:
+            if permit_status and permit_status not in {"permit", "waiver", "receipt"}:
                 raise HTTPException(
                     status_code=400,
                     detail="You need a waiver/receipt or permit for approval. Once you obtain this, please email it to nannies.info@gmail.com",
@@ -2418,12 +2494,46 @@ def auth_me(authorization: Optional[str] = Header(default=None), db: Session = D
         "is_active": bool(getattr(user, "is_active", True)),
         "nanny_application_status": nanny_application_status,
         "nanny_admin_reason": nanny_admin_reason,
+        "preferred_messaging_channel": getattr(user, "preferred_messaging_channel", None) or "whatsapp",
+        "telegram_linked": bool(getattr(user, "telegram_chat_id", None)),
     }
 
 
 @router.get("/me", response_model=schemas.AuthUserOut)
 def me_alias(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     return auth_me(authorization=authorization, db=db)
+
+
+@router.post("/me/telegram/connect")
+def connect_telegram(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user = _require_user(authorization, db)
+    bot_username = (os.getenv("TELEGRAM_BOT_USERNAME") or "").strip()
+    if not bot_username:
+        raise HTTPException(status_code=400, detail="Telegram is not configured yet")
+
+    token = conversations.create_telegram_link_token(db, user)
+    return {
+        "deep_link": f"https://t.me/{bot_username}?start={token.token}",
+        "expires_at": token.expires_at,
+    }
+
+
+@router.post("/me/messaging-channel")
+def set_messaging_channel(
+    payload: schemas.SetMessagingChannelRequest,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    channel = (payload.channel or "").strip().lower()
+    if channel not in PREFERRED_MESSAGING_CHANNELS:
+        raise HTTPException(status_code=400, detail=f"Invalid channel; allowed: {sorted(PREFERRED_MESSAGING_CHANNELS)}")
+    if channel == "telegram" and not user.telegram_chat_id:
+        raise HTTPException(status_code=400, detail="Connect Telegram before selecting it as your preferred channel")
+
+    user.preferred_messaging_channel = channel
+    db.commit()
+    return {"preferred_messaging_channel": user.preferred_messaging_channel}
 
 
 @router.post("/auth/logout")
@@ -2856,6 +2966,9 @@ def admin_impersonate(
     db: Session = Depends(get_db),
 ):
     admin = require_admin(authorization, db)
+    admin_profile = db.query(models.AdminProfile).filter(models.AdminProfile.user_id == admin.id).first()
+    if admin_profile and not bool(admin_profile.is_superadmin) and admin_profile.access_level != "superadmin":
+        raise HTTPException(status_code=403, detail="Only a superadmin can invite administrators")
     target = db.query(models.User).filter(models.User.id == payload.user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
@@ -3120,23 +3233,11 @@ def upload_nanny_photo(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported image type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-
-    try:
-        data = file.file.read()
-        dest.write_bytes(data)
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
+    url = _store_uploaded_file(file, f"nannies/{filename}")
 
     before = {"profile_photo_url": getattr(user, "profile_photo_url", None)}
-    user.profile_photo_url = f"/static/uploads/nannies/{filename}"
+    user.profile_photo_url = url
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -3155,6 +3256,51 @@ def upload_nanny_photo(
         request=request,
     )
 
+    return {"url": user.profile_photo_url}
+
+
+@router.post("/admin/nannies/{user_id}/photo")
+def admin_upload_nanny_photo(
+    user_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user_id).first()
+    if not user or not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+
+    allowed = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    ext = allowed.get(file.content_type or "")
+    if not ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+
+    filename = f"{user.id}_{uuid.uuid4().hex}{ext}"
+    url = _store_uploaded_file(file, f"nannies/{filename}")
+
+    before = {"profile_photo_url": getattr(user, "profile_photo_url", None)}
+    user.profile_photo_url = url
+    db.commit()
+    db.refresh(user)
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=user.id,
+        entity="users",
+        entity_id=user.id,
+        action="admin_profile_photo_update",
+        before_obj=before,
+        after_obj={"profile_photo_url": user.profile_photo_url},
+        changed_fields=["profile_photo_url"],
+        request=request,
+    )
     return {"url": user.profile_photo_url}
 
 
@@ -3178,20 +3324,8 @@ def upload_parent_family_photo(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported image type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "parents"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"family_{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-
-    try:
-        data = file.file.read()
-        dest.write_bytes(data)
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
+    url = _store_uploaded_file(file, f"parents/{filename}")
 
     prof = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user.id).first()
     if not prof:
@@ -3199,7 +3333,7 @@ def upload_parent_family_photo(
         db.add(prof)
 
     before = _parent_profile_snapshot(prof)
-    prof.family_photo_url = f"/static/uploads/parents/{filename}"
+    prof.family_photo_url = url
     db.add(prof)
     db.commit()
     db.refresh(prof)
@@ -3219,6 +3353,15 @@ def upload_parent_family_photo(
     )
 
     return {"url": prof.family_photo_url}
+
+
+def _clear_document_approval(profile: models.NannyProfile, profile_attr: str) -> None:
+    try:
+        approvals = json.loads(getattr(profile, "document_approvals_json", None) or "{}")
+    except Exception:
+        approvals = {}
+    approvals.pop(profile_attr, None)
+    profile.document_approvals_json = json.dumps(approvals)
 
 
 @router.post("/nannies/me/id-document")
@@ -3242,20 +3385,8 @@ def upload_nanny_id_document(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"id_{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-
-    try:
-        data = file.file.read()
-        dest.write_bytes(data)
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
+    url = _store_uploaded_file(file, f"nannies/{filename}")
 
     nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
     if not nanny:
@@ -3268,7 +3399,9 @@ def upload_nanny_id_document(
         db.refresh(profile)
 
     before = {"sa_id_document_url": getattr(profile, "sa_id_document_url", None)}
-    profile.sa_id_document_url = f"/static/uploads/nannies/{filename}"
+    profile.sa_id_document_url = url
+    _clear_document_approval(profile, "sa_id_document_url")
+    sync_nanny_profile_complete(nanny, user, profile)
     db.add(profile)
     db.commit()
     db.refresh(profile)
@@ -3294,6 +3427,7 @@ def upload_nanny_id_document(
 def upload_nanny_passport_document(
     request: Request,
     file: UploadFile = File(...),
+    expiry_date: Optional[str] = Form(default=None),
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
@@ -3311,20 +3445,8 @@ def upload_nanny_passport_document(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"passport_{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-
-    try:
-        data = file.file.read()
-        dest.write_bytes(data)
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
+    url = _store_uploaded_file(file, f"nannies/{filename}")
 
     nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
     if not nanny:
@@ -3336,13 +3458,38 @@ def upload_nanny_passport_document(
         db.commit()
         db.refresh(profile)
 
-    before = {"passport_document_url": getattr(profile, "passport_document_url", None)}
-    profile.passport_document_url = f"/static/uploads/nannies/{filename}"
+    if expiry_date:
+        try:
+            parsed_expiry = date.fromisoformat(expiry_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Enter a valid passport expiry date")
+        if parsed_expiry <= date.today():
+            raise HTTPException(status_code=400, detail="The new passport expiry date must be in the future")
+    try:
+        passport_approvals = json.loads(profile.document_approvals_json or "{}")
+    except Exception:
+        passport_approvals = {}
+    prior_approval = passport_approvals.get("passport_document_url") or {}
+    before = {"passport_document_url": getattr(profile, "passport_document_url", None), "passport_expiry": profile.passport_expiry}
+    profile.passport_document_url = url
+    if expiry_date:
+        profile.passport_expiry = expiry_date
+    _clear_document_approval(profile, "passport_document_url")
+    if prior_approval.get("approved_expiry"):
+        passport_approvals = json.loads(profile.document_approvals_json or "{}")
+        passport_approvals["passport_document_url"] = {
+            "approved": False,
+            "previous_approved_expiry": prior_approval["approved_expiry"],
+            "submitted_expiry": profile.passport_expiry,
+            "submitted_at": utc_now().isoformat(),
+        }
+        profile.document_approvals_json = json.dumps(passport_approvals)
+    sync_nanny_profile_complete(nanny, user, profile)
     db.add(profile)
     db.commit()
     db.refresh(profile)
 
-    after = {"passport_document_url": getattr(profile, "passport_document_url", None)}
+    after = {"passport_document_url": getattr(profile, "passport_document_url", None), "passport_expiry": profile.passport_expiry}
     log_audit(
         db,
         actor_user=user,
@@ -3380,20 +3527,8 @@ def upload_nanny_work_permit_document(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"permit_{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-
-    try:
-        data = file.file.read()
-        dest.write_bytes(data)
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
+    url = _store_uploaded_file(file, f"nannies/{filename}")
 
     nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
     if not nanny:
@@ -3406,7 +3541,9 @@ def upload_nanny_work_permit_document(
         db.refresh(profile)
 
     before = {"work_permit_document_url": getattr(profile, "work_permit_document_url", None)}
-    profile.work_permit_document_url = f"/static/uploads/nannies/{filename}"
+    profile.work_permit_document_url = url
+    _clear_document_approval(profile, "work_permit_document_url")
+    sync_nanny_profile_complete(nanny, user, profile)
     db.add(profile)
     db.commit()
     db.refresh(profile)
@@ -3437,6 +3574,7 @@ def _upload_nanny_optional_document(
     filename_prefix: str,
     profile_attr: str,
     append_json_list: bool = False,
+    actor_user: Optional[models.User] = None,
 ):
     allowed = {
         "application/pdf": ".pdf",
@@ -3448,20 +3586,8 @@ def _upload_nanny_optional_document(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
     filename = f"{filename_prefix}_{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-
-    try:
-        data = file.file.read()
-        dest.write_bytes(data)
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
+    url = _store_uploaded_file(file, f"nannies/{filename}")
 
     nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
     if not nanny:
@@ -3473,7 +3599,6 @@ def _upload_nanny_optional_document(
         db.commit()
         db.refresh(profile)
 
-    url = f"/static/uploads/nannies/{filename}"
     before = {profile_attr: getattr(profile, profile_attr, None)}
     if append_json_list:
         raw = getattr(profile, profile_attr, None)
@@ -3489,6 +3614,13 @@ def _upload_nanny_optional_document(
         setattr(profile, profile_attr, json.dumps(items))
     else:
         setattr(profile, profile_attr, url)
+    approvals = {}
+    try:
+        approvals = json.loads(getattr(profile, "document_approvals_json", None) or "{}")
+    except Exception:
+        approvals = {}
+    approvals.pop(profile_attr, None)
+    profile.document_approvals_json = json.dumps(approvals)
     db.add(profile)
     db.commit()
     db.refresh(profile)
@@ -3496,7 +3628,7 @@ def _upload_nanny_optional_document(
     after = {profile_attr: getattr(profile, profile_attr, None)}
     log_audit(
         db,
-        actor_user=user,
+        actor_user=actor_user or user,
         target_user_id=user.id,
         entity="nanny_profiles",
         entity_id=profile.id,
@@ -3590,19 +3722,8 @@ def upload_nanny_reference_document(
     if not ext:
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-    upload_dir = Path(__file__).resolve().parents[1] / "static" / "uploads" / "nannies"
-    upload_dir.mkdir(parents=True, exist_ok=True)
     filename = f"reference_{user.id}_{uuid.uuid4().hex}{ext}"
-    dest = upload_dir / filename
-    try:
-        dest.write_bytes(file.file.read())
-    finally:
-        try:
-            file.file.close()
-        except Exception:
-            pass
-
-    url = f"/static/uploads/nannies/{filename}"
+    url = _store_uploaded_file(file, f"nannies/{filename}")
     log_audit(
         db,
         actor_user=user,
@@ -3717,6 +3838,168 @@ def get_nanny_me_profile(
     }
 
 
+@router.get("/nannies/me/trust-badges")
+def get_my_trust_badges(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "nanny":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first() if nanny else None
+    if not nanny or not profile:
+        raise HTTPException(status_code=404, detail="Nanny profile not found")
+    badges = build_nanny_trust_badges(db, nanny, profile, user)
+    return {
+        "badges": badges,
+        "earned_count": sum(1 for badge in badges if badge["earned"]),
+        "required_complete": nanny_meets_required_trust(badges),
+    }
+
+
+@router.get("/nannies/me/video-screening")
+def get_nanny_video_screening(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    try:
+        clips = json.loads(getattr(nanny, "video_screening_json", None) or "[]")
+    except Exception:
+        clips = []
+    request_title = "Video interview resubmission requested"
+    requested = db.query(models.InAppNotification).filter(
+        models.InAppNotification.title == request_title,
+        models.InAppNotification.body.contains(f"User #{user.id}"),
+        models.InAppNotification.read == False,
+    ).first() is not None
+    return {"clips": clips if isinstance(clips, list) else [], "video_screening_complete": bool(getattr(nanny, "video_screening_complete", False)), "submitted_at": getattr(nanny, "video_screening_submitted_at", None), "resubmission_requested": requested}
+
+
+@router.post("/nannies/me/video-screening/resubmission-request")
+def request_video_screening_resubmission(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    if not bool(getattr(nanny, "video_screening_complete", False)):
+        raise HTTPException(status_code=409, detail="Submit your current interview before requesting a new attempt")
+    title = "Video interview resubmission requested"
+    body = f"{user.name} (User #{user.id}) has requested permission to record a new video interview."
+    existing = db.query(models.InAppNotification).filter(
+        models.InAppNotification.title == title,
+        models.InAppNotification.body == body,
+        models.InAppNotification.read == False,
+    ).first()
+    if not existing:
+        admins = db.query(models.User).filter(models.User.is_admin == True).all()
+        for admin in admins:
+            db.add(models.InAppNotification(user_id=admin.id, title=title, body=body, action_url=f"/users?user={user.id}"))
+        db.commit()
+    return {"ok": True, "requested": True}
+
+
+@router.post("/nannies/me/video-screening/clips")
+async def upload_nanny_video_screening_clip(
+    question_index: int = Query(..., ge=0, le=3),
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user, nanny, _ = _require_nanny_user_not_on_hold(authorization, db)
+    if bool(getattr(nanny, "video_screening_complete", False)):
+        raise HTTPException(status_code=409, detail="This interview has been submitted. Request admin permission before recording again")
+    allowed_types = {"video/webm": ".webm", "video/mp4": ".mp4", "video/quicktime": ".mov"}
+    content_type = (file.content_type or "").lower()
+    extension = allowed_types.get(content_type)
+    if not extension:
+        raise HTTPException(status_code=400, detail="Use a WebM, MP4, or MOV video file")
+    filename = f"video_{user.id}_q{question_index}_{uuid.uuid4().hex}{extension}"
+    temp_handle = tempfile.NamedTemporaryFile(prefix="mynanny-video-", suffix=extension, delete=False)
+    destination = Path(temp_handle.name)
+    temp_handle.close()
+    size = 0
+    try:
+        with destination.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > 8 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="Video clip must be smaller than 8 MB")
+                output.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+    try:
+        import subprocess
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(destination)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        raw_duration = probe.stdout.strip()
+        if raw_duration and raw_duration.upper() != "N/A":
+            duration_seconds = float(raw_duration)
+        else:
+            packet_probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "csv=p=0", str(destination)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+            timestamps = []
+            for value in packet_probe.stdout.splitlines():
+                try:
+                    timestamps.append(float(value.strip().split(",")[0]))
+                except (TypeError, ValueError):
+                    continue
+            if not timestamps:
+                raise ValueError("video has no readable timestamps")
+            duration_seconds = max(timestamps)
+        if duration_seconds > 61.0:
+            raise HTTPException(status_code=413, detail="Each answer may be no longer than 60 seconds")
+    except HTTPException:
+        destination.unlink(missing_ok=True)
+        raise
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Unable to verify the uploaded video")
+    try:
+        video_url = store_file(f"nannies/{filename}", destination, content_type)
+    finally:
+        destination.unlink(missing_ok=True)
+    try:
+        clips = json.loads(getattr(nanny, "video_screening_json", None) or "[]")
+    except Exception:
+        clips = []
+    clips = [clip for clip in clips if int(clip.get("question_index", -1)) != question_index]
+    clip = {"question_index": question_index, "url": video_url, "content_type": content_type, "size_bytes": size, "uploaded_at": utc_now().isoformat()}
+    clips.append(clip)
+    clips.sort(key=lambda item: int(item.get("question_index", 0)))
+    nanny.video_screening_json = json.dumps(clips)
+    nanny.video_screening_complete = False
+    nanny.video_screening_submitted_at = None
+    db.commit()
+    return {"ok": True, "clip": clip, "clips": clips}
+
+
+@router.post("/nannies/me/video-screening/complete")
+def complete_nanny_video_screening(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    _, nanny, profile = _require_nanny_user_not_on_hold(authorization, db)
+    try:
+        clips = json.loads(getattr(nanny, "video_screening_json", None) or "[]")
+    except Exception:
+        clips = []
+    recorded_questions = {int(clip.get("question_index", -1)) for clip in clips if clip.get("url")}
+    if recorded_questions != {0, 1, 2, 3}:
+        raise HTTPException(status_code=409, detail="Record all four interview answers before submitting")
+    if profile is None or getattr(profile, "lat", None) is None or getattr(profile, "lng", None) is None:
+        raise HTTPException(status_code=409, detail="Add your home location to your profile before submitting the interview")
+    nanny.video_screening_complete = True
+    nanny.video_screening_submitted_at = utc_now()
+    db.commit()
+    return {"ok": True, "nanny_id": nanny.id, "video_screening_complete": True, "submitted_at": nanny.video_screening_submitted_at, "parent_visibility": "enabled"}
+
+
 @router.patch("/nannies/me/profile")
 def update_nanny_me_profile(
     payload: NannyMeProfileUpdate,
@@ -3783,7 +4066,10 @@ def update_nanny_me_profile(
         profile.passport_number = new_passport_number
 
     if payload.passport_expiry is not None:
-        profile.passport_expiry = payload.passport_expiry.strip() if payload.passport_expiry else None
+        new_expiry = payload.passport_expiry.strip() if payload.passport_expiry else None
+        if new_expiry != profile.passport_expiry:
+            _clear_document_approval(profile, "passport_document_url")
+        profile.passport_expiry = new_expiry
 
     if payload.passport_document_url is not None:
         new_passport_doc = _norm_text(payload.passport_document_url)
@@ -3962,6 +4248,7 @@ def update_nanny_me_profile(
             if user.is_active is False:
                 user.is_active = True
 
+    sync_nanny_profile_complete(nanny, user, profile)
     db.commit()
     db.refresh(user)
     db.refresh(profile)
@@ -4033,6 +4320,7 @@ def set_nanny_me_location(
         if payload.place_id is not None:
             profile.place_id = payload.place_id
 
+    sync_nanny_profile_complete(nanny, user, profile)
     db.commit()
     db.refresh(profile)
 
@@ -5690,13 +5978,60 @@ def nanny_meets_document_requirements(profile: Optional[models.NannyProfile]) ->
         if not str(getattr(profile, "passport_document_url", "") or "").strip():
             missing_fields.append("passport_document_url")
         permit_status = str(getattr(profile, "permit_status", "") or "").strip().lower()
+        if permit_status not in {"permit", "waiver", "receipt"}:
+            missing_fields.append("permit_status")
+        elif not str(getattr(profile, "work_permit_document_url", "") or "").strip():
+            missing_fields.append("work_permit_document_url")
         if permit_status == "permit":
             if not str(getattr(profile, "work_permit_expiry", "") or "").strip():
                 missing_fields.append("work_permit_expiry")
-            if not str(getattr(profile, "work_permit_document_url", "") or "").strip():
-                missing_fields.append("work_permit_document_url")
 
     return len(missing_fields) == 0, missing_fields
+
+
+def nanny_profile_missing_fields(
+    user: Optional[models.User],
+    profile: Optional[models.NannyProfile],
+) -> List[str]:
+    if not user or not profile:
+        return ["profile"]
+
+    required = {
+        "full_name": getattr(user, "name", None),
+        "phone": getattr(user, "phone", None),
+        "profile_photo_url": getattr(user, "profile_photo_url", None),
+        "date_of_birth": getattr(profile, "date_of_birth", None),
+        "gender": getattr(profile, "gender", None),
+        "nationality": getattr(profile, "nationality", None),
+        "ethnicity": getattr(profile, "ethnicity", None),
+        "job_type": getattr(profile, "job_type", None),
+        "current_job_availability": getattr(profile, "current_job_availability", None),
+        "police_clearance_status": getattr(profile, "police_clearance_status", None),
+        "my_nanny_training_status": getattr(profile, "my_nanny_training_status", None),
+        "has_own_car": getattr(profile, "has_own_car", None),
+        "has_own_kids": getattr(profile, "has_own_kids", None),
+        "medical_conditions": getattr(profile, "medical_conditions", None),
+        "home_location": getattr(profile, "formatted_address", None),
+    }
+    missing = [key for key, value in required.items() if value is None or (isinstance(value, str) and not value.strip())]
+    if not getattr(profile, "languages", None):
+        missing.append("languages")
+    if getattr(profile, "has_own_car", None) is True and getattr(profile, "has_drivers_license", None) is None:
+        missing.append("has_drivers_license")
+    if getattr(profile, "has_own_kids", None) is True and not str(getattr(profile, "own_kids_details", "") or "").strip():
+        missing.append("own_kids_details")
+    qualification_names = {str(getattr(item, "name", "") or "").strip().lower() for item in (profile.qualifications or [])}
+    if "studying" in qualification_names and not str(getattr(profile, "studying_details", "") or "").strip():
+        missing.append("studying_details")
+    _, document_missing = nanny_meets_document_requirements(profile)
+    missing.extend(field for field in document_missing if field not in missing)
+    return missing
+
+
+def sync_nanny_profile_complete(nanny: models.Nanny, user: models.User, profile: models.NannyProfile) -> List[str]:
+    missing = nanny_profile_missing_fields(user, profile)
+    nanny.profile_complete = not missing
+    return missing
 
 
 def _search_nannies_by_area(
@@ -5717,7 +6052,10 @@ def _search_nannies_by_area(
         .join(models.Nanny, models.Nanny.id == models.NannyProfile.nanny_id)
         .join(models.User, models.User.id == models.Nanny.user_id)
         .filter(models.Nanny.approved == True)
+        .filter(models.NannyProfile.application_status == "approved")
+        .filter(models.NannyProfile.is_approved == 1)
         .filter(models.Nanny.is_suspended == False)
+        .filter(models.Nanny.video_screening_complete == True)
         .filter(models.User.is_active == True)
     )
 
@@ -5789,6 +6127,9 @@ def _search_nannies_by_area(
             continue
         nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first()
         if not nanny_user:
+            continue
+        trust_badges = build_nanny_trust_badges(db, nanny, p, nanny_user)
+        if not nanny_meets_required_trust(trust_badges):
             continue
 
         avg, cnt = get_rating_12m_for_nanny(db, p.nanny_id)
@@ -5871,6 +6212,11 @@ def _search_nannies_by_area(
                 "has_identity_document": False,
                 "has_passport_document": False,
                 "previous_jobs": public_jobs,
+                "trust_badges": [
+                    {"key": badge["key"], "label": badge["label"]}
+                    for badge in trust_badges
+                    if badge["earned"] and badge["parent_visible"]
+                ],
             }
         )
 
@@ -6169,48 +6515,61 @@ def list_parent_locations(authorization: Optional[str] = Header(default=None), d
     return rows
 
 
-def _is_profile_complete(db: Session, user_id: int) -> bool:
+def _parent_profile_missing_fields(db: Session, user_id: int) -> List[str]:
+    user = db.query(models.User).filter(models.User.id == user_id).first()
     prof = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user_id).first()
     if not prof:
-        return False
+        return ["profile"]
+
+    missing: List[str] = []
+
+    if not user or not _has_saved_parent_card(user):
+        missing.append("payment_authorisation")
 
     phone = (prof.phone or "").strip()
     if not phone or len(phone) < 7:
-        return False
+        missing.append("phone")
 
     if prof.kids_count is None:
-        return False
-    try:
-        kids_count = int(prof.kids_count)
-    except Exception:
-        return False
+        missing.append("kids_count")
+        kids_count = None
+    else:
+        try:
+            kids_count = int(prof.kids_count)
+        except Exception:
+            kids_count = None
+            missing.append("kids_count")
 
     kids_ages = _normalize_parent_kids_ages(getattr(prof, "kids_ages_json", None))
-    if len(kids_ages) != kids_count:
-        return False
+    if kids_count is None or len(kids_ages) != kids_count:
+        missing.append("kids_ages")
     for age in kids_ages:
         years = _coerce_int_or_none(age.get("years"))
         months = _coerce_int_or_none(age.get("months"))
         if years is None and months is None:
-            return False
+            if "kids_ages" not in missing:
+                missing.append("kids_ages")
         if years is not None and (years < 0 or years > 18):
-            return False
+            if "kids_ages" not in missing:
+                missing.append("kids_ages")
         if months is not None and (months < 0 or months > 11):
-            return False
+            if "kids_ages" not in missing:
+                missing.append("kids_ages")
 
     if not prof.desired_tag_ids_json:
-        return False
+        missing.append("desired_tag_ids")
     try:
         tags = json.loads(prof.desired_tag_ids_json) or []
     except Exception:
-        return False
+        tags = []
     if len(tags) < 1:
-        return False
+        if "desired_tag_ids" not in missing:
+            missing.append("desired_tag_ids")
 
     if prof.home_language_id is None:
-        return False
+        missing.append("home_language_id")
     if not prof.residence_type:
-        return False
+        missing.append("residence_type")
 
     any_location = (
         db.query(models.ParentLocation)
@@ -6218,7 +6577,7 @@ def _is_profile_complete(db: Session, user_id: int) -> bool:
         .first()
     )
     if not any_location:
-        return False
+        missing.append("location")
 
     default_location = (
         db.query(models.ParentLocation)
@@ -6229,9 +6588,13 @@ def _is_profile_complete(db: Session, user_id: int) -> bool:
         .first()
     )
     if not default_location:
-        return False
+        missing.append("default_location")
 
-    return True
+    return missing
+
+
+def _is_profile_complete(db: Session, user_id: int) -> bool:
+    return not _parent_profile_missing_fields(db, user_id)
 
 
 @router.get("/parents/me/profile-status")
@@ -6239,7 +6602,8 @@ def parent_profile_status(authorization: Optional[str] = Header(default=None), d
     user = _require_user(authorization, db)
     if user.role != "parent":
         raise HTTPException(status_code=403, detail="Forbidden")
-    return {"is_profile_complete": _is_profile_complete(db, user.id)}
+    missing_fields = _parent_profile_missing_fields(db, user.id)
+    return {"is_profile_complete": not missing_fields, "missing_fields": missing_fields}
 
 
 @router.get("/parents/me/profile")
@@ -7302,6 +7666,19 @@ def update_parent_profile_details(
     )
 
     return {"ok": True, "user_id": user_id}
+
+
+@router.patch("/parents/me/profile")
+def update_parent_me_profile(
+    payload: schemas.ParentProfileDetailsRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return update_parent_profile_details(user.id, payload, request, db)
 
 
 @router.patch("/nannies/{nanny_id}/location", response_model=NannyLocationResponse)
@@ -9038,6 +9415,7 @@ def list_pending_nanny_approvals(
             "city": getattr(profile, "city", None),
             "application_status": getattr(profile, "application_status", None),
             "admin_reason": getattr(profile, "admin_reason", None),
+            "video_screening_complete": bool(getattr(nanny, "video_screening_complete", False)),
         })
     return {"results": out}
 
@@ -9083,6 +9461,12 @@ def list_nanny_applications(
             "application_status": getattr(profile, "application_status", None) or "pending",
             "admin_reason": getattr(profile, "admin_reason", None),
             "approved": bool(getattr(nanny, "approved", False)),
+            "video_screening_complete": bool(getattr(nanny, "video_screening_complete", False)),
+            "location_on_file": bool(
+                profile
+                and getattr(profile, "lat", None) is not None
+                and getattr(profile, "lng", None) is not None
+            ),
         })
     return {"results": out}
 
@@ -9428,6 +9812,18 @@ def list_admin_bookings_overview(
                 "booking_state": request_booking_state,
                 "parent_name": parent.name,
                 "parent_email": parent.email,
+                "parent_user_id": parent.id,
+                "parent_phone": (
+                    getattr(
+                        db.query(models.ParentProfile)
+                        .filter(models.ParentProfile.user_id == parent.id)
+                        .first(),
+                        "phone",
+                        None,
+                    )
+                    or getattr(parent, "phone", None)
+                ),
+                "parent_preferred_channel": getattr(parent, "preferred_messaging_channel", None) or "whatsapp",
                 "nanny_name": nanny.name,
                 "start_dt": request_start_dt,
                 "end_dt": request_end_dt,
@@ -9474,10 +9870,30 @@ def list_admin_bookings_overview(
                 "confirmed": bool(is_live_booking),
                 "parent_name": parent.name,
                 "parent_email": parent.email,
+                "parent_user_id": parent.id,
+                "parent_phone": (
+                    getattr(
+                        db.query(models.ParentProfile)
+                        .filter(models.ParentProfile.user_id == parent.id)
+                        .first(),
+                        "phone",
+                        None,
+                    )
+                    or getattr(parent, "phone", None)
+                ),
+                "parent_preferred_channel": getattr(parent, "preferred_messaging_channel", None) or "whatsapp",
                 "nanny_name": nanny.name,
                 "start_dt": booking.start_dt or (start_dt.isoformat() if start_dt else None),
                 "end_dt": booking.end_dt or (end_dt.isoformat() if end_dt else None),
                 "location_label": getattr(booking, "location_label", None) or getattr(booking, "formatted_address", None),
+                "formatted_address": getattr(booking, "formatted_address", None),
+                "lat": getattr(booking, "lat", None),
+                "lng": getattr(booking, "lng", None),
+                "price_cents": int(getattr(booking, "price_cents", 0) or 0),
+                "payout_amount_cents": getattr(booking, "payout_amount_cents", None),
+                "overrun_minutes": getattr(booking, "overrun_minutes", None),
+                "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),
+                "overrun_status": getattr(booking, "overrun_status", None),
                 "reason": getattr(booking, "cancellation_reason", None),
                 "created_at": None,
                 "updated_at": getattr(booking, "cancelled_at", None).isoformat() if getattr(booking, "cancelled_at", None) else None,
@@ -9624,9 +10040,12 @@ def admin_get_user(
         raise HTTPException(status_code=404, detail="User not found")
     return {
         "id": user.id,
+        "name": user.name,
         "email": user.email,
+        "phone": getattr(user, "phone", None),
         "role": user.role,
         "is_admin": bool(getattr(user, "is_admin", False)),
+        "is_active": bool(getattr(user, "is_active", True)),
         "created_at": None,
     }
 
@@ -9654,12 +10073,89 @@ def admin_get_parent_profile(
             access_flags = json.loads(getattr(profile, "access_flags_json", None)) or []
         except Exception:
             access_flags = []
+    desired_tag_ids = []
+    if profile and getattr(profile, "desired_tag_ids_json", None):
+        try:
+            desired_tag_ids = json.loads(profile.desired_tag_ids_json) or []
+        except Exception:
+            desired_tag_ids = []
+    locations = (
+        db.query(models.ParentLocation)
+        .filter(models.ParentLocation.parent_user_id == user_id)
+        .order_by(models.ParentLocation.is_default.desc(), models.ParentLocation.created_at.desc())
+        .all()
+    )
+    latest_booking_form = None
+    recent_requests = (
+        db.query(models.BookingRequest)
+        .filter(models.BookingRequest.parent_user_id == user_id)
+        .order_by(models.BookingRequest.updated_at.desc(), models.BookingRequest.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    for booking_request in recent_requests:
+        questionnaire = _booking_questionnaire_from_notes(getattr(booking_request, "client_notes", None))
+        has_client_form = any(
+            questionnaire.get(field)
+            for field in (
+                "responsibilities",
+                "adult_present",
+                "booking_reason",
+                "meal_option",
+                "food_restrictions",
+                "dogs_info",
+                "sleepover_expectations",
+                "sleepover_reason",
+            )
+        )
+        if not has_client_form:
+            continue
+        request_location = (
+            db.query(models.ParentLocation)
+            .filter(models.ParentLocation.id == booking_request.location_id)
+            .first()
+            if booking_request.location_id
+            else None
+        )
+        latest_booking_form = {
+            "request_id": booking_request.id,
+            "group_id": booking_request.group_id or booking_request.id,
+            "status": booking_request.status,
+            "received_at": (
+                booking_request.updated_at.isoformat()
+                if getattr(booking_request, "updated_at", None)
+                else booking_request.created_at.isoformat()
+                if getattr(booking_request, "created_at", None)
+                else None
+            ),
+            "start_dt": booking_request.start_dt,
+            "end_dt": booking_request.end_dt,
+            "sleepover": bool(booking_request.sleepover),
+            "requested_nannies_count": int(getattr(booking_request, "requested_nannies_count", 1) or 1),
+            "location": {
+                "label": getattr(request_location, "label", None),
+                "formatted_address": getattr(request_location, "formatted_address", None),
+            },
+            "pricing": {
+                "wage_cents": getattr(booking_request, "wage_cents", None),
+                "booking_fee_cents": getattr(booking_request, "booking_fee_cents", None),
+                "total_cents": getattr(booking_request, "total_cents", None),
+            },
+            **questionnaire,
+        }
+        break
+    missing_fields = _parent_profile_missing_fields(db, user_id)
     return {
         "name": user.name,
         "phone": getattr(profile, "phone", None) if profile else None,
         "phone_alt": getattr(user, "phone_alt", None),
+        "preferred_messaging_channel": getattr(user, "preferred_messaging_channel", None),
+        "profile_complete": not missing_fields,
+        "missing_fields": missing_fields,
         "kids_count": getattr(profile, "kids_count", None) if profile else None,
         "kids_ages": kids_ages,
+        "desired_tag_ids": desired_tag_ids,
+        "home_language_id": getattr(profile, "home_language_id", None) if profile else None,
         "suburb": (default_loc.suburb if default_loc else None) or (getattr(profile, "suburb", None) if profile else None),
         "city": (default_loc.city if default_loc else None) or (getattr(profile, "city", None) if profile else None),
         "province": (default_loc.province if default_loc else None) or (getattr(profile, "province", None) if profile else None),
@@ -9676,6 +10172,27 @@ def admin_get_parent_profile(
         "booking_meal_option": getattr(profile, "booking_meal_option", None) if profile else None,
         "booking_food_restrictions": getattr(profile, "booking_food_restrictions", None) if profile else None,
         "booking_dogs": getattr(profile, "booking_dogs", None) if profile else None,
+        "booking_disclaimer_basic_upkeep": bool(getattr(profile, "booking_disclaimer_basic_upkeep", False)) if profile else False,
+        "booking_disclaimer_medicine": bool(getattr(profile, "booking_disclaimer_medicine", False)) if profile else False,
+        "booking_disclaimer_extra_hours": bool(getattr(profile, "booking_disclaimer_extra_hours", False)) if profile else False,
+        "booking_disclaimer_transport": bool(getattr(profile, "booking_disclaimer_transport", False)) if profile else False,
+        "locations": [
+            {
+                "id": loc.id,
+                "label": loc.label,
+                "formatted_address": loc.formatted_address,
+                "suburb": loc.suburb,
+                "city": loc.city,
+                "province": loc.province,
+                "postal_code": loc.postal_code,
+                "country": loc.country,
+                "lat": loc.lat,
+                "lng": loc.lng,
+                "is_default": bool(loc.is_default),
+            }
+            for loc in locations
+        ],
+        "latest_booking_form": latest_booking_form,
     }
 
 
@@ -9706,16 +10223,51 @@ def admin_get_nanny_profile(
                 certificate_urls = [str(url).strip() for url in parsed_certs if str(url).strip()]
         except Exception:
             certificate_urls = []
+    try:
+        video_screening_clips = json.loads(getattr(nanny, "video_screening_json", None) or "[]") if nanny else []
+    except Exception:
+        video_screening_clips = []
     age = compute_age(getattr(profile, "date_of_birth", None)) if profile else None
+    profile_missing_fields = nanny_profile_missing_fields(user, profile)
+    resubmission_requested = db.query(models.InAppNotification).filter(
+        models.InAppNotification.title == "Video interview resubmission requested",
+        models.InAppNotification.body.contains(f"User #{user.id}"),
+        models.InAppNotification.read == False,
+    ).first() is not None
+    try:
+        document_approvals = json.loads(getattr(profile, "document_approvals_json", None) or "{}") if profile else {}
+    except Exception:
+        document_approvals = {}
     return {
         "name": user.name,
+        "email": user.email,
         "phone": getattr(user, "phone", None),
         "phone_alt": getattr(user, "phone_alt", None),
+        "profile_photo_url": getattr(user, "profile_photo_url", None),
+        "preferred_messaging_channel": getattr(user, "preferred_messaging_channel", None),
         "nanny_id": nanny.id if nanny else None,
         "suburb": getattr(profile, "suburb", None) if profile else None,
         "city": getattr(profile, "city", None) if profile else None,
         "province": getattr(profile, "province", None) if profile else None,
-        "approved": bool(getattr(nanny, "approved", False)) if nanny else False,
+        "approved": bool(
+            nanny
+            and getattr(nanny, "approved", False)
+            and getattr(profile, "application_status", None) == "approved"
+            and bool(getattr(profile, "is_approved", 0))
+        ),
+        "profile_complete": not profile_missing_fields,
+        "profile_missing_fields": profile_missing_fields,
+        "availability_complete": bool(getattr(nanny, "availability_complete", False)) if nanny else False,
+        "banking_complete": bool(getattr(nanny, "banking_complete", False)) if nanny else False,
+        "is_suspended": bool(getattr(nanny, "is_suspended", False)) if nanny else False,
+        "suspension_reason": getattr(nanny, "suspension_reason", None) if nanny else None,
+        "cancellation_count": int(getattr(nanny, "cancellation_count", 0) or 0) if nanny else 0,
+        "no_show_count": int(getattr(nanny, "no_show_count", 0) or 0) if nanny else 0,
+        "rating_demerit_pct": float(getattr(nanny, "rating_demerit_pct", 0) or 0) if nanny else 0,
+        "video_screening_complete": bool(getattr(nanny, "video_screening_complete", False)) if nanny else False,
+        "video_screening_submitted_at": getattr(nanny, "video_screening_submitted_at", None) if nanny else None,
+        "video_screening_clips": video_screening_clips,
+        "video_resubmission_requested": resubmission_requested,
         "application_status": getattr(profile, "application_status", None) if profile else None,
         "admin_reason": getattr(profile, "admin_reason", None) if profile else None,
         "reviewed_at": getattr(profile, "reviewed_at", None) if profile else None,
@@ -9748,6 +10300,7 @@ def admin_get_nanny_profile(
         "police_clearance_document_url": getattr(profile, "police_clearance_document_url", None) if profile else None,
         "drivers_license_document_url": getattr(profile, "drivers_license_document_url", None) if profile else None,
         "certificate_urls": certificate_urls,
+        "document_approvals": document_approvals,
         "dog_preference": getattr(profile, "dog_preference", None) if profile else None,
         "job_type": getattr(profile, "job_type", None) if profile else None,
         "current_job_availability": getattr(profile, "current_job_availability", None) if profile else None,
@@ -9768,6 +10321,197 @@ def admin_get_nanny_profile(
         "lat": getattr(profile, "lat", None) if profile else None,
         "lng": getattr(profile, "lng", None) if profile else None,
     }
+
+
+@router.patch("/admin/nannies/{user_id}/profile")
+def admin_update_nanny_profile(
+    user_id: int,
+    payload: schemas.AdminNannyProfileUpdate,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user_id).first()
+    if not user or not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+    if not profile:
+        profile = models.NannyProfile(nanny_id=nanny.id)
+        db.add(profile)
+        db.flush()
+    before = _nanny_profile_snapshot(user, profile)
+    values = payload.model_dump(exclude_unset=True)
+    user_fields = {"full_name": "name", "email": "email", "phone": "phone", "phone_alt": "phone_alt", "preferred_messaging_channel": "preferred_messaging_channel"}
+    profile_fields = {
+        "dob": "date_of_birth", "bio": "bio", "nationality": "nationality",
+        "gender": "gender", "ethnicity": "ethnicity", "has_own_kids": "has_own_kids",
+        "own_kids_details": "own_kids_details", "medical_conditions": "medical_conditions",
+        "formatted_address": "formatted_address", "suburb": "suburb", "city": "city",
+        "province": "province", "postal_code": "postal_code", "country": "country",
+        "lat": "lat", "lng": "lng", "sa_id_number": "sa_id_number",
+        "passport_number": "passport_number", "passport_expiry": "passport_expiry",
+        "permit_status": "permit_status", "work_permit": "work_permit",
+        "work_permit_expiry": "work_permit_expiry", "waiver": "waiver",
+        "police_clearance_status": "police_clearance_status",
+        "has_own_car": "has_own_car", "has_drivers_license": "has_drivers_license",
+        "job_type": "job_type", "current_job_availability": "current_job_availability",
+        "my_nanny_training_status": "my_nanny_training_status",
+        "dog_preference": "dog_preference", "studying_details": "studying_details",
+    }
+    for field, attr in user_fields.items():
+        if field in values:
+            value = values[field]
+            setattr(user, attr, value.strip() if isinstance(value, str) else value)
+    for field, attr in profile_fields.items():
+        if field in values:
+            value = values[field]
+            if field == "passport_expiry" and value != getattr(profile, "passport_expiry", None):
+                _clear_document_approval(profile, "passport_document_url")
+            setattr(profile, attr, value.strip() if isinstance(value, str) else value)
+    if "previous_jobs" in values:
+        cleaned_jobs = []
+        for job in values["previous_jobs"] or []:
+            cleaned = {
+                key: ((value.strip() or None) if isinstance(value, str) else value)
+                for key, value in dict(job).items()
+            }
+            if any(cleaned.values()):
+                cleaned_jobs.append(cleaned)
+        profile.previous_jobs_json = json.dumps(cleaned_jobs)
+    if "qualification_ids" in values:
+        profile.qualifications = db.query(models.Qualification).filter(
+            models.Qualification.id.in_(values["qualification_ids"] or [])
+        ).all()
+    if "tag_ids" in values:
+        profile.tags = db.query(models.NannyTag).filter(
+            models.NannyTag.id.in_(values["tag_ids"] or [])
+        ).all()
+    if "language_ids" in values:
+        profile.languages = db.query(models.Language).filter(
+            models.Language.id.in_(values["language_ids"] or [])
+        ).all()
+    sync_nanny_profile_complete(nanny, user, profile)
+    db.commit()
+    log_profile_update(db, actor_user=admin, target_user_id=user.id, entity="nanny_profiles", entity_id=profile.id, before_obj=before, after_obj=_nanny_profile_snapshot(user, profile), request=request, action="admin_update")
+    return {"ok": True, "user_id": user.id}
+
+
+ADMIN_DOCUMENT_FIELDS = {
+    "sa_id": ("id", "sa_id_document_url"),
+    "passport": ("passport", "passport_document_url"),
+    "work_permit": ("permit", "work_permit_document_url"),
+    "police_clearance": ("police", "police_clearance_document_url"),
+    "drivers_license": ("drivers_license", "drivers_license_document_url"),
+    "certificate": ("certificate", "certificates_json"),
+}
+
+
+@router.post("/admin/nannies/{user_id}/documents/{document_type}")
+def admin_upload_nanny_document(
+    user_id: int,
+    document_type: str,
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    target = db.query(models.User).filter(models.User.id == user_id).first()
+    config = ADMIN_DOCUMENT_FIELDS.get(document_type)
+    if not target or target.role != "nanny":
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    if not config:
+        raise HTTPException(status_code=400, detail="Unsupported document type")
+    prefix, attr = config
+    return _upload_nanny_optional_document(user=target, actor_user=admin, request=request, db=db, file=file, filename_prefix=prefix, profile_attr=attr, append_json_list=document_type == "certificate")
+
+
+@router.patch("/admin/nannies/{user_id}/documents/{document_type}/approval")
+def admin_set_nanny_document_approval(
+    user_id: int,
+    document_type: str,
+    request: Request,
+    approved: bool = Query(...),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user_id).first()
+    config = ADMIN_DOCUMENT_FIELDS.get(document_type)
+    if not nanny or not config:
+        raise HTTPException(status_code=404, detail="Document record not found")
+    profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+    attr = config[1]
+    if not profile or not getattr(profile, attr, None):
+        raise HTTPException(status_code=409, detail="Upload the document before approving it")
+    try:
+        approvals = json.loads(getattr(profile, "document_approvals_json", None) or "{}")
+    except Exception:
+        approvals = {}
+    before = dict(approvals)
+    if approved:
+        approval = {"approved": True, "approved_at": utc_now().isoformat(), "approved_by_user_id": admin.id}
+        if document_type == "passport":
+            try:
+                passport_expiry = date.fromisoformat(str(profile.passport_expiry or ""))
+            except ValueError:
+                raise HTTPException(status_code=409, detail="Enter a valid passport expiry date before approval")
+            if passport_expiry <= date.today():
+                raise HTTPException(status_code=409, detail="The passport expiry date must be in the future")
+            approval["approved_expiry"] = passport_expiry.isoformat()
+        approvals[attr] = approval
+    else:
+        approvals.pop(attr, None)
+    profile.document_approvals_json = json.dumps(approvals)
+    db.commit()
+    if approved and document_type == "passport":
+        if nanny.is_suspended and "passport" in str(nanny.suspension_reason or "").lower():
+            nanny.is_suspended = False
+            nanny.suspended_at = None
+            nanny.suspension_reason = None
+            nanny.suspension_lifted_at = utc_now()
+            nanny.suspension_lifted_by = admin.id
+        notify(
+            db,
+            user_id,
+            "passport_renewal_approved",
+            f"Your passport and expiry date ({profile.passport_expiry}) have been approved.",
+            reference_id=profile.id,
+        )
+        db.commit()
+    log_audit(db, actor_user=admin, target_user_id=user_id, entity="nanny_documents", entity_id=profile.id, action="document_approval", before_obj=before, after_obj=approvals, changed_fields=[attr], request=request)
+    return {"ok": True, "document_type": document_type, "approved": approved}
+
+
+@router.post("/admin/users/{user_id}/video-resubmission/approve")
+def admin_approve_video_resubmission(
+    user_id: int,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user_id).first()
+    if not nanny:
+        raise HTTPException(status_code=404, detail="Nanny not found")
+    requests = db.query(models.InAppNotification).filter(
+        models.InAppNotification.title == "Video interview resubmission requested",
+        models.InAppNotification.body.contains(f"User #{user_id}"),
+        models.InAppNotification.read == False,
+    ).all()
+    if not requests:
+        raise HTTPException(status_code=409, detail="No active resubmission request")
+    before = {"video_screening_complete": bool(nanny.video_screening_complete), "submitted_at": str(nanny.video_screening_submitted_at)}
+    nanny.video_screening_complete = False
+    nanny.video_screening_submitted_at = None
+    nanny.video_screening_json = "[]"
+    for item in requests:
+        item.read = True
+    db.commit()
+    log_audit(db, actor_user=admin, target_user_id=user_id, entity="nannies", entity_id=nanny.id, action="video_resubmission_approved", before_obj=before, after_obj={"video_screening_complete": False, "submitted_at": None}, changed_fields=None, request=request)
+    return {"ok": True, "user_id": user_id}
 
 
 @router.get("/admin/users/{user_id}/booking-stats")
@@ -9942,6 +10686,7 @@ def admin_list_users(
     nanny_profiles = {}
     nanny_ids = {}
     nanny_approved_map = {}
+    nanny_video_map = {}
     nanny_user_ids = [u.id for u in users if u.role == "nanny"]
     if nanny_user_ids:
         nannies = (
@@ -9954,11 +10699,7 @@ def admin_list_users(
             nanny_profiles[nanny.user_id] = profile
             nanny_ids[nanny.user_id] = nanny.id
             nanny_approved_map[nanny.user_id] = bool(getattr(nanny, "approved", False)) or bool(getattr(profile, "is_approved", 0) if profile else 0)
-
-    users = [
-        u for u in users
-        if u.role != "nanny" or nanny_approved_map.get(u.id, False)
-    ]
+            nanny_video_map[nanny.user_id] = bool(getattr(nanny, "video_screening_complete", False))
 
     search_term = (q or "").strip().lower()
     if search_term:
@@ -10020,6 +10761,9 @@ def admin_list_users(
             "role": u.role,
             "is_admin": bool(getattr(u, "is_admin", False)),
             "nanny_id": nanny_ids.get(u.id),
+            "approved": nanny_approved_map.get(u.id, False) if u.role == "nanny" else None,
+            "application_status": getattr(nanny_profiles.get(u.id), "application_status", None) if u.role == "nanny" else None,
+            "video_screening_complete": nanny_video_map.get(u.id, False) if u.role == "nanny" else None,
             "joined_at": audit_map.get(u.id, {}).get("joined_at").isoformat() if audit_map.get(u.id, {}).get("joined_at") else None,
             "last_activity_at": audit_map.get(u.id, {}).get("last_activity_at").isoformat() if audit_map.get(u.id, {}).get("last_activity_at") else None,
             "location": location_for_user(u),
@@ -10073,6 +10817,70 @@ def admin_set_user_admin(
         "email": user.email,
         "role": user.role,
         "is_admin": bool(user.is_admin),
+    }
+
+
+@router.patch("/admin/users/{user_id}/role")
+def admin_set_user_role(
+    user_id: int,
+    payload: schemas.AdminSetUserRoleRequest,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_admin(authorization, db)
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if getattr(user, "is_admin", False):
+        raise HTTPException(status_code=409, detail="Remove administrator access before changing this account type")
+
+    old_role = user.role
+    new_role = payload.role
+    if old_role == new_role:
+        return {"id": user.id, "role": user.role, "nanny_id": None}
+
+    nanny_id = None
+    if new_role == "nanny":
+        nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+        if not nanny:
+            nanny = models.Nanny(user_id=user.id, approved=False)
+            db.add(nanny)
+            db.flush()
+        profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+        if not profile:
+            profile = models.NannyProfile(nanny_id=nanny.id, application_status="pending")
+            db.add(profile)
+        nanny_id = nanny.id
+        user.is_active = False
+    else:
+        parent_profile = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user.id).first()
+        if not parent_profile:
+            db.add(models.ParentProfile(user_id=user.id, phone=getattr(user, "phone", None)))
+        user.is_active = True
+
+    user.role = new_role
+    db.commit()
+    db.refresh(user)
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=user.id,
+        entity="users",
+        entity_id=user.id,
+        action="role_change",
+        before_obj={"role": old_role},
+        after_obj={"role": new_role},
+        changed_fields=["role"],
+        request=request,
+    )
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "is_admin": bool(user.is_admin),
+        "nanny_id": nanny_id,
     }
 
 
@@ -10234,6 +11042,14 @@ def admin_set_nanny_application_status(
     if payload.status == "hold" and not (payload.reason or "").strip():
         raise HTTPException(status_code=400, detail="Please provide a note explaining what information is still outstanding")
 
+    if payload.status == "approved" and not bool(getattr(nanny, "video_screening_complete", False)):
+        raise HTTPException(status_code=409, detail="Video screening must be completed before approval")
+
+    if payload.status == "approved" and (
+        getattr(profile, "lat", None) is None or getattr(profile, "lng", None) is None
+    ):
+        raise HTTPException(status_code=409, detail="A verified nanny location is required before approval")
+
     profile.application_status = payload.status
     profile.admin_reason = (payload.reason or "").strip() or None
     profile.reviewed_at = utc_now().isoformat()
@@ -10363,12 +11179,14 @@ def admin_create_invite(
         expires_at=expires_at,
         invited_by_user_id=admin.id,
         reason=(payload.reason or "").strip() or None,
+        access_level=payload.access_level,
     )
     db.add(invite)
     db.commit()
     db.refresh(invite)
 
-    link = f"{app_base_url()}/static/admin_invite.html?token={token}"
+    frontend_base = (os.getenv("V2_BASE_URL") or "http://localhost:3000").rstrip("/")
+    link = f"{frontend_base}/admin-invite?token={token}"
     body = "\n".join([
         "You have been invited to become an admin.",
         "",
@@ -10386,7 +11204,7 @@ def admin_create_invite(
         entity_id=invite.id,
         action="create",
         before_obj={},
-        after_obj={"email": email, "status": invite.status, "expires_at": invite.expires_at},
+        after_obj={"email": email, "status": invite.status, "expires_at": invite.expires_at, "access_level": invite.access_level},
         changed_fields=None,
         request=request,
     )
@@ -10406,6 +11224,7 @@ def get_admin_invite(token: str, db: Session = Depends(get_db)):
         "email": invite.email,
         "status": invite.status,
         "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+        "access_level": invite.access_level,
     }
 
 
@@ -10444,6 +11263,11 @@ def accept_admin_invite(
     )
     db.add(user)
     db.flush()
+    db.add(models.AdminProfile(
+        user_id=user.id,
+        access_level=invite.access_level or "operations",
+        is_superadmin=(invite.access_level == "superadmin"),
+    ))
 
     invite.status = "accepted"
     invite.accepted_at = now
@@ -10636,4 +11460,113 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
                 )
 
     db.commit()
+    return {"ok": True}
+
+
+def _reconstruct_webhook_url(request: Request) -> str:
+    """Best-effort reconstruction of the externally-visible URL Twilio was
+    configured with. Behind Render's reverse proxy, request.url can report
+    the wrong scheme/host unless the forwarded headers are trusted, so this
+    prefers X-Forwarded-Proto/X-Forwarded-Host when present. NOTE: this needs
+    a real round-trip signature check against the deployed URL - a
+    self-fabricated-signature unit test alone cannot catch a reconstruction
+    mismatch here."""
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}{request.url.path}"
+
+
+def _twilio_signature_valid(url: str, params: dict, signature: str, auth_token: str) -> bool:
+    base = url
+    for key in sorted(params.keys()):
+        base += key + str(params[key])
+    computed = base64.b64encode(
+        hmac.new(auth_token.encode("utf-8"), base.encode("utf-8"), hashlib.sha1).digest()
+    ).decode("ascii")
+    return hmac.compare_digest(computed, signature)
+
+
+@router.post("/whatsapp/webhook")
+async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
+    auth_token = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+    form = await request.form()
+    params = dict(form)
+    signature = request.headers.get("x-twilio-signature") or request.headers.get("X-Twilio-Signature")
+
+    def _log_webhook_rejection(reason: str) -> None:
+        try:
+            log_audit(
+                db,
+                actor_user=None,
+                target_user_id=None,
+                entity="whatsapp_webhook",
+                entity_id=None,
+                action="webhook_rejected",
+                before_obj=None,
+                after_obj={"reason": reason},
+                changed_fields=None,
+                request=request,
+            )
+        except Exception:
+            pass
+
+    if not auth_token or not signature:
+        _log_webhook_rejection("missing_secret_or_signature")
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    url = _reconstruct_webhook_url(request)
+    if not _twilio_signature_valid(url, params, signature, auth_token):
+        _log_webhook_rejection("signature_mismatch")
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    # Always ack with empty TwiML past this point - Twilio retries
+    # aggressively on non-2xx, and a malformed/unexpected payload here is not
+    # worth failing the webhook over.
+    try:
+        from_number = str(params.get("From") or "").strip()
+        if from_number.startswith("whatsapp:"):
+            from_number = from_number[len("whatsapp:"):]
+        body = str(params.get("Body") or "")
+        message_sid = params.get("MessageSid") or params.get("SmsMessageSid")
+        if from_number:
+            conversations.ingest_inbound_whatsapp(
+                db, from_phone=from_number, body=body, message_sid=message_sid
+            )
+    except Exception:
+        pass
+
+    return Response(content="<Response></Response>", media_type="application/xml")
+
+
+@router.post("/telegram/webhook/{secret}")
+async def telegram_webhook(secret: str, request: Request, db: Session = Depends(get_db)):
+    expected_secret = (os.getenv("TELEGRAM_WEBHOOK_SECRET") or "").strip()
+    header_secret = request.headers.get("x-telegram-bot-api-secret-token") or ""
+
+    if not expected_secret or not hmac.compare_digest(secret, expected_secret):
+        raise HTTPException(status_code=404)
+    # Defense in depth: also check the header Telegram sets when setWebhook
+    # was called with secret_token - don't hard-fail if it's absent (older
+    # setWebhook calls may not have set it), only if it's present and wrong.
+    if header_secret and not hmac.compare_digest(header_secret, expected_secret):
+        raise HTTPException(status_code=404)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"ok": True}
+
+    try:
+        message = payload.get("message") or payload.get("edited_message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        text = message.get("text") or ""
+        message_id = message.get("message_id")
+        if chat_id is not None:
+            conversations.ingest_inbound_telegram(
+                db, chat_id=str(chat_id), text=text, message_id=str(message_id) if message_id is not None else None
+            )
+    except Exception:
+        pass
+
     return {"ok": True}

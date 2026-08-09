@@ -125,6 +125,16 @@
     <label>Phone</label>
     <input type="tel" id="phone" placeholder="+27..." required />
 
+    <label class="lbl">Preferred contact method</label>
+    <select id="messagingChannel" class="inp">
+      <option value="whatsapp">WhatsApp</option>
+      <option value="telegram" id="telegramOption" disabled>Telegram</option>
+    </select>
+    <div style="margin-top:8px; display:flex; align-items:center; gap:10px;">
+      <button class="btn secondary" id="connectTelegramBtn" type="button">Connect Telegram</button>
+      <span id="telegramStatus" class="hint"></span>
+    </div>
+
     <label class="lbl">Kids count</label>
     <select id="kidsCount" class="inp">
       <option value="0" selected>0</option>
@@ -772,6 +782,49 @@
       }
     });
 
+    async function loadMessagingPreferences() {
+      const me = await fetchJson("/auth/me");
+      const select = document.getElementById("messagingChannel");
+      const telegramOption = document.getElementById("telegramOption");
+      const telegramStatus = document.getElementById("telegramStatus");
+      const connectBtn = document.getElementById("connectTelegramBtn");
+
+      telegramOption.disabled = !me.telegram_linked;
+      select.value = me.preferred_messaging_channel || "whatsapp";
+      if (me.telegram_linked) {
+        telegramStatus.textContent = "Connected";
+        connectBtn.style.display = "none";
+      } else {
+        telegramStatus.textContent = "";
+        connectBtn.style.display = "inline-block";
+      }
+    }
+
+    document.getElementById("connectTelegramBtn").addEventListener("click", async () => {
+      const statusEl = document.getElementById("telegramStatus");
+      try {
+        const data = await fetchJson("/me/telegram/connect", { method: "POST" });
+        window.open(data.deep_link, "_blank");
+        statusEl.textContent = "Open Telegram, tap Start, then come back and refresh this page.";
+      } catch (e) {
+        statusEl.textContent = e?.message || "Failed to generate link";
+      }
+    });
+
+    document.getElementById("messagingChannel").addEventListener("change", async (e) => {
+      const channel = e.target.value;
+      try {
+        await fetchJson("/me/messaging-channel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel }),
+        });
+      } catch (err) {
+        alert(err?.message || "Failed to update preference");
+        loadMessagingPreferences();
+      }
+    });
+
     document.addEventListener("DOMContentLoaded", () => {
       guard().then(() => loadProfileAndPrefill()).catch(() => {});
     });
@@ -785,6 +838,7 @@
         banner.style.display = "block";
       }
       await loadLocations();
+      await loadMessagingPreferences().catch(() => {});
       try {
         const status = await fetchJson("/parents/me/profile-status");
         document.getElementById("viewNanniesBtn").style.display = status?.is_profile_complete ? "inline-block" : "none";

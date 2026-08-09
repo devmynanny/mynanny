@@ -260,15 +260,16 @@ async function requireMe() {
 }
 
 function routeByRole(role, me = null) {
-  if (role === "parent") window.location.href = "/static/parent_home.html";
+  if (role === "parent") window.location.href = "/static/v2/parent_home.html";
   else if (role === "nanny") {
     if ((me?.nanny_application_status || "") === "hold") {
       window.location.href = "/static/nanny.html?hold=1";
       return;
     }
-    window.location.href = "/static/nanny_home.html?v=2";
+    window.location.href = "/static/v2/nanny_home.html";
   }
-  else window.location.href = "/static/login.html";
+  else if (me?.is_admin) window.location.href = "/static/v2/admin_dashboard.html";
+  else window.location.href = "/static/v2/login.html";
 }
 
 function showNannyHoldBrowserNotice(message) {
@@ -329,7 +330,7 @@ function logout() {
       getCsrfToken() ? { "X-CSRF-Token": getCsrfToken() } : {}
     )
   }).finally(() => {
-    window.location.href = "/static/login.html";
+    window.location.href = "/static/v2/login.html";
   });
 }
 

@@ -2,9 +2,30 @@
 
 ## Architecture
 
-- Web service: FastAPI on Render (render.yaml), uvicorn.
+- Frontend: Next.js V2 on Render (`mynanny-v2`), proxied to the backend through same-origin `/api/*` rewrites.
+- Backend: FastAPI on Render (`mynanny`), uvicorn.
 - Database: managed Render Postgres (`mynanny-db`). SQLite is LOCAL DEV ONLY.
-- Uploads: persistent Render disk mounted at `app/static/uploads` (documents, photos). The database no longer lives on this disk.
+- Uploads: private S3-compatible object storage, delivered through authenticated `/media/*` routes. Local development continues to use `app/static/uploads`.
+
+## Private media storage
+
+Production and staging use `STORAGE_BACKEND=s3`. Configure:
+
+- `S3_BUCKET`: private bucket name.
+- `S3_REGION`: provider region.
+- `S3_ENDPOINT_URL`: optional for S3-compatible providers such as Cloudflare R2; omit for AWS S3.
+- `S3_ACCESS_KEY_ID`: restricted application access key.
+- `S3_SECRET_ACCESS_KEY`: restricted application secret.
+
+Production AWS values:
+
+- `STORAGE_BACKEND=s3`
+- `S3_BUCKET=my-nanny-production-uploads-337903911181-af-south-1-an`
+- `S3_REGION=af-south-1`
+- Leave `S3_ENDPOINT_URL` unset for AWS S3.
+- `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` belong to the restricted Render application identity, never the AWS root user.
+
+The bucket must remain private. Do not configure public-read ACLs or expose its provider URL. The application stores stable `/media/<key>` references and checks authentication and document ownership before streaming an object. Existing `/static/uploads/*` database references remain supported while historical files are migrated.
 - Schema management:
   - Postgres: Alembic only. `alembic upgrade head` runs automatically before each deploy (`preDeployCommand`).
   - SQLite (local dev): `create_all` + legacy `ensure_*` functions run at app startup, unchanged workflow.
@@ -18,6 +39,24 @@
 | JWT_SECRET | Token signing |
 | AUTH_SECRET | Auth cookies |
 | PAYSTACK_SECRET_KEY | Live Paystack secret key (sk_live_...) |
+| TWILIO_ACCOUNT_SID | Existing WhatsApp notification sending (unchanged) |
+| TWILIO_AUTH_TOKEN | Also verifies inbound `/whatsapp/webhook` signatures |
+| TWILIO_WHATSAPP_FROM | Existing WhatsApp notification sending (unchanged) |
+| TELEGRAM_BOT_TOKEN | Bot API token from @BotFather - outbound sends |
+| TELEGRAM_BOT_USERNAME | Bot's @username (no @) - used to build the `/me/telegram/connect` deep link |
+| TELEGRAM_WEBHOOK_SECRET | Random secret; also the path segment in `/telegram/webhook/{secret}` and the `setWebhook` `secret_token` |
+
+### Conversations (WhatsApp/Telegram inbox) one-off setup
+
+1. In Twilio's console, set the WhatsApp sender's inbound webhook URL to `https://<render-url>/whatsapp/webhook` (POST). No code-side registration call needed - Twilio just needs the URL configured.
+2. Register the Telegram webhook once (from any machine with `TELEGRAM_BOT_TOKEN` and the deployed URL):
+   ```bash
+   curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+     -d "url=https://<render-url>/telegram/webhook/$TELEGRAM_WEBHOOK_SECRET" \
+     -d "secret_token=$TELEGRAM_WEBHOOK_SECRET"
+   ```
+   Re-run this any time `TELEGRAM_WEBHOOK_SECRET` is rotated - Telegram doesn't pick up the new value on its own.
+3. The WhatsApp signature check reconstructs the request URL from `X-Forwarded-Proto`/`X-Forwarded-Host` (Render terminates TLS in front of the app) - if signature verification ever fails only in production and not locally, this reconstruction is the first thing to check against what's actually configured in Twilio's console.
 
 ## First-time Postgres cutover (one-off)
 

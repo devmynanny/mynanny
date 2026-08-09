@@ -51,6 +51,7 @@ class NannySearchResult(BaseModel):
     has_identity_document: bool = False
     has_passport_document: bool = False
     previous_jobs: Optional[List[dict]] = None
+    trust_badges: Optional[List[dict]] = None
 
 class SearchNanniesResponse(BaseModel):
     results: List[NannySearchResult] = []
@@ -145,6 +146,49 @@ class NannyMeProfileUpdate(BaseModel):
     police_clearance_document_url: Optional[str] = None
     drivers_license_document_url: Optional[str] = None
     certificate_urls: Optional[List[str]] = None
+    previous_jobs: Optional[List[NannyPreviousJob]] = None
+    qualification_ids: Optional[List[int]] = None
+    tag_ids: Optional[List[int]] = None
+    language_ids: Optional[List[int]] = None
+
+
+class AdminNannyProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    phone_alt: Optional[str] = None
+    preferred_messaging_channel: Optional[str] = None
+    dob: Optional[date] = None
+    bio: Optional[str] = None
+    nationality: Optional[str] = None
+    gender: Optional[str] = None
+    ethnicity: Optional[str] = None
+    has_own_kids: Optional[bool] = None
+    own_kids_details: Optional[str] = None
+    medical_conditions: Optional[str] = None
+    formatted_address: Optional[str] = None
+    suburb: Optional[str] = None
+    city: Optional[str] = None
+    province: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    sa_id_number: Optional[str] = None
+    passport_number: Optional[str] = None
+    passport_expiry: Optional[str] = None
+    permit_status: Optional[str] = None
+    work_permit: Optional[bool] = None
+    work_permit_expiry: Optional[str] = None
+    waiver: Optional[bool] = None
+    police_clearance_status: Optional[str] = None
+    has_own_car: Optional[bool] = None
+    has_drivers_license: Optional[bool] = None
+    job_type: Optional[str] = None
+    current_job_availability: Optional[str] = None
+    my_nanny_training_status: Optional[str] = None
+    dog_preference: Optional[str] = None
+    studying_details: Optional[str] = None
     previous_jobs: Optional[List[NannyPreviousJob]] = None
     qualification_ids: Optional[List[int]] = None
     tag_ids: Optional[List[int]] = None
@@ -422,6 +466,7 @@ class AdminNannyApplicationUpdateRequest(BaseModel):
 class AdminInviteCreateRequest(BaseModel):
     email: EmailStr
     reason: Optional[str] = None
+    access_level: Literal["operations", "finance", "superadmin"] = "operations"
 
 
 class AdminInviteAcceptRequest(BaseModel):
@@ -455,6 +500,8 @@ class AuthUserOut(BaseModel):
     is_active: bool = True
     nanny_application_status: Optional[str] = None
     nanny_admin_reason: Optional[str] = None
+    preferred_messaging_channel: str = "whatsapp"
+    telegram_linked: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -632,8 +679,16 @@ class GeoReverseErrorResponse(BaseModel):
     raw: Optional[dict] = None
 
 
+class SetMessagingChannelRequest(BaseModel):
+    channel: str
+
+
 class AdminSetUserAdminRequest(BaseModel):
     is_admin: bool
+
+
+class AdminSetUserRoleRequest(BaseModel):
+    role: Literal["parent", "nanny"]
 
 
 class AdminSetNannyApprovalRequest(BaseModel):
