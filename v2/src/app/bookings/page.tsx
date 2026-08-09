@@ -44,6 +44,7 @@ type BookingEstimate = {
   per_nanny_wage_cents: number;
   per_nanny_fee_cents: number;
   booking_fee_pct: number;
+  selected_total_cents: number;
 };
 type PaymentMethod = {
   has_card: boolean;
@@ -102,6 +103,7 @@ export default function Bookings() {
   const [reason, setReason] = useState("");
   const [responsibilities, setResponsibilities] = useState("");
   const [kids, setKids] = useState("1");
+  const [nanniesNeeded, setNanniesNeeded] = useState("1");
   const [adultPresent, setAdultPresent] = useState("parent");
   const [mealOption, setMealOption] = useState("meal_provided");
   const [foodRestrictions, setFoodRestrictions] = useState("");
@@ -164,6 +166,7 @@ export default function Bookings() {
         if (typeof draft.reason === "string") setReason(draft.reason);
         if (typeof draft.responsibilities === "string") setResponsibilities(draft.responsibilities);
         if (typeof draft.kids === "string") setKids(draft.kids);
+        if (typeof draft.nanniesNeeded === "string") setNanniesNeeded(draft.nanniesNeeded);
         if (typeof draft.adultPresent === "string") setAdultPresent(draft.adultPresent);
         if (typeof draft.mealOption === "string") setMealOption(draft.mealOption);
         if (typeof draft.foodRestrictions === "string") setFoodRestrictions(draft.foodRestrictions);
@@ -201,7 +204,7 @@ export default function Bookings() {
         body: JSON.stringify({
           slots: selected.map((date) => ({ starts_at: slot(date, startTime), ends_at: slot(date, endTime) })),
           sleepover,
-          requested_nannies_count: 1,
+          requested_nannies_count: Number(nanniesNeeded),
           kids_count: Number(kids),
         }),
       });
@@ -240,7 +243,7 @@ export default function Bookings() {
     }
     const selectedLocation = locations.find((location) => String(location.id) === locationId);
     window.sessionStorage.setItem("my-nanny-booking-draft", JSON.stringify({
-      selected, locationId, startTime, endTime, reason, responsibilities, kids,
+      selected, locationId, startTime, endTime, reason, responsibilities, kids, nanniesNeeded,
       adultPresent, mealOption, foodRestrictions, dogsInfo, sleepover,
       sleepoverExpectations, sleepoverReason, accepted,
       lat: selectedLocation?.lat,
@@ -423,6 +426,26 @@ export default function Bookings() {
                     </label>
                     <label>
                       <span className="mb-2 block text-sm font-bold">
+                        Number of nannies needed
+                      </span>
+                      <select
+                        className="field"
+                        value={nanniesNeeded}
+                        onChange={(e) => {
+                          setNanniesNeeded(e.target.value);
+                          setEstimate(null);
+                        }}
+                      >
+                        {[1, 2, 3, 4, 5].map((value) => (
+                          <option key={value} value={value}>{value}</option>
+                        ))}
+                      </select>
+                      <span className="mt-2 block text-xs text-[var(--muted)]">
+                        The request stays open until every position is filled.
+                      </span>
+                    </label>
+                    <label>
+                      <span className="mb-2 block text-sm font-bold">
                         Number of children
                       </span>
                       <select
@@ -517,7 +540,8 @@ export default function Bookings() {
                       <div className="grid gap-2 text-sm">
                         <div className="flex justify-between"><span>Nanny wage</span><b>R{(estimate.per_nanny_wage_cents / 100).toFixed(2)}</b></div>
                         <div className="flex justify-between"><span>Booking fee ({(estimate.booking_fee_pct * 100).toFixed(0)}%)</span><b>R{(estimate.per_nanny_fee_cents / 100).toFixed(2)}</b></div>
-                        <div className="flex justify-between border-t border-[var(--line)] pt-2 text-base"><span>Estimated total</span><b>R{(estimate.per_nanny_total_cents / 100).toFixed(2)}</b></div>
+                        <div className="flex justify-between"><span>Per nanny</span><b>R{(estimate.per_nanny_total_cents / 100).toFixed(2)}</b></div>
+                        <div className="flex justify-between border-t border-[var(--line)] pt-2 text-base"><span>Estimated total for {nanniesNeeded}</span><b>R{(estimate.selected_total_cents / 100).toFixed(2)}</b></div>
                       </div>
                     ) : <p className="text-sm text-[var(--muted)]">Calculate the price before sending your request.</p>}
                     <button className="btn-secondary mt-3 w-full" disabled={estimating || !selected.length} onClick={() => void calculateEstimate()}>{estimating ? <LoaderCircle className="animate-spin" size={17} /> : <Wallet size={17} />}{estimating ? "Calculating..." : estimate ? "Recalculate price" : "Calculate price"}</button>

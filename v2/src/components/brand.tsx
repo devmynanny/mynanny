@@ -4,11 +4,23 @@ import Link from "next/link";
 export function Brand({
   compact = false,
   large = false,
+  home = false,
+  sidebar = false,
 }: {
   compact?: boolean;
   large?: boolean;
+  home?: boolean;
+  sidebar?: boolean;
 }) {
-  const dimensions = large
+  const dimensions = home
+    ? {
+        className:
+          "relative block h-20 w-[212px] sm:h-28 sm:w-[298px]",
+        sizes: "(min-width: 640px) 298px, 212px",
+      }
+    : sidebar
+    ? { className: "relative block h-[84px] w-56", sizes: "224px" }
+    : large
     ? { className: "relative block h-24 w-[255px]", sizes: "255px" }
     : compact
       ? { className: "relative block h-10 w-[106px]", sizes: "106px" }
@@ -25,7 +37,7 @@ export function Brand({
           alt="My Nanny"
           fill
           sizes={dimensions.sizes}
-          className="object-contain object-left"
+          className="mix-blend-multiply object-contain object-left"
           priority
         />
       </span>

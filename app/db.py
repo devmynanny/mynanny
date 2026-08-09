@@ -408,6 +408,16 @@ def ensure_bookings_schema() -> None:
         add_col("check_out_distance_m", "FLOAT")
         add_col("check_out_confirmed_at", "DATETIME")
         add_col("check_out_confirmed_by_user_id", "INTEGER")
+        add_col("late_minutes", "INTEGER NOT NULL DEFAULT 0")
+        add_col("early_departure_minutes", "INTEGER NOT NULL DEFAULT 0")
+        add_col("billable_minutes", "INTEGER")
+        add_col("scheduled_minutes", "INTEGER")
+        add_col("service_wage_cents", "INTEGER")
+        add_col("service_fee_cents", "INTEGER")
+        add_col("service_refund_cents", "INTEGER NOT NULL DEFAULT 0")
+        add_col("service_adjustment_status", "TEXT")
+        add_col("service_refund_reference", "TEXT")
+        add_col("service_adjusted_at", "DATETIME")
         add_col("booking_request_id", "BIGINT")
         add_col("cancelled_at", "DATETIME")
         add_col("cancellation_reason", "TEXT")
@@ -906,7 +916,8 @@ def ensure_app_settings_schema() -> None:
                 CREATE TABLE app_settings (
                   id INTEGER NOT NULL PRIMARY KEY,
                   google_maps_api_key TEXT,
-                  google_calendar_id TEXT
+                  google_calendar_id TEXT,
+                  broadcast_workflow_enabled BOOLEAN NOT NULL DEFAULT 1
                 )
             """))
             return
@@ -917,6 +928,8 @@ def ensure_app_settings_schema() -> None:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN google_maps_api_key TEXT"))
         if "google_calendar_id" not in existing:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN google_calendar_id TEXT"))
+        if "broadcast_workflow_enabled" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN broadcast_workflow_enabled BOOLEAN NOT NULL DEFAULT 1"))
 
 
 def ensure_pricing_settings_schema() -> None:

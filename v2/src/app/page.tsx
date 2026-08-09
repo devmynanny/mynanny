@@ -1,12 +1,19 @@
 import { Brand } from "@/components/brand";
-import { ArrowRight, BadgeCheck, MapPin, PlayCircle, Star } from "lucide-react";
+import {
+  ArrowRight,
+  BadgeCheck,
+  MapPin,
+  PlayCircle,
+  ShieldCheck,
+  Star,
+} from "lucide-react";
 import Link from "next/link";
 
 export default function Home() {
   return (
     <main className="overflow-hidden">
-      <header className="mx-auto flex h-24 w-full max-w-7xl items-center justify-between px-5 sm:px-8">
-        <Brand />
+      <header className="mx-auto flex h-28 w-full max-w-7xl items-center justify-between px-5 sm:h-36 sm:px-8">
+        <Brand home />
         <div className="flex items-center gap-2">
           <Link className="btn-quiet desktop-only" href="#how-it-works">
             How it works
@@ -41,7 +48,7 @@ export default function Home() {
             </span>
             <span className="flex items-center gap-2">
               <PlayCircle size={18} className="text-[var(--blue-dark)]" />
-              Video screened
+              Video Introductions
             </span>
             <span className="flex items-center gap-2">
               <MapPin size={18} className="text-[var(--coral)]" />
@@ -84,31 +91,156 @@ export default function Home() {
           </div>
         </div>
       </section>
-      <section id="how-it-works" className="bg-[var(--ink)] py-16 text-white">
-        <div className="mx-auto grid max-w-7xl gap-8 px-5 sm:px-8 md:grid-cols-3">
-          {[
-            [
-              "01",
-              "Tell us what you need",
-              "Choose your dates, location and the kind of support your family needs.",
-            ],
-            [
-              "02",
-              "Meet screened nannies",
-              "Watch video introductions and compare verified experience and reviews.",
-            ],
-            [
-              "03",
-              "Book with confidence",
-              "Send your request and manage every booking in one calm place.",
-            ],
-          ].map(([n, t, b]) => (
-            <div key={n}>
-              <div className="text-sm font-extrabold text-[#9ed2e7]">{n}</div>
-              <h2 className="mt-3 text-xl font-bold">{t}</h2>
-              <p className="mt-3 leading-7 text-white/65">{b}</p>
+      <section
+        id="how-it-works"
+        className="scroll-mt-6 bg-[var(--ink)] py-20 text-white"
+      >
+        <div className="mx-auto max-w-7xl px-5 sm:px-8">
+          <div className="max-w-3xl">
+            <div className="eyebrow !text-[#9ed2e7]">How My Nanny works</div>
+            <h2 className="display mt-3 text-4xl leading-tight sm:text-6xl">
+              From “we need help” to care you can feel good about.
+            </h2>
+            <p className="mt-5 max-w-2xl text-lg leading-8 text-white/65">
+              My Nanny brings screening, matching, bookings and communication
+              together, so families and nannies both know what happens next.
+            </p>
+          </div>
+
+          <div className="mt-12 grid gap-6 lg:grid-cols-2">
+            <article className="rounded-[32px] bg-white p-6 text-[var(--ink)] sm:p-8">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="eyebrow">For parents</div>
+                  <h3 className="mt-2 text-2xl font-bold">
+                    Find and book the right support
+                  </h3>
+                </div>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--blue-pale)] text-xl font-bold text-[var(--blue-dark)]">
+                  P
+                </span>
+              </div>
+              <ol className="mt-7 grid gap-3">
+                {[
+                  [
+                    "1",
+                    "Tell us about your family",
+                    "Complete your care needs, children’s details, home location and access information once.",
+                  ],
+                  [
+                    "2",
+                    "Choose dates and requirements",
+                    "Add the times, responsibilities and any sleepover, medicine or transport expectations.",
+                  ],
+                  [
+                    "3",
+                    "View available nannies",
+                    "See approved, video-introduced nannies who match the location, dates and availability you selected.",
+                  ],
+                  [
+                    "4",
+                    "Request and manage the booking",
+                    "Choose your nanny, send the request and keep booking details and communication together.",
+                  ],
+                ].map(([number, title, detail]) => (
+                  <li
+                    className="flex gap-4 rounded-2xl bg-[var(--canvas)] p-4"
+                    key={number}
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--blue-dark)] text-sm font-bold text-white">
+                      {number}
+                    </span>
+                    <span>
+                      <b className="block">{title}</b>
+                      <span className="mt-1 block text-sm leading-6 text-[var(--muted)]">
+                        {detail}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-5 flex items-start gap-2 text-sm leading-6 text-[var(--muted)]">
+                <ShieldCheck className="mt-0.5 shrink-0 text-[var(--green)]" size={18} />
+                Paystack handles payment authorisation securely. My Nanny does
+                not store your full card details.
+              </p>
+            </article>
+
+            <article className="rounded-[32px] border border-white/15 bg-white/[.07] p-6 sm:p-8">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="eyebrow !text-[#9ed2e7]">For nannies</div>
+                  <h3 className="mt-2 text-2xl font-bold">
+                    Build trust before the first booking
+                  </h3>
+                </div>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-xl font-bold text-[#9ed2e7]">
+                  N
+                </span>
+              </div>
+              <ol className="mt-7 grid gap-3">
+                {[
+                  [
+                    "1",
+                    "Create your complete profile",
+                    "Add your experience, location, availability and required identity and eligibility information.",
+                  ],
+                  [
+                    "2",
+                    "Record your video introductions",
+                    "Answer four short questions so families can get a genuine sense of who you are.",
+                  ],
+                  [
+                    "3",
+                    "Complete My Nanny review",
+                    "Our team reviews your profile, documents and introductions before parents can discover you.",
+                  ],
+                  [
+                    "4",
+                    "Receive requests and earnings",
+                    "Set your availability, respond to suitable bookings and receive eligible payouts through Paystack.",
+                  ],
+                ].map(([number, title, detail]) => (
+                  <li
+                    className="flex gap-4 rounded-2xl border border-white/10 bg-white/[.05] p-4"
+                    key={number}
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#9ed2e7] text-sm font-bold text-[var(--ink)]">
+                      {number}
+                    </span>
+                    <span>
+                      <b className="block">{title}</b>
+                      <span className="mt-1 block text-sm leading-6 text-white/60">
+                        {detail}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              <p className="mt-5 flex items-start gap-2 text-sm leading-6 text-white/60">
+                <BadgeCheck className="mt-0.5 shrink-0 text-[#9ed2e7]" size={18} />
+                Parents only see approved profiles with completed video
+                introductions. Contact details remain private.
+              </p>
+            </article>
+          </div>
+
+          <div className="mt-8 flex flex-col items-start justify-between gap-5 rounded-[28px] bg-[#9ed2e7] p-6 text-[var(--ink)] sm:flex-row sm:items-center sm:p-8">
+            <div>
+              <h3 className="text-xl font-bold">Ready to take the next step?</h3>
+              <p className="mt-1 text-sm text-[var(--ink)]/65">
+                Start as a family looking for care or apply to join My Nanny.
+              </p>
             </div>
-          ))}
+            <div className="flex flex-wrap gap-3">
+              <Link className="btn-primary" href="/signup?role=parent">
+                Find a nanny <ArrowRight size={18} />
+              </Link>
+              <Link className="btn-secondary !border-white/70 !bg-white" href="/signup?role=nanny">
+                I’m a nanny
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
     </main>

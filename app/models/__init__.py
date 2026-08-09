@@ -139,6 +139,16 @@ class Booking(Base):
     check_out_distance_m = Column(Float, nullable=True)
     check_out_confirmed_at = Column(DateTime, nullable=True)
     check_out_confirmed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    late_minutes = Column(Integer, nullable=False, default=0)
+    early_departure_minutes = Column(Integer, nullable=False, default=0)
+    billable_minutes = Column(Integer, nullable=True)
+    scheduled_minutes = Column(Integer, nullable=True)
+    service_wage_cents = Column(Integer, nullable=True)
+    service_fee_cents = Column(Integer, nullable=True)
+    service_refund_cents = Column(Integer, nullable=False, default=0)
+    service_adjustment_status = Column(String, nullable=True)
+    service_refund_reference = Column(Text, nullable=True)
+    service_adjusted_at = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
     cancellation_reason = Column(Text, nullable=True)
     cancellation_actor_role = Column(String, nullable=True)
@@ -440,6 +450,7 @@ class AppSettings(Base):
     google_maps_api_key = Column(Text, nullable=True)
     google_calendar_id = Column(Text, nullable=True)
     trust_config_json = Column(Text, nullable=True)
+    broadcast_workflow_enabled = Column(Boolean, nullable=False, default=True)
 
 
 class ParentLocation(Base):

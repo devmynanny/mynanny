@@ -30,6 +30,7 @@ type Application = {
   admin_reason?: string | null;
   approved: boolean;
   video_screening_complete: boolean;
+  banking_complete: boolean;
   location_on_file: boolean;
 };
 
@@ -323,7 +324,7 @@ export default function Review() {
                             : "Video required"}
                         </span>
                       </div>
-                      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                      <div className="mt-6 grid gap-3 sm:grid-cols-2">
                         <div className="flex items-center gap-2 rounded-xl bg-[var(--blue-pale)] p-3 text-sm font-bold">
                           <Check size={16} className="text-[var(--green)]" />
                           Application submitted
@@ -348,6 +349,16 @@ export default function Review() {
                           )}
                           Location on file
                         </div>
+                        <div
+                          className={`flex items-center gap-2 rounded-xl p-3 text-sm font-bold ${selected.banking_complete ? "bg-[var(--blue-pale)]" : "bg-amber-50"}`}
+                        >
+                          {selected.banking_complete ? (
+                            <Check size={16} className="text-[var(--green)]" />
+                          ) : (
+                            <X size={16} className="text-amber-700" />
+                          )}
+                          Payout details
+                        </div>
                       </div>
                       <div className="mt-6 flex flex-wrap gap-3">
                         <Link
@@ -365,7 +376,8 @@ export default function Review() {
                           disabled={
                             busy ||
                             !selected.video_screening_complete ||
-                            !selected.location_on_file
+                            !selected.location_on_file ||
+                            !selected.banking_complete
                           }
                           onClick={requestApproval}
                         >
@@ -399,6 +411,14 @@ export default function Review() {
                           <p className="mt-3 text-sm text-amber-800">
                             Approval is locked until the nanny adds her home
                             location.
+                          </p>
+                        )}
+                      {selected.video_screening_complete &&
+                        selected.location_on_file &&
+                        !selected.banking_complete && (
+                          <p className="mt-3 text-sm text-amber-800">
+                            Approval is locked until the nanny links her payout
+                            account through Paystack.
                           </p>
                         )}
                     </div>

@@ -43,6 +43,7 @@ export default function Interview() {
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [screeningLoaded, setScreeningLoaded] = useState(false);
   const [message, setMessage] = useState("");
   const [resubmissionRequested, setResubmissionRequested] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(60);
@@ -57,15 +58,18 @@ export default function Interview() {
         setClips(data.clips || []);
         setSubmitted(data.video_screening_complete);
         setResubmissionRequested(Boolean(data.resubmission_requested));
+        setScreeningLoaded(true);
       })
-      .catch(() => undefined);
+      .catch(() =>
+        setMessage("Unable to verify your interview status. Camera access has not been requested."),
+      );
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
   useEffect(() => {
-    if (submitted) {
+    if (!screeningLoaded || submitted) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       return;
@@ -93,7 +97,7 @@ export default function Interview() {
     return () => {
       cancelled = true;
     };
-  }, [step, clips, submitted]);
+  }, [step, clips, screeningLoaded, submitted]);
   async function ensureCamera() {
     let stream = streamRef.current;
     if (
@@ -112,6 +116,7 @@ export default function Interview() {
     return stream;
   }
   async function start() {
+    if (!screeningLoaded || submitted) return;
     setMessage("");
     setSecondsLeft(60);
     try {

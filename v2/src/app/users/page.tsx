@@ -1895,6 +1895,7 @@ function candidateCompletion(profile: Profile) {
       profile.sa_id_document_url || profile.passport_document_url,
     ],
     ["video interview", profile.video_screening_complete],
+    ["Paystack payout details", profile.banking_complete],
   ];
   const missing = required
     .filter(

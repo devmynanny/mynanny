@@ -53,6 +53,7 @@ BOOKING_WRITE_STATUSES = frozenset(
         "accepted",
         "active",
         "in_progress",
+        "awaiting_time_confirmation",
         "admin_review",
         "awaiting_overtime_approval",
         "completed",

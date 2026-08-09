@@ -2,7 +2,7 @@
 
 import { AuthenticatedPage } from "@/components/authenticated-page";
 import { apiJson } from "@/lib/api";
-import { BadgeCheck, CalendarDays, Clock, Heart, LoaderCircle, MapPin, Pencil, PlayCircle, Search, Star } from "lucide-react";
+import { BadgeCheck, CalendarDays, Check, Clock, Heart, LoaderCircle, MapPin, Pencil, PlayCircle, Radio, Search, Star } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -21,6 +21,19 @@ type BookingDraft = {
   lat?: number;
   lng?: number;
   locationLabel?: string;
+  locationId?: string;
+  reason?: string;
+  responsibilities?: string;
+  kids?: string;
+  nanniesNeeded?: string;
+  adultPresent?: string;
+  mealOption?: string;
+  foodRestrictions?: string;
+  dogsInfo?: string;
+  sleepover?: boolean;
+  sleepoverExpectations?: string;
+  sleepoverReason?: string;
+  accepted?: boolean;
 };
 
 function readBookingDraft() {
@@ -54,6 +67,10 @@ export default function Caregivers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [bookingDraft, setBookingDraft] = useState<BookingDraft | null>(null);
+  const [broadcastEnabled, setBroadcastEnabled] = useState(false);
+  const [selectedNannies, setSelectedNannies] = useState<number[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [broadcastMessage, setBroadcastMessage] = useState("");
 
   async function load() {
     setLoading(true); setError("");
@@ -69,8 +86,9 @@ export default function Caregivers() {
   useEffect(() => {
     Promise.all([
       bookingAwareSearch(10),
-      apiJson<{ nanny_ids: number[] }>("/parents/me/favorites")
-    ]).then(([search, saved]) => { setResults(search.results || []); setFavourites(saved.nanny_ids || []); setBookingDraft(readBookingDraft()); })
+      apiJson<{ nanny_ids: number[] }>("/parents/me/favorites"),
+      apiJson<{ broadcast_workflow_enabled: boolean }>("/settings/booking-workflow"),
+    ]).then(([search, saved, workflow]) => { setResults(search.results || []); setFavourites(saved.nanny_ids || []); setBookingDraft(readBookingDraft()); setBroadcastEnabled(workflow.broadcast_workflow_enabled); })
       .catch((err) => setError(err instanceof Error ? err.message : "We couldn't load caregivers."))
       .finally(() => setLoading(false));
   }, []);
@@ -80,6 +98,60 @@ export default function Caregivers() {
     setFavourites((current) => saved ? current.filter((item) => item !== id) : [...current, id]);
     try { await apiJson(`/parents/me/favorites/${id}`, { method: saved ? "DELETE" : "POST" }); }
     catch { setFavourites((current) => saved ? [...current, id] : current.filter((item) => item !== id)); }
+  }
+
+  function toggleSelection(id: number) {
+    setSelectedNannies((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  async function broadcastJob() {
+    if (!bookingDraft?.slots?.length || !selectedNannies.length) return;
+    const requiredCount = Number(bookingDraft.nanniesNeeded || 1);
+    if (selectedNannies.length < requiredCount) {
+      setBroadcastMessage(`Select at least ${requiredCount} nannies to fill ${requiredCount} positions.`);
+      return;
+    }
+    setSubmitting(true);
+    setBroadcastMessage("");
+    try {
+      const result = await apiJson<{ group_id?: number; created_ids?: number[]; errors?: { nanny_id: number; error: string }[]; requires_payment_method?: boolean; message?: string }>("/booking-requests/bulk", {
+        method: "POST",
+        body: JSON.stringify({
+          nanny_ids: selectedNannies,
+          slots: bookingDraft.slots,
+          location_id: bookingDraft.locationId ? Number(bookingDraft.locationId) : null,
+          kids_count: Number(bookingDraft.kids || 1),
+          responsibilities: bookingDraft.responsibilities,
+          adult_present: bookingDraft.adultPresent,
+          booking_reason: bookingDraft.reason,
+          meal_option: bookingDraft.mealOption,
+          food_restrictions: bookingDraft.foodRestrictions,
+          dogs_info: bookingDraft.dogsInfo,
+          sleepover: Boolean(bookingDraft.sleepover),
+          sleepover_expectations: bookingDraft.sleepover ? bookingDraft.sleepoverExpectations : null,
+          sleepover_reason: bookingDraft.sleepover ? bookingDraft.sleepoverReason : null,
+          requested_nannies_count: requiredCount,
+          disclaimer_basic_upkeep: true,
+          disclaimer_medicine: true,
+          disclaimer_extra_hours: true,
+          disclaimer_transport: true,
+        }),
+      });
+      if (result.requires_payment_method) {
+        setBroadcastMessage(result.message || "Complete Paystack authorisation before broadcasting this job.");
+      } else if (result.created_ids?.length) {
+        window.sessionStorage.removeItem("my-nanny-booking-draft");
+        setBroadcastMessage(`Job sent to ${result.created_ids.length} nannies for ${requiredCount} ${requiredCount === 1 ? "position" : "positions"}. The broadcast remains open until all positions are filled.`);
+        setSelectedNannies([]);
+        setBookingDraft(null);
+      } else {
+        setBroadcastMessage(result.errors?.map((item) => item.error).join(", ") || "No booking requests could be sent.");
+      }
+    } catch (error) {
+      setBroadcastMessage(error instanceof Error ? error.message : "Unable to broadcast this job.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   const visible = results.filter((nanny) => nanny.name.toLowerCase().includes(query.toLowerCase()));
@@ -94,10 +166,17 @@ export default function Caregivers() {
         <button className="btn-secondary" onClick={load}><MapPin size={17}/>Update results</button>
       </div>
       {bookingDraft?.slots?.length ? <BookingSearchSummary draft={bookingDraft} /> : null}
+      {broadcastMessage && <div role="status" className="mt-5 rounded-2xl bg-[var(--blue-pale)] p-4 font-semibold">{broadcastMessage}</div>}
       {loading && <div className="mt-12 flex items-center justify-center gap-2 text-[var(--muted)]"><LoaderCircle className="animate-spin"/>Finding nearby nannies...</div>}
       {error && <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900"><b>We need one more detail.</b><div className="mt-1 text-sm">{error.includes("Location") ? "Add a default home address in your profile before searching." : error}</div></div>}
       {!loading && !error && !visible.length && <div className="card mt-6 p-10 text-center"><h2 className="text-xl font-bold">No screened nannies found in this area</h2><p className="mt-2 text-[var(--muted)]">Try increasing the distance or check again soon.</p></div>}
-      <div className="mt-6 grid gap-5 lg:grid-cols-3">{visible.map((nanny) => <NannyCard key={nanny.nanny_id} nanny={nanny} favourite={favourites.includes(nanny.nanny_id)} onFavourite={() => toggleFavourite(nanny.nanny_id)}/>)}</div>
+      <div className="mt-6 grid gap-5 lg:grid-cols-3">{visible.map((nanny) => <NannyCard key={nanny.nanny_id} nanny={nanny} favourite={favourites.includes(nanny.nanny_id)} onFavourite={() => toggleFavourite(nanny.nanny_id)} broadcastMode={Boolean(bookingDraft && broadcastEnabled)} selected={selectedNannies.includes(nanny.nanny_id)} onSelect={() => toggleSelection(nanny.nanny_id)}/>)}</div>
+      {bookingDraft && broadcastEnabled && selectedNannies.length > 0 && (
+        <div className="sticky bottom-4 z-20 mt-6 flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-[var(--line)] bg-white/95 p-5 shadow-2xl backdrop-blur">
+          <div><div className="font-bold">{selectedNannies.length} {selectedNannies.length === 1 ? "nanny" : "nannies"} selected</div><div className="text-sm text-[var(--muted)]">{bookingDraft.nanniesNeeded || "1"} {(bookingDraft.nanniesNeeded || "1") === "1" ? "position" : "positions"} required. Each selected nanny receives the same request.</div></div>
+          <button className="btn-primary" disabled={submitting || selectedNannies.length < Number(bookingDraft.nanniesNeeded || 1)} onClick={() => void broadcastJob()}><Radio size={18}/>{submitting ? "Sending..." : `Broadcast job to ${selectedNannies.length}`}</button>
+        </div>
+      )}
     </div>
   )}</AuthenticatedPage>;
 }
@@ -127,11 +206,12 @@ function BookingSearchSummary({ draft }: { draft: BookingDraft }) {
         })}
       </div>
       <div className="mt-4 flex items-center gap-2 text-sm font-semibold"><MapPin size={16} className="text-[var(--coral)]" />{draft.locationLabel || "Your selected booking address"}</div>
+      <div className="mt-2 text-sm font-semibold">{draft.nanniesNeeded || "1"} {(draft.nanniesNeeded || "1") === "1" ? "nanny" : "nannies"} needed</div>
     </section>
   );
 }
 
-export function NannyCard({ nanny, favourite, onFavourite }: { nanny: NannyResult; favourite: boolean; onFavourite: () => void }) {
+export function NannyCard({ nanny, favourite, onFavourite, broadcastMode = false, selected = false, onSelect }: { nanny: NannyResult; favourite: boolean; onFavourite: () => void; broadcastMode?: boolean; selected?: boolean; onSelect?: () => void }) {
   const badges = nanny.trust_badges || [];
   return <article className="card overflow-hidden">
     <div className="relative flex aspect-[4/3] items-center justify-center bg-[linear-gradient(145deg,#d6edf6,#f1f9fb)]">
@@ -142,7 +222,7 @@ export function NannyCard({ nanny, favourite, onFavourite }: { nanny: NannyResul
       <p className="mt-4 line-clamp-3 text-sm leading-6 text-[var(--muted)]">{nanny.profile_summary || "A screened My Nanny caregiver ready to meet your family."}</p>
       <div className="mt-4 flex flex-wrap gap-2">{badges.map((badge) => <span className="pill" key={badge.key}><BadgeCheck size={13} className="text-[var(--green)]"/>{badge.label}</span>)}</div>
       <div className="mt-5 border-t border-[var(--line)] pt-4 text-sm text-[var(--muted)]">{nanny.completed_jobs_count || 0} completed jobs · {nanny.review_count_12m || 0} family reviews</div>
-      <Link className="btn-primary mt-4 w-full" href={`/bookings?nanny=${nanny.nanny_id}`}>Select this nanny</Link>
+      {broadcastMode ? <button className={`${selected ? "btn-primary" : "btn-secondary"} mt-4 w-full`} onClick={onSelect}>{selected ? <Check size={17}/> : null}{selected ? "Selected for broadcast" : "Add to broadcast"}</button> : <Link className="btn-primary mt-4 w-full" href={`/bookings?nanny=${nanny.nanny_id}`}>Select this nanny</Link>}
     </div>
   </article>;
 }

@@ -74,6 +74,16 @@ def test_admin_cannot_approve_application_before_video_screening():
         profile.lat = -25.7479
         profile.lng = 28.2293
         db.commit()
+        missing_banking = client.patch(
+            f"/admin/nannies/{nanny.id}/application",
+            json={"status": "approved", "reason": ""},
+            headers=_auth(admin),
+        )
+        assert missing_banking.status_code == 409
+        assert "payout" in missing_banking.json()["detail"].lower()
+
+        nanny.banking_complete = True
+        db.commit()
         approved = client.patch(
             f"/admin/nannies/{nanny.id}/application",
             json={"status": "approved", "reason": ""},

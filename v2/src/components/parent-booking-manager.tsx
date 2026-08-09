@@ -24,6 +24,14 @@ type BookingDay = {
   overrun_minutes?: number | null;
   overrun_amount_cents?: number | null;
   overrun_status?: string | null;
+  late_minutes?: number;
+  early_departure_minutes?: number;
+  billable_minutes?: number | null;
+  scheduled_minutes?: number | null;
+  service_wage_cents?: number | null;
+  service_fee_cents?: number | null;
+  service_refund_cents?: number;
+  service_adjustment_status?: string | null;
 };
 type ParentBooking = {
   job_id: number;
@@ -36,6 +44,11 @@ type ParentBooking = {
   booking_fee_cents?: number;
   total_cents?: number;
   accepted_nanny_name?: string | null;
+  accepted_nannies?: { name?: string }[];
+  requested_nannies_count?: number;
+  filled_nannies_count?: number;
+  remaining_nannies_count?: number;
+  estimated_group_total_cents?: number;
   requested_nannies?: { name?: string; response_status?: string }[];
   booking_days?: BookingDay[];
   booking_form?: Record<string, unknown>;
@@ -71,6 +84,27 @@ export function ParentBookingManager() {
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState("current");
   const [busy, setBusy] = useState("");
+  async function correctTime(day: BookingDay, kind: "in" | "out") {
+    const current = kind === "in" ? day.check_in_at : day.check_out_at;
+    const corrected = window.prompt(
+      `Enter the correct ${kind === "in" ? "arrival" : "finish"} time in ISO format`,
+      current || "",
+    );
+    if (!corrected?.trim()) return;
+    await action(
+      `correct-${kind}-${day.booking_id}`,
+      `/parents/me/bookings/${day.booking_id}/confirm-check-${kind}`,
+      { confirmed: false, corrected_time: corrected.trim() },
+    );
+  }
+  async function disputeTime(day: BookingDay, kind: "in" | "out") {
+    if (!window.confirm(`Dispute this ${kind === "in" ? "arrival" : "finish"} time and send it to My Nanny for review?`)) return;
+    await action(
+      `dispute-${kind}-${day.booking_id}`,
+      `/parents/me/bookings/${day.booking_id}/confirm-check-${kind}`,
+      { confirmed: false },
+    );
+  }
   async function load() {
     setLoading(true);
     try {
@@ -153,7 +187,8 @@ export function ParentBookingManager() {
               <div className="flex flex-wrap items-start justify-between gap-4 bg-[linear-gradient(135deg,var(--blue-pale),#fff)] p-6">
                 <div>
                   <div className="text-xs font-extrabold uppercase tracking-widest text-[var(--blue-dark)]">Booking #{booking.job_id}</div>
-                  <h2 className="mt-2 text-2xl font-bold">{booking.accepted_nanny_name || "Finding your nanny"}</h2>
+                  <h2 className="mt-2 text-2xl font-bold">{booking.accepted_nannies?.length ? booking.accepted_nannies.map((nanny) => nanny.name).join(", ") : booking.accepted_nanny_name || "Finding your nanny"}</h2>
+                  <div className="mt-2 text-sm font-semibold text-[var(--blue-dark)]">{booking.filled_nannies_count || 0} of {booking.requested_nannies_count || 1} nanny positions filled</div>
                   <div className="mt-2 flex items-center gap-2 text-sm text-[var(--muted)]"><CalendarDays size={16} />{dateTime(booking.start_dt)} to {dateTime(booking.end_dt)}</div>
                 </div>
                 <span className="pill !bg-white">{stateLabels[booking.booking_state || booking.status] || (booking.booking_state || booking.status).replaceAll("_", " ")}</span>
@@ -172,10 +207,10 @@ export function ParentBookingManager() {
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {day.check_in_at && !day.check_in_confirmed_at && (
-                          <button className="btn-secondary !min-h-9" disabled={busy === `in-${day.booking_id}`} onClick={() => void action(`in-${day.booking_id}`, `/parents/me/bookings/${day.booking_id}/confirm-check-in`, { confirmed: true })}><Check size={15} />Confirm arrival</button>
+                          <><button className="btn-secondary !min-h-9" disabled={busy === `in-${day.booking_id}`} onClick={() => void action(`in-${day.booking_id}`, `/parents/me/bookings/${day.booking_id}/confirm-check-in`, { confirmed: true })}><Check size={15} />Confirm arrival</button><button className="btn-quiet !min-h-9" onClick={() => void correctTime(day, "in")}>Correct</button><button className="btn-quiet !min-h-9 text-red-700" onClick={() => void disputeTime(day, "in")}>Dispute</button></>
                         )}
                         {day.check_out_at && !day.check_out_confirmed_at && (
-                          <button className="btn-secondary !min-h-9" disabled={busy === `out-${day.booking_id}`} onClick={() => void action(`out-${day.booking_id}`, `/parents/me/bookings/${day.booking_id}/confirm-check-out`, { confirmed: true })}><Check size={15} />Confirm finish</button>
+                          <><button className="btn-secondary !min-h-9" disabled={busy === `out-${day.booking_id}`} onClick={() => void action(`out-${day.booking_id}`, `/parents/me/bookings/${day.booking_id}/confirm-check-out`, { confirmed: true })}><Check size={15} />Confirm finish</button><button className="btn-quiet !min-h-9" onClick={() => void correctTime(day, "out")}>Correct</button><button className="btn-quiet !min-h-9 text-red-700" onClick={() => void disputeTime(day, "out")}>Dispute</button></>
                         )}
                         {day.overrun_status === "awaiting_parent" && (
                           <>
@@ -184,6 +219,7 @@ export function ParentBookingManager() {
                           </>
                         )}
                       </div>
+                      {(day.late_minutes || day.early_departure_minutes || day.service_refund_cents) ? <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950"><b>Service adjustment</b><div className="mt-1">{day.late_minutes || 0} min late · {day.early_departure_minutes || 0} min early · {money(day.service_refund_cents)} due back to you</div><div className="mt-1 text-xs capitalize">{(day.service_adjustment_status || "Awaiting time confirmation").replaceAll("_", " ")}</div></div> : null}
                     </div>
                   ))}
                   {!booking.booking_days?.length && (
@@ -195,7 +231,7 @@ export function ParentBookingManager() {
                   <div className="mt-4 grid gap-3 text-sm">
                     <div className="flex justify-between"><span>Nanny wage</span><b>{money(booking.wage_cents)}</b></div>
                     <div className="flex justify-between"><span>Booking fee</span><b>{money(booking.booking_fee_cents)}</b></div>
-                    <div className="flex justify-between border-t border-[var(--line)] pt-3 text-base"><span>Total</span><b>{money(booking.total_cents)}</b></div>
+                    <div className="flex justify-between border-t border-[var(--line)] pt-3 text-base"><span>Estimated total</span><b>{money(booking.estimated_group_total_cents ?? booking.total_cents)}</b></div>
                   </div>
                   {!['completed','past','cancelled','rejected'].includes(booking.booking_state || booking.status) && (
                     <button className="btn-quiet mt-5 text-red-700" disabled={busy === `cancel-${booking.job_id}`} onClick={() => cancel(booking.job_id)}><X size={16} />Cancel booking</button>

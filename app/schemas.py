@@ -341,6 +341,8 @@ class BookingRequestCreate(BaseModel):
     notes: Optional[str] = None
     location_id: Optional[int] = None
     sleepover: Optional[bool] = None
+    sleepover_expectations: Optional[str] = None
+    sleepover_reason: Optional[str] = None
     requested_nannies_count: Optional[int] = 1
     kids_count: Optional[int] = 1
     responsibilities: Optional[str] = None
@@ -363,6 +365,8 @@ class BookingRequestBulkCreate(BaseModel):
     notes: Optional[str] = None
     location_id: Optional[int] = None
     sleepover: Optional[bool] = None
+    sleepover_expectations: Optional[str] = None
+    sleepover_reason: Optional[str] = None
     requested_nannies_count: Optional[int] = 1
     kids_count: Optional[int] = 1
     responsibilities: Optional[str] = None

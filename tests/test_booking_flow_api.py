@@ -148,6 +148,7 @@ def _isolate_external_services(monkeypatch):
 
     monkeypatch.setattr(public_router, "create_supplementary_charge", fake_charge)
     monkeypatch.setattr(public_router, "send_notification", lambda *a, **k: None)
+    monkeypatch.setattr(public_router, "notify", lambda *a, **k: None)
     monkeypatch.setattr(
         public_router, "_sync_confirmed_booking_request_to_google_calendar",
         lambda *a, **k: None,
@@ -168,6 +169,120 @@ def db():
 # ---------------------------------------------------------------------------
 # booking request creation
 # ---------------------------------------------------------------------------
+
+def test_bulk_broadcast_stays_open_until_all_requested_positions_are_filled(db):
+    parent = _seed_parent(db)
+    nanny_a = _seed_nanny(db)
+    nanny_b = _seed_nanny(db)
+    nanny_c = _seed_nanny(db)
+    nanny_a_user = db.query(models.User).filter(models.User.id == nanny_a.user_id).first()
+    nanny_b_user = db.query(models.User).filter(models.User.id == nanny_b.user_id).first()
+    start, end = _future_window()
+    _add_availability(db, nanny_a.id, start, end)
+    _add_availability(db, nanny_b.id, start, end)
+    _add_availability(db, nanny_c.id, start, end)
+    settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not settings:
+        settings = models.AppSettings(id=1)
+        db.add(settings)
+    settings.broadcast_workflow_enabled = True
+    db.commit()
+
+    payload = {
+        "nanny_ids": [nanny_a.id, nanny_b.id, nanny_c.id],
+        "start_dt": _iso_z(start),
+        "end_dt": _iso_z(end),
+        "requested_nannies_count": 2,
+        **_questionnaire(),
+    }
+    created = client.post("/booking-requests/bulk", json=payload, headers=_auth(parent))
+    assert created.status_code == 200
+    assert len(created.json()["created_ids"]) == 3
+    rows = db.query(models.BookingRequest).filter(
+        models.BookingRequest.id.in_(created.json()["created_ids"])
+    ).all()
+    assert len({row.group_id for row in rows}) == 1
+
+    accepted = client.post(
+        f"/nannies/me/booking-requests/{rows[0].id}/accept",
+        headers=_auth(nanny_a_user),
+    )
+    assert accepted.status_code == 200
+    db.expire_all()
+    sibling = db.query(models.BookingRequest).filter(
+        models.BookingRequest.id == rows[1].id
+    ).first()
+    assert sibling.status == "tbc"
+
+    accepted_second = client.post(
+        f"/nannies/me/booking-requests/{rows[1].id}/accept",
+        headers=_auth(nanny_b_user),
+    )
+    assert accepted_second.status_code == 200
+    db.expire_all()
+    final_sibling = db.query(models.BookingRequest).filter(
+        models.BookingRequest.id == rows[2].id
+    ).first()
+    assert final_sibling.status == "rejected"
+    assert final_sibling.admin_reason == "filled"
+    assert db.query(models.Booking).filter(
+        models.Booking.booking_request_id.in_([rows[0].id, rows[1].id])
+    ).count() == 2
+
+
+def test_bulk_broadcast_requires_enough_selected_nannies_for_positions(db):
+    parent = _seed_parent(db)
+    nanny = _seed_nanny(db)
+    start, end = _future_window()
+    settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not settings:
+        settings = models.AppSettings(id=1)
+        db.add(settings)
+    settings.broadcast_workflow_enabled = True
+    db.commit()
+
+    response = client.post(
+        "/booking-requests/bulk",
+        json={
+            "nanny_ids": [nanny.id],
+            "start_dt": _iso_z(start),
+            "end_dt": _iso_z(end),
+            "requested_nannies_count": 2,
+            **_questionnaire(),
+        },
+        headers=_auth(parent),
+    )
+    assert response.status_code == 400
+    assert "at least as many nannies" in response.json()["detail"]
+
+
+def test_bulk_broadcast_rejects_multiple_nannies_when_feature_disabled(db):
+    parent = _seed_parent(db)
+    nanny_a = _seed_nanny(db)
+    nanny_b = _seed_nanny(db)
+    start, end = _future_window()
+    settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not settings:
+        settings = models.AppSettings(id=1)
+        db.add(settings)
+    settings.broadcast_workflow_enabled = False
+    db.commit()
+
+    response = client.post(
+        "/booking-requests/bulk",
+        json={
+            "nanny_ids": [nanny_a.id, nanny_b.id],
+            "start_dt": _iso_z(start),
+            "end_dt": _iso_z(end),
+            **_questionnaire(),
+        },
+        headers=_auth(parent),
+    )
+    assert response.status_code == 409
+    assert "disabled" in response.json()["detail"].lower()
+
+    settings.broadcast_workflow_enabled = True
+    db.commit()
 
 def test_parent_without_card_cannot_create_request(db):
     parent = _seed_parent(db, with_card=False)

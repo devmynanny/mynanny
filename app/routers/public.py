@@ -1043,6 +1043,20 @@ def _get_pricing_settings(db: Session) -> dict:
     }
 
 
+def _broadcast_workflow_enabled(db: Session) -> bool:
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    return True if not row else bool(getattr(row, "broadcast_workflow_enabled", True))
+
+
+@router.get("/settings/booking-workflow")
+def get_booking_workflow(
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    _require_user(authorization, db)
+    return {"broadcast_workflow_enabled": _broadcast_workflow_enabled(db)}
+
+
 @router.get("/settings/cancellation-window-hours")
 def get_cancellation_window_hours(
     authorization: Optional[str] = Header(default=None),
@@ -1153,6 +1167,66 @@ def _sanitize_requested_nannies_count(value: Optional[int]) -> int:
     except Exception:
         requested_count = 1
     return max(1, requested_count)
+
+
+def _booking_group_required_count(requests: list[models.BookingRequest]) -> int:
+    if not requests:
+        return 1
+    return max(
+        _sanitize_requested_nannies_count(getattr(item, "requested_nannies_count", 1))
+        for item in requests
+    )
+
+
+def _booking_group_is_filled(requests: list[models.BookingRequest]) -> bool:
+    accepted_count = sum(
+        1
+        for item in requests
+        if item.status == "approved"
+        and (getattr(item, "nanny_response_status", None) or "").lower() == "accepted"
+        and (getattr(item, "payment_status", None) or "").lower() == "paid"
+    )
+    return accepted_count >= _booking_group_required_count(requests)
+
+
+def _close_filled_booking_group(requests: list[models.BookingRequest]) -> None:
+    if not _booking_group_is_filled(requests):
+        return
+    for item in requests:
+        if item.status in ("tbc", "pending_admin"):
+            item.status = "rejected"
+            item.admin_reason = "filled"
+            item.admin_decided_at = utc_now()
+
+
+def _reject_other_overlapping_parent_requests(
+    db: Session,
+    accepted_request: models.BookingRequest,
+    windows: list[tuple],
+) -> None:
+    """Close separate competing jobs, but never an unfilled sibling broadcast."""
+    current_group = accepted_request.group_id or accepted_request.id
+    others = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.parent_user_id == accepted_request.parent_user_id,
+            models.BookingRequest.id != accepted_request.id,
+            models.BookingRequest.status.in_(["tbc", "pending_admin"]),
+        )
+        .all()
+    )
+    for other in others:
+        if (other.group_id or other.id) == current_group:
+            continue
+        try:
+            other_start = _parse_iso_dt(other.start_dt or other.requested_starts_at)
+            other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
+        except Exception:
+            continue
+        if any(_overlaps(start, end, other_start, other_end) for start, end in windows):
+            other.status = "rejected"
+            other.admin_reason = "filled"
+            other.admin_decided_at = utc_now()
 
 
 def _compute_booking_slots_pricing(windows: List[tuple], sleepover: bool, settings: dict, kids_count: int = 1) -> dict:
@@ -2629,19 +2703,15 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
                 _log.warning("payment_pending retry: req %s has no amount, skipping", req.id)
                 continue
 
-            # Guard: another nanny may have won this group in the meantime
+            # Guard: the required positions may have filled while payment was pending.
             group_id_value = req.group_id or req.id
-            sibling_winner = (
+            group_requests = (
                 db.query(models.BookingRequest)
-                .filter(
-                    models.BookingRequest.group_id == group_id_value,
-                    models.BookingRequest.id != req.id,
-                    models.BookingRequest.status == "approved",
-                    models.BookingRequest.nanny_response_status == "accepted",
-                )
-                .first()
+                .filter(models.BookingRequest.group_id == group_id_value)
+                .with_for_update()
+                .all()
             )
-            if sibling_winner:
+            if _booking_group_is_filled(group_requests):
                 req.admin_reason = "filled"
                 req.status = "rejected"
                 req.admin_decided_at = utc_now()
@@ -2728,26 +2798,9 @@ def _retry_payment_pending_for_parent(db: Session, user: models.User) -> list:
                     db.add(booking)
                     created_bookings.append(booking)
 
-                # Cancel overlapping requests for this parent
-                others = (
-                    db.query(models.BookingRequest)
-                    .filter(
-                        models.BookingRequest.parent_user_id == req.parent_user_id,
-                        models.BookingRequest.id != req.id,
-                        models.BookingRequest.status.in_(["tbc", "pending_admin"]),
-                    )
-                    .all()
-                )
-                for other in others:
-                    try:
-                        other_start = _parse_iso_dt(other.start_dt or other.requested_starts_at)
-                        other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
-                    except Exception:
-                        continue
-                    if any(_overlaps(s, e, other_start, other_end) for s, e in windows):
-                        other.status = "rejected"
-                        other.admin_reason = "filled"
-                        other.admin_decided_at = utc_now()
+                db.flush()
+                _close_filled_booking_group(group_requests)
+                _reject_other_overlapping_parent_requests(db, req, windows)
 
                 # Block nanny's availability
                 for slot_start, slot_end in windows:
@@ -4704,20 +4757,14 @@ def list_nanny_me_booking_requests(
         # between sweeps.
         if is_request_expired(req):
             continue
-        sibling_winner_exists = False
+        group_filled = False
         if (req.group_id or req.id):
-            sibling_winner_exists = (
-                db.query(models.BookingRequest.id)
-                .filter(
-                    models.BookingRequest.group_id == (req.group_id or req.id),
-                    models.BookingRequest.id != req.id,
-                    models.BookingRequest.status == "approved",
-                    models.BookingRequest.nanny_response_status == "accepted",
-                )
-                .first()
-                is not None
+            group_filled = _booking_group_is_filled(
+                db.query(models.BookingRequest)
+                .filter(models.BookingRequest.group_id == (req.group_id or req.id))
+                .all()
             )
-        if sibling_winner_exists:
+        if group_filled:
             continue
         if current_response != "accepted" and windows:
             overlaps_accepted_booking = any(
@@ -4875,6 +4922,124 @@ def _nanny_owned_booking_or_404(db: Session, booking_id: int, user_id: int) -> m
     return booking
 
 
+def _duty_schedule(booking: models.Booking) -> tuple[datetime, datetime]:
+    starts_at = _as_utc_aware(getattr(booking, "starts_at", None))
+    ends_at = _as_utc_aware(getattr(booking, "ends_at", None))
+    if not starts_at or not ends_at or ends_at <= starts_at:
+        raise HTTPException(status_code=409, detail="This booking does not have a valid duty schedule")
+    return starts_at, ends_at
+
+
+def _planned_booking_amounts(db: Session, booking: models.Booking) -> tuple[int, int]:
+    """Allocate request-level wage and fee to this duty window by duration."""
+    if not getattr(booking, "booking_request_id", None):
+        return int(getattr(booking, "price_cents", 0) or 0), 0
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+    if not req:
+        return int(getattr(booking, "price_cents", 0) or 0), 0
+    related = _find_related_bookings_for_request(db, req)
+    total_minutes = sum((_booking_scheduled_minutes(item) or 0) for item in related)
+    booking_minutes = _booking_scheduled_minutes(booking) or 0
+    if total_minutes <= 0:
+        count = max(len(related), 1)
+        return int(round(int(req.wage_cents or 0) / count)), int(round(int(req.booking_fee_cents or 0) / count))
+    ratio = booking_minutes / total_minutes
+    return int(round(int(req.wage_cents or 0) * ratio)), int(round(int(req.booking_fee_cents or 0) * ratio))
+
+
+def _rounded_duty_minutes(seconds: float) -> int:
+    """Round duty timestamps consistently while ignoring sub-minute clock noise."""
+    return max(0, int(math.floor((max(0.0, seconds) + 30.0) / 60.0)))
+
+
+def _recalculate_duty_financials(db: Session, booking: models.Booking) -> dict:
+    """Calculate scheduled service delivered; overtime is always handled separately."""
+    starts_at, ends_at = _duty_schedule(booking)
+    check_in = _as_utc_aware(getattr(booking, "check_in_at", None))
+    check_out = _as_utc_aware(getattr(booking, "check_out_at", None))
+    scheduled_minutes = max(1, _rounded_duty_minutes((ends_at - starts_at).total_seconds()))
+    booking.scheduled_minutes = scheduled_minutes
+    if not check_in or not check_out:
+        booking.late_minutes = _rounded_duty_minutes((check_in - starts_at).total_seconds()) if check_in else 0
+        booking.early_departure_minutes = 0
+        booking.billable_minutes = None
+        booking.service_wage_cents = None
+        booking.service_fee_cents = None
+        booking.service_refund_cents = 0
+        booking.service_adjustment_status = None
+        booking.payout_amount_cents = None
+        return {"scheduled_minutes": scheduled_minutes, "billable_minutes": None, "refund_cents": 0}
+
+    late_minutes = _rounded_duty_minutes((check_in - starts_at).total_seconds())
+    early_minutes = _rounded_duty_minutes((ends_at - check_out).total_seconds())
+    overtime_minutes = _rounded_duty_minutes((check_out - ends_at).total_seconds())
+    billable_minutes = max(0, scheduled_minutes - late_minutes - early_minutes)
+    planned_wage, planned_fee = _planned_booking_amounts(db, booking)
+    service_ratio = min(1.0, billable_minutes / scheduled_minutes)
+    service_wage = int(round(planned_wage * service_ratio))
+    service_fee = int(round(planned_fee * service_ratio))
+    refund_cents = max(0, (planned_wage + planned_fee) - (service_wage + service_fee))
+
+    booking.late_minutes = late_minutes
+    booking.early_departure_minutes = early_minutes
+    booking.billable_minutes = billable_minutes
+    booking.service_wage_cents = service_wage
+    booking.service_fee_cents = service_fee
+    booking.service_refund_cents = refund_cents
+    booking.payout_amount_cents = service_wage
+    booking.overrun_minutes = overtime_minutes
+    if overtime_minutes <= 0:
+        booking.overrun_amount_cents = 0
+        booking.overrun_status = "none"
+    return {
+        "scheduled_minutes": scheduled_minutes,
+        "billable_minutes": billable_minutes,
+        "late_minutes": late_minutes,
+        "early_departure_minutes": early_minutes,
+        "overtime_minutes": overtime_minutes,
+        "service_wage_cents": service_wage,
+        "service_fee_cents": service_fee,
+        "refund_cents": refund_cents,
+    }
+
+
+def _finalize_service_adjustment(db: Session, booking: models.Booking) -> None:
+    """Finalize a partial refund only after both duty timestamps are confirmed."""
+    if not booking.check_in_confirmed_at or not booking.check_out_confirmed_at:
+        return
+    result = _recalculate_duty_financials(db, booking)
+    refund_cents = int(result.get("refund_cents") or 0)
+    if refund_cents <= 0:
+        booking.service_adjustment_status = "not_required"
+    elif booking.service_refund_reference:
+        booking.service_adjustment_status = "requested"
+    else:
+        req = None
+        if booking.booking_request_id:
+            req = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
+        transaction = (req.paystack_transaction_id or req.paystack_reference) if req else None
+        if not transaction or not getattr(req, "paid_at", None):
+            booking.service_adjustment_status = "pending_payment_review"
+        else:
+            ok, payload = create_refund(str(transaction), refund_cents)
+            if ok:
+                data = _paystack_data(payload)
+                reference = data.get("id") or data.get("reference") or f"booking-{booking.id}-service-adjustment"
+                booking.service_refund_reference = str(reference)
+                booking.service_adjustment_status = "requested"
+                req.refund_cents = int(req.refund_cents or 0) + refund_cents
+                req.refund_status = "requested"
+                req.refund_requested_at = utc_now()
+            else:
+                booking.service_adjustment_status = "failed_admin_review"
+                booking.status = "admin_review"
+    booking.service_adjusted_at = utc_now()
+    settings = _get_pricing_settings(db)
+    if booking.overrun_status not in ("awaiting_parent", "queried") and booking.status != "admin_review":
+        booking.status = "completed"
+        booking.payout_hold_until = utc_now() + timedelta(hours=max(1, int(settings.get("payout_hold_hours") or 24)))
+
+
 def _parent_owned_booking_or_404(db: Session, booking_id: int, user_id: int) -> models.Booking:
     booking = (
         db.query(models.Booking)
@@ -4930,6 +5095,14 @@ def list_nanny_me_duty_bookings(
                 "check_out_lng": getattr(b, "check_out_lng", None),
                 "check_out_distance_m": getattr(b, "check_out_distance_m", None),
                 "check_out_confirmed_at": b.check_out_confirmed_at.isoformat() if getattr(b, "check_out_confirmed_at", None) else None,
+                "late_minutes": int(getattr(b, "late_minutes", 0) or 0),
+                "early_departure_minutes": int(getattr(b, "early_departure_minutes", 0) or 0),
+                "billable_minutes": getattr(b, "billable_minutes", None),
+                "scheduled_minutes": getattr(b, "scheduled_minutes", None),
+                "service_wage_cents": getattr(b, "service_wage_cents", None),
+                "service_fee_cents": getattr(b, "service_fee_cents", None),
+                "service_refund_cents": int(getattr(b, "service_refund_cents", 0) or 0),
+                "service_adjustment_status": getattr(b, "service_adjustment_status", None),
                 "wage_cents": int(getattr(req, "wage_cents", None) or 0) if req else 0,
                 "daily_wage_cents": (
                     int(round((int(getattr(req, "wage_cents", None) or 0)) / max(len(_booking_request_windows(db, req)) or 1, 1)))
@@ -4951,6 +5124,15 @@ def nanny_check_in_booking(
 ):
     user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
     booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
+    if booking.status not in ("approved", "accepted"):
+        raise HTTPException(status_code=409, detail="This booking is not active for check-in")
+    starts_at, ends_at = _duty_schedule(booking)
+    now_utc = _as_utc_aware(utc_now())
+    early_minutes = max(0, int(os.getenv("CHECK_IN_EARLY_MINUTES", "30")))
+    if now_utc < starts_at - timedelta(minutes=early_minutes):
+        raise HTTPException(status_code=409, detail=f"Check-in opens {early_minutes} minutes before the booking starts")
+    if now_utc >= ends_at:
+        raise HTTPException(status_code=409, detail="This booking has already reached its scheduled finish time")
     target_lat, target_lng = _ensure_booking_geo(booking)
     distance_m = _distance_m(payload.lat, payload.lng, target_lat, target_lng)
     if distance_m > 100:
@@ -4964,7 +5146,7 @@ def nanny_check_in_booking(
         }
 
     before_status = booking.status
-    booking.check_in_at = utc_now()
+    booking.check_in_at = now_utc.replace(tzinfo=None)
     booking.check_in_lat = float(payload.lat)
     booking.check_in_lng = float(payload.lng)
     booking.check_in_distance_m = float(round(distance_m, 2))
@@ -5001,8 +5183,14 @@ def nanny_check_out_booking(
 ):
     user, _, _ = _require_nanny_user_not_on_hold(authorization, db)
     booking = _nanny_owned_booking_or_404(db, booking_id, user.id)
+    if booking.status not in ("accepted", "active", "in_progress"):
+        raise HTTPException(status_code=409, detail="This booking is not active for check-out")
     if not booking.check_in_at:
         raise HTTPException(status_code=400, detail="Check in first before checking out")
+    starts_at, _ = _duty_schedule(booking)
+    now_aware = _as_utc_aware(utc_now())
+    if now_aware < starts_at:
+        raise HTTPException(status_code=409, detail="Check-out is not available before the booking starts")
     target_lat, target_lng = _ensure_booking_geo(booking)
     distance_m = _distance_m(payload.lat, payload.lng, target_lat, target_lng)
     if distance_m > 100:
@@ -5016,7 +5204,7 @@ def nanny_check_out_booking(
         }
 
     before_status = booking.status
-    now_utc = utc_now()
+    now_utc = now_aware.replace(tzinfo=None)
     booking.check_out_at = now_utc
     booking.check_out_lat = float(payload.lat)
     booking.check_out_lng = float(payload.lng)
@@ -5025,10 +5213,7 @@ def nanny_check_out_booking(
     settings = _get_pricing_settings(db)
     payout_hold_hours = max(1, int(settings.get("payout_hold_hours") or 24))
 
-    actual_minutes = max(0, int((booking.check_out_at - booking.check_in_at).total_seconds() // 60))
-    booked_minutes = 0
-    if getattr(booking, "starts_at", None) and getattr(booking, "ends_at", None):
-        booked_minutes = max(0, int((booking.ends_at - booking.starts_at).total_seconds() // 60))
+    service = _recalculate_duty_financials(db, booking)
 
     related_request = None
     if getattr(booking, "booking_request_id", None):
@@ -5038,8 +5223,8 @@ def nanny_check_out_booking(
     nanny_row = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
     nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
 
-    if actual_minutes > booked_minutes:
-        overrun_minutes = actual_minutes - booked_minutes
+    overrun_minutes = int(service.get("overtime_minutes") or 0)
+    if overrun_minutes > 0:
         booking.overrun_minutes = overrun_minutes
         booking_date = (booking.starts_at.date() if getattr(booking, "starts_at", None) else (booking.day or now_utc.date()))
         is_weekend = _is_weekend_or_holiday(booking_date)
@@ -5085,8 +5270,8 @@ def nanny_check_out_booking(
         )
     else:
         booking.overrun_status = "none"
-        booking.status = "completed"
-        booking.payout_hold_until = now_utc + timedelta(hours=payout_hold_hours)
+        booking.status = "awaiting_time_confirmation"
+        booking.payout_hold_until = None
 
     if related_request and booking.status == "completed":
         related_request.status = "completed"
@@ -5133,6 +5318,10 @@ def nanny_check_out_booking(
         "check_out_distance_m": booking.check_out_distance_m,
         "overrun_minutes": getattr(booking, "overrun_minutes", None),
         "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),
+        "late_minutes": getattr(booking, "late_minutes", 0),
+        "early_departure_minutes": getattr(booking, "early_departure_minutes", 0),
+        "billable_minutes": getattr(booking, "billable_minutes", None),
+        "service_refund_cents": getattr(booking, "service_refund_cents", 0),
     }
 
 
@@ -5160,6 +5349,8 @@ def parent_confirm_booking_check_in(
         booking.check_in_confirmed_at = utc_now()
         booking.check_in_confirmed_by_user_id = user.id
     elif corrected_time is not None:
+        if booking.check_out_at and _as_utc_aware(corrected_time) >= _as_utc_aware(booking.check_out_at):
+            raise HTTPException(status_code=400, detail="Arrival time must be before the completion time")
         booking.check_in_at = corrected_time
         booking.check_in_confirmed_at = utc_now()
         booking.check_in_confirmed_by_user_id = user.id
@@ -5170,8 +5361,16 @@ def parent_confirm_booking_check_in(
         booking.check_in_distance_m = None
         booking.check_in_confirmed_at = None
         booking.check_in_confirmed_by_user_id = None
-        if booking.status in ("accepted", "in_progress"):
-            booking.status = "approved"
+        booking.check_out_at = None
+        booking.check_out_lat = None
+        booking.check_out_lng = None
+        booking.check_out_distance_m = None
+        booking.check_out_confirmed_at = None
+        booking.check_out_confirmed_by_user_id = None
+        booking.status = "admin_review"
+        booking.payout_hold_until = None
+    _recalculate_duty_financials(db, booking)
+    _finalize_service_adjustment(db, booking)
     db.commit()
     db.refresh(booking)
     if not payload.confirmed:
@@ -5216,6 +5415,8 @@ def parent_confirm_booking_check_out(
         booking.check_out_confirmed_at = utc_now()
         booking.check_out_confirmed_by_user_id = user.id
     elif corrected_time is not None:
+        if booking.check_in_at and _as_utc_aware(corrected_time) <= _as_utc_aware(booking.check_in_at):
+            raise HTTPException(status_code=400, detail="Completion time must be after the arrival time")
         booking.check_out_at = corrected_time
         booking.check_out_confirmed_at = utc_now()
         booking.check_out_confirmed_by_user_id = user.id
@@ -5226,8 +5427,10 @@ def parent_confirm_booking_check_out(
         booking.check_out_distance_m = None
         booking.check_out_confirmed_at = None
         booking.check_out_confirmed_by_user_id = None
-        if booking.status == "completed":
-            booking.status = "accepted"
+        booking.status = "admin_review"
+        booking.payout_hold_until = None
+    _recalculate_duty_financials(db, booking)
+    _finalize_service_adjustment(db, booking)
     db.commit()
     db.refresh(booking)
     if not payload.confirmed:
@@ -5622,18 +5825,14 @@ def accept_nanny_booking_request(
     if not req.group_id:
         req.group_id = req.id
     group_id = req.group_id
-    sibling_winner = (
+    group_requests = (
         db.query(models.BookingRequest)
-        .filter(
-            models.BookingRequest.group_id == group_id,
-            models.BookingRequest.id != req.id,
-            models.BookingRequest.status == "approved",
-            models.BookingRequest.nanny_response_status == "accepted",
-        )
-        .first()
+        .filter(models.BookingRequest.group_id == group_id)
+        .with_for_update()
+        .all()
     )
-    if sibling_winner:
-        raise HTTPException(status_code=409, detail="Another nanny has already been selected for this job")
+    if _booking_group_is_filled(group_requests):
+        raise HTTPException(status_code=409, detail="All nanny positions for this job have already been filled")
 
     parent_user = db.query(models.User).filter(models.User.id == req.parent_user_id).first()
     if not parent_user:
@@ -5693,31 +5892,6 @@ def accept_nanny_booking_request(
         db.commit()
         raise HTTPException(status_code=402, detail="Parent payment failed. The parent has been notified to update their card.")
 
-    def _resolve_group_acceptance(group_id_value: int):
-        accepted_reqs = (
-            db.query(models.BookingRequest)
-            .filter(
-                models.BookingRequest.group_id == group_id_value,
-                models.BookingRequest.status == "approved",
-            )
-            .all()
-        )
-        if len(accepted_reqs) <= 1:
-            return accepted_reqs[0] if accepted_reqs else None
-
-        def rating_key(r):
-            avg, cnt = get_rating_12m_for_nanny(db, r.nanny_id)
-            return (avg or 0.0, cnt or 0, -r.id)
-
-        winner = max(accepted_reqs, key=rating_key)
-        for other_req in accepted_reqs:
-            if other_req.id == winner.id:
-                continue
-            other_req.status = "rejected"
-            other_req.admin_reason = "filled_higher_rating"
-            other_req.admin_decided_at = utc_now()
-        return winner
-
     location = None
     if req.location_id:
         location = db.query(models.ParentLocation).filter(models.ParentLocation.id == req.location_id).first()
@@ -5741,11 +5915,6 @@ def accept_nanny_booking_request(
     created_bookings = existing_bookings or _find_related_bookings_for_request(db, req)
     if not created_bookings:
         db.flush()
-        winner = _resolve_group_acceptance(group_id)
-        if winner and winner.id != req.id:
-            db.commit()
-            raise HTTPException(status_code=409, detail="Another nanny has already been selected for this job")
-
         created_bookings = []
         for slot_start, slot_end in windows:
             booking = models.Booking(
@@ -5768,25 +5937,9 @@ def accept_nanny_booking_request(
             db.add(booking)
             created_bookings.append(booking)
 
-        others = (
-            db.query(models.BookingRequest)
-            .filter(
-                models.BookingRequest.parent_user_id == req.parent_user_id,
-                models.BookingRequest.id != req.id,
-                models.BookingRequest.status.in_(["tbc", "pending_admin"]),
-            )
-            .all()
-        )
-        for other in others:
-            try:
-                other_start = _parse_iso_dt(other.start_dt or other.requested_starts_at)
-                other_end = _parse_iso_dt(other.end_dt or other.requested_ends_at)
-            except Exception:
-                continue
-            if any(_overlaps(slot_start, slot_end, other_start, other_end) for slot_start, slot_end in windows):
-                other.status = "rejected"
-                other.admin_reason = "filled"
-                other.admin_decided_at = utc_now()
+        db.flush()
+        _close_filled_booking_group(group_requests)
+        _reject_other_overlapping_parent_requests(db, req, windows)
 
         for slot_start, slot_end in windows:
             block_row = models.NannyAvailability(
@@ -6052,6 +6205,7 @@ def _search_nannies_by_area(
         .join(models.Nanny, models.Nanny.id == models.NannyProfile.nanny_id)
         .join(models.User, models.User.id == models.Nanny.user_id)
         .filter(models.Nanny.approved == True)
+        .filter(models.Nanny.banking_complete == True)
         .filter(models.NannyProfile.application_status == "approved")
         .filter(models.NannyProfile.is_approved == 1)
         .filter(models.Nanny.is_suspended == False)
@@ -6737,25 +6891,12 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             and b.starts_at <= end_ceiling and b.ends_at >= start_floor
         ]
 
-    # Resolve rare double-acceptance conflicts in memory (rating queries only
-    # run when a group actually has more than one accepted request).
+    # Multiple acceptances are valid until every requested position is filled.
     any_changes = False
     for gid, group_reqs in reqs_by_group.items():
-        accepted_reqs = [r for r in group_reqs if r.status == "approved"]
-        if len(accepted_reqs) <= 1:
-            continue
-
-        def rating_key(r):
-            avg, cnt = get_rating_12m_for_nanny(db, r.nanny_id)
-            return (avg or 0.0, cnt or 0, -r.id)
-
-        winner = max(accepted_reqs, key=rating_key)
-        for other_req in accepted_reqs:
-            if other_req.id == winner.id:
-                continue
-            other_req.status = "rejected"
-            other_req.admin_reason = "filled_higher_rating"
-            other_req.admin_decided_at = utc_now()
+        before = [(item.id, item.status) for item in group_reqs]
+        _close_filled_booking_group(group_reqs)
+        if before != [(item.id, item.status) for item in group_reqs]:
             any_changes = True
     if any_changes:
         db.commit()
@@ -6813,6 +6954,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 "accepted_nanny_name": None,
                 "accepted_nanny_phone": None,
                 "accepted_nanny_phone_alt": None,
+                "accepted_nannies": [],
                 "requested_nannies": [],
                 "booking_form": booking_form,
                 "booking_days": [
@@ -6826,6 +6968,14 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                         "check_in_confirmed_at": booking.check_in_confirmed_at.isoformat() if getattr(booking, "check_in_confirmed_at", None) else None,
                         "check_out_at": _to_iso_z(booking.check_out_at) if getattr(booking, "check_out_at", None) else None,
                         "check_out_confirmed_at": booking.check_out_confirmed_at.isoformat() if getattr(booking, "check_out_confirmed_at", None) else None,
+                        "late_minutes": int(getattr(booking, "late_minutes", 0) or 0),
+                        "early_departure_minutes": int(getattr(booking, "early_departure_minutes", 0) or 0),
+                        "billable_minutes": getattr(booking, "billable_minutes", None),
+                        "scheduled_minutes": getattr(booking, "scheduled_minutes", None),
+                        "service_wage_cents": getattr(booking, "service_wage_cents", None),
+                        "service_fee_cents": getattr(booking, "service_fee_cents", None),
+                        "service_refund_cents": int(getattr(booking, "service_refund_cents", 0) or 0),
+                        "service_adjustment_status": getattr(booking, "service_adjustment_status", None),
                         "overrun_minutes": getattr(booking, "overrun_minutes", None),
                         "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),
                         "overrun_status": getattr(booking, "overrun_status", None),
@@ -6852,6 +7002,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             entry["accepted_nanny_id"] = req.nanny_id
             entry["accepted_nanny_user_id"] = nanny_u.id
             entry["accepted_nanny_name"] = nanny_u.name
+            entry["accepted_nannies"].append({"id": req.nanny_id, "name": nanny_u.name})
             if entry.get("booking_category") != "past":
                 entry["accepted_nanny_phone"] = getattr(nanny_u, "phone", None)
                 entry["accepted_nanny_phone_alt"] = getattr(nanny_u, "phone_alt", None)
@@ -6861,6 +7012,14 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             entry["status"] = status
 
     results = list(grouped.values())
+    for entry in results:
+        group_reqs = reqs_by_group.get(entry["job_id"], [])
+        required = _booking_group_required_count(group_reqs)
+        filled = len(entry.get("accepted_nannies") or [])
+        entry["requested_nannies_count"] = required
+        entry["filled_nannies_count"] = filled
+        entry["remaining_nannies_count"] = max(0, required - filled)
+        entry["estimated_group_total_cents"] = int(entry.get("total_cents") or 0) * required
     results.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"results": results}
 
@@ -8451,8 +8610,11 @@ def create_booking_request_bulk(
     nanny_ids = list(dict.fromkeys([int(n) for n in (payload.nanny_ids or []) if n is not None]))
     if not nanny_ids:
         raise HTTPException(status_code=400, detail="No nannies selected")
+    if not _broadcast_workflow_enabled(db) and len(nanny_ids) > 1:
+        raise HTTPException(status_code=409, detail="Broadcast booking requests are currently disabled")
 
     created = []
+    created_nanny_users = []
     errors = []
     next_id = _next_booking_request_id(db)
     group_id = next_id
@@ -8469,6 +8631,11 @@ def create_booking_request_bulk(
     questionnaire = _sanitize_booking_questionnaire_payload(payload)
     _validate_booking_questionnaire(questionnaire)
     requested_nannies_count = _sanitize_requested_nannies_count(getattr(payload, "requested_nannies_count", 1))
+    if requested_nannies_count > len(nanny_ids):
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least as many nannies as the number of positions required",
+        )
 
     for nanny_id in nanny_ids:
         nanny = db.query(models.Nanny).filter(models.Nanny.id == nanny_id).first()
@@ -8520,6 +8687,8 @@ def create_booking_request_bulk(
         if payload.slots:
             _attach_booking_request_slots(db, req.id, windows)
         created.append(req.id)
+        if nanny_user:
+            created_nanny_users.append((nanny_user.id, req.id))
         log_audit(
             db,
             actor_user=user,
@@ -8538,6 +8707,21 @@ def create_booking_request_bulk(
             request=request,
         )
 
+    if len(created) < requested_nannies_count:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only {len(created)} eligible nannies were available, but {requested_nannies_count} positions are required",
+        )
+    db.commit()
+    for nanny_user_id, request_id in created_nanny_users:
+        notify(
+            db,
+            nanny_user_id,
+            "new_booking_request",
+            "A family has sent you a new booking request. Open Requests to review the dates, location and earnings.",
+            reference_id=request_id,
+        )
     db.commit()
     return {"ok": True, "group_id": group_id, "created_ids": created, "errors": errors}
 
@@ -9462,6 +9646,7 @@ def list_nanny_applications(
             "admin_reason": getattr(profile, "admin_reason", None),
             "approved": bool(getattr(nanny, "approved", False)),
             "video_screening_complete": bool(getattr(nanny, "video_screening_complete", False)),
+            "banking_complete": bool(getattr(nanny, "banking_complete", False)),
             "location_on_file": bool(
                 profile
                 and getattr(profile, "lat", None) is not None
@@ -10621,6 +10806,12 @@ def approve_nanny(
     if not nanny:
         raise HTTPException(status_code=404, detail="Nanny not found")
 
+    if not bool(getattr(nanny, "banking_complete", False)):
+        raise HTTPException(
+            status_code=409,
+            detail="Paystack payout details must be completed before approval",
+        )
+
     profile = db.query(models.NannyProfile).filter_by(nanny_id=nanny_id).first()
     if not profile:
         profile = models.NannyProfile(nanny_id=nanny_id)
@@ -11049,6 +11240,12 @@ def admin_set_nanny_application_status(
         getattr(profile, "lat", None) is None or getattr(profile, "lng", None) is None
     ):
         raise HTTPException(status_code=409, detail="A verified nanny location is required before approval")
+
+    if payload.status == "approved" and not bool(getattr(nanny, "banking_complete", False)):
+        raise HTTPException(
+            status_code=409,
+            detail="Paystack payout details must be completed before approval",
+        )
 
     profile.application_status = payload.status
     profile.admin_reason = (payload.reason or "").strip() or None

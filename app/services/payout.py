@@ -151,7 +151,11 @@ def run_scheduled_payouts(db: Session) -> None:
                 req = None
                 if getattr(booking, "booking_request_id", None):
                     req = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
-                payout_cents = int((req.nanny_retained_cents if req else 0) or 0)
+                payout_cents = int(
+                    booking.payout_amount_cents
+                    if booking.payout_amount_cents is not None
+                    else ((req.nanny_retained_cents if req else 0) or 0)
+                )
                 if payout_cents <= 0:
                     continue
                 debt_result = deduct_debt_from_payout(db, int(booking.nanny_id), payout_cents, booking_id=int(booking.id))

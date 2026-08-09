@@ -34,6 +34,10 @@ class GoogleMapsSettingsPayload(BaseModel):
     google_calendar_id: Optional[str] = None
 
 
+class BookingWorkflowSettingsPayload(BaseModel):
+    broadcast_workflow_enabled: bool
+
+
 class LookupPayload(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
@@ -238,6 +242,23 @@ def get_pricing_settings(db: Session = Depends(get_db)):
         "transport_threshold_1": int(getattr(row, "transport_threshold_1", 17) or 17),
         "transport_threshold_2": int(getattr(row, "transport_threshold_2", 20) or 20),
     }
+
+
+@router.get("/platform-workflow", dependencies=[Depends(require_superadmin)])
+def get_platform_workflow(db: Session = Depends(get_db)):
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    return {"broadcast_workflow_enabled": True if not row else bool(row.broadcast_workflow_enabled)}
+
+
+@router.put("/platform-workflow", dependencies=[Depends(require_superadmin)])
+def update_platform_workflow(payload: BookingWorkflowSettingsPayload, db: Session = Depends(get_db)):
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not row:
+        row = models.AppSettings(id=1)
+        db.add(row)
+    row.broadcast_workflow_enabled = payload.broadcast_workflow_enabled
+    db.commit()
+    return {"broadcast_workflow_enabled": bool(row.broadcast_workflow_enabled)}
 
 
 @router.put("/pricing", dependencies=[Depends(require_superadmin)])

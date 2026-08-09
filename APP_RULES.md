@@ -93,6 +93,24 @@ It is intended as an operational source of truth for product, support, and engin
   - Nanny check-in is allowed only when within **100 meters** of the booking location.
   - Nanny check-out is allowed only when within **100 meters** of the booking location.
   - If outside the 100m radius, API returns a conflict error and does not record the duty action.
+  - Check-in opens 30 minutes before the scheduled start and closes at the scheduled finish.
+  - Check-in and check-out are available only for an active, assigned booking in the appropriate state.
+  - Check-out is not available before the scheduled start and requires a recorded check-in.
+  - Repeated check-in or check-out requests are idempotent and do not replace the original timestamp.
+
+## 7A. Duty Time, Billing and Confirmation Rules
+
+- The client pays only for scheduled service actually delivered.
+- A late arrival reduces the nanny wage and percentage-based booking fee in proportion to the scheduled minutes not delivered.
+- An early departure reduces the nanny wage and percentage-based booking fee in the same way.
+- Arriving before the scheduled start does not increase billable service time.
+- Overtime is measured from the scheduled finish time, not from total elapsed time since check-in, and remains subject to parent approval.
+- The nanny's base payout uses the adjusted service wage rather than the original full scheduled wage.
+- Client refunds for undelivered time are finalized through Paystack only after the parent confirms both arrival and finish times.
+- A parent may confirm, correct, or dispute either timestamp.
+- A correction recalculates late time, early departure, billable service, refund, overtime and payout before settlement.
+- A disputed timestamp moves the booking to admin review and freezes payout until resolved.
+- Browser GPS coordinates are treated as operational evidence but do not replace parent confirmation or admin dispute review.
 
 ## 8. Profile and Validation Rules
 
@@ -106,7 +124,7 @@ It is intended as an operational source of truth for product, support, and engin
 
 ## 8A. Candidate Approval and Parent Visibility Rules
 
-- Video screening completion and verified nanny coordinates are hard requirements for profile approval.
+- Video screening completion, verified nanny coordinates, and completed Paystack payout details are hard requirements for profile approval.
 - Before approval, the system checks the complete candidate record and identifies outstanding mandatory information.
 - If information remains outstanding, admin must see a warning that lists the incomplete items and explains that approval may not make the profile visible to parents.
 - Admin may override profile incompleteness only after explicitly acknowledging that the profile is incomplete.
@@ -117,6 +135,7 @@ It is intended as an operational source of truth for product, support, and engin
   - The nanny account is active and not suspended.
   - Required identity, eligibility, and document requirements are satisfied.
   - A verified location is on file.
+  - A Paystack payout recipient has been created and banking setup is complete.
 - Parents may only see approved, video-screened candidates who meet all parent-visibility eligibility rules.
 - Parent-facing nanny profiles use the nanny's real first name and only the initial of the last name.
 - Parent-facing profiles contain no direct contact details.
@@ -210,9 +229,33 @@ It is intended as an operational source of truth for product, support, and engin
 - My Nanny may retain the Paystack customer/authorisation references and limited display metadata returned by Paystack, such as card brand and last four digits, so future booking charges can be initiated securely without storing card details.
 - Parent-facing wording must clearly explain the booking restriction and direct incomplete parents to complete authorisation through Paystack.
 
+## 9C. Nanny Payout Readiness Rules
+
+- A nanny must link a valid South African bank account through Paystack before admin can approve the candidate profile.
+- Banking readiness is a hard approval prerequisite and cannot be bypassed by the incomplete-profile acknowledgement flow.
+- Admin review and candidate-completion interfaces must clearly show whether payout setup is complete.
+- My Nanny sends the submitted banking details to Paystack to create a transfer recipient, then retains the Paystack recipient reference and masked account information required for payout operations and display.
+- Full nanny account numbers must not be displayed after setup or stored as reusable plaintext banking details.
+- An approved nanny without valid payout readiness must not be shown in parent discovery results.
+
 ## 10. Operational Safety Rules
 
 - Preserve backward-compatible request/response shapes unless intentionally changed.
+
+## 10C. Booking Broadcast Rules
+
+- Superadmins may activate or deactivate the multi-nanny broadcast workflow in Platform Settings.
+- When active, a parent defines the dates, times, location, care requirements and payment authorisation before selecting one or more eligible available nannies.
+- One grouped booking request is created with an individual response record for every selected nanny.
+- Every selected nanny is notified and may accept, decline, or indicate that they are still deciding.
+- The parent must specify how many nanny positions the job requires before viewing available nannies.
+- The broadcast audience and the number of positions required are separate: a parent may send the job to more nannies than are needed.
+- Every valid acceptance that successfully completes the parent payment fills one position.
+- A grouped job remains open until the number of paid, accepted nannies equals the number of positions requested.
+- Only after all positions are filled are the remaining competing requests in that broadcast closed.
+- The API must reject a broadcast when fewer eligible nannies are selected than the number of positions required.
+- When broadcast mode is inactive, parents may request only one nanny for a job and the bulk API must reject multi-nanny submissions.
+- Parents can track each selected nanny's response without seeing private nanny contact details before confirmation.
 - Prefer small safe changes over broad rewrites.
 - Auth/security/payment behavior changes should include risk review.
 

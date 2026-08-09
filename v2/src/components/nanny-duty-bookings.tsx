@@ -21,6 +21,9 @@ type Duty = {
   check_out_distance_m?: number | null;
   wage_cents?: number;
   daily_wage_cents?: number;
+  service_wage_cents?: number | null;
+  late_minutes?: number;
+  early_departure_minutes?: number;
 };
 
 function when(value?: string) {
@@ -112,7 +115,8 @@ export function NannyDutyBookings() {
               <div className="grid gap-4 p-6 text-sm">
                 <div className="flex gap-3"><MapPin className="shrink-0 text-[var(--coral)]" size={18} /><span><b className="block">Booking location</b>{row.location_address || row.location_label || "Location pending"}</span></div>
                 {row.parent_phone && <a href={`tel:${row.parent_phone}`} className="flex gap-3"><Phone size={18} /><span><b className="block">Parent telephone</b>{row.parent_phone}</span></a>}
-                <div className="flex gap-3"><Wallet size={18} /><span><b className="block">Expected earnings</b>R{((row.daily_wage_cents || row.wage_cents || 0) / 100).toFixed(2)}</span></div>
+                <div className="flex gap-3"><Wallet size={18} /><span><b className="block">{row.check_out_at ? "Service earnings" : "Expected earnings"}</b>R{((row.service_wage_cents ?? row.daily_wage_cents ?? row.wage_cents ?? 0) / 100).toFixed(2)}</span></div>
+                {!!row.late_minutes && <div className="rounded-xl bg-amber-50 p-3 text-amber-900">Late arrival: {row.late_minutes} minutes. The undelivered time is deducted from the service fee.</div>}
                 <div className="rounded-2xl bg-slate-50 p-4"><div><Clock size={15} className="mr-2 inline" />Checked in: {row.check_in_at ? when(row.check_in_at) : "Not yet"}</div><div className="mt-2"><Clock size={15} className="mr-2 inline" />Checked out: {row.check_out_at ? when(row.check_out_at) : "Not yet"}</div></div>
                 {!row.check_in_at && filter === "upcoming" && <button className="btn-primary" disabled={busy === row.booking_id} onClick={() => dutyAction(row.booking_id, "check-in")}>{busy === row.booking_id ? <LoaderCircle className="animate-spin" size={17} /> : <MapPin size={17} />}Check in</button>}
                 {row.check_in_at && !row.check_out_at && <button className="btn-primary" disabled={busy === row.booking_id} onClick={() => dutyAction(row.booking_id, "check-out")}>{busy === row.booking_id ? <LoaderCircle className="animate-spin" size={17} /> : <MapPin size={17} />}Check out</button>}

@@ -790,6 +790,7 @@ function NannyProfile() {
 function AdminSettings() {
   const [pricing, setPricing] = useState<Data | null>(null);
   const [integration, setIntegration] = useState<Data | null>(null);
+  const [workflow, setWorkflow] = useState<Data | null>(null);
   const [mapsKey, setMapsKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -799,7 +800,8 @@ function AdminSettings() {
     Promise.all([
       apiJson<Data>("/admin/pricing"),
       apiJson<Data>("/admin/integrations/google-maps"),
-    ]).then(([priceSettings, integrationSettings]) => {
+      apiJson<Data>("/admin/platform-workflow"),
+    ]).then(([priceSettings, integrationSettings, workflowSettings]) => {
       setPricing({
         ...priceSettings,
         booking_fee_pct_1_5: Number(priceSettings.booking_fee_pct_1_5 || 0) * 100,
@@ -811,6 +813,7 @@ function AdminSettings() {
         transport_fee_after_20: Number(priceSettings.transport_fee_after_20 || 0) / 100,
       });
       setIntegration(integrationSettings);
+      setWorkflow(workflowSettings);
     }).catch((error) => setMessage(error instanceof Error ? error.message : "Unable to load platform settings."))
       .finally(() => setLoading(false));
   }, []);
@@ -871,6 +874,24 @@ function AdminSettings() {
     }
   }
 
+  async function saveWorkflow() {
+    if (!workflow) return;
+    setSaving("workflow");
+    setMessage("");
+    try {
+      const result = await apiJson<Data>("/admin/platform-workflow", {
+        method: "PUT",
+        body: JSON.stringify({ broadcast_workflow_enabled: Boolean(workflow.broadcast_workflow_enabled) }),
+      });
+      setWorkflow(result);
+      setMessage("Booking workflow setting saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save booking workflow setting.");
+    } finally {
+      setSaving("");
+    }
+  }
+
   if (loading) return <Loading />;
   return (
     <ProfileLayout
@@ -880,6 +901,26 @@ function AdminSettings() {
       {message && <div className="rounded-2xl bg-[var(--blue-pale)] p-4 text-sm font-semibold">{message}</div>}
       {pricing && (
         <>
+          {workflow && (
+            <SettingsPanel icon={<Settings2 />} title="Booking workflow" intro="Choose whether parents may send one job to several available nannies at once.">
+              <div className="flex flex-wrap items-center justify-between gap-5">
+                <div>
+                  <div className="font-bold">Multi-nanny broadcast</div>
+                  <p className="mt-1 max-w-2xl text-sm text-[var(--muted)]">When active, parents can shortlist several nannies. The first valid acceptance secures the job and closes the other requests. When inactive, parents select one nanny only.</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(workflow.broadcast_workflow_enabled)}
+                  className={`rounded-full px-5 py-3 text-sm font-bold transition ${workflow.broadcast_workflow_enabled ? "bg-[var(--green)] text-white" : "bg-slate-200 text-slate-700"}`}
+                  onClick={() => setWorkflow((current) => ({ ...current, broadcast_workflow_enabled: !current?.broadcast_workflow_enabled }))}
+                >
+                  {workflow.broadcast_workflow_enabled ? "Broadcast active" : "Broadcast inactive"}
+                </button>
+              </div>
+              <div className="mt-5"><button className="btn-secondary" disabled={saving === "workflow"} onClick={() => void saveWorkflow()}><Save size={17}/>{saving === "workflow" ? "Saving..." : "Save workflow"}</button></div>
+            </SettingsPanel>
+          )}
           <SettingsPanel icon={<Wallet />} title="Standard booking rates" intro="Customer-facing base rates in South African rand.">
             <SettingsGrid>
               <SettingNumber label="Weekday half day" prefix="R" value={pricing.weekday_half_day} onChange={(value) => price("weekday_half_day", value)} />

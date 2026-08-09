@@ -8,6 +8,7 @@ import {
   Database,
   Heart,
   Home,
+  Landmark,
   LogOut,
   Menu,
   MessageCircle,
@@ -42,6 +43,7 @@ const roleLinks = {
     ["/interview", "Video interview", Video],
     ["/availability", "Availability", CalendarDays],
     ["/requests", "Requests", Heart],
+    ["/payout-details", "Payout details", Landmark],
     ["/profile", "Profile", UserRound],
   ],
   admin: [
@@ -86,7 +88,7 @@ export function AppShell({
     router.push("/login");
   }
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[250px_1fr]">
+    <div className="min-h-screen lg:grid lg:grid-cols-[290px_1fr]">
       <header className="sticky top-0 z-30 flex h-[74px] items-center justify-between border-b border-[var(--line)] bg-white/95 px-5 backdrop-blur lg:hidden">
         <Brand compact />
         <div className="flex items-center gap-1"><NotificationBell/><button className="btn-quiet !min-h-10 !px-3" onClick={() => setOpen(!open)} aria-label="Open navigation">{open ? <X /> : <Menu />}</button></div>
@@ -95,7 +97,7 @@ export function AppShell({
         className={`${open ? "flex" : "hidden"} fixed inset-x-0 top-[74px] bottom-0 z-20 flex-col border-r border-[var(--line)] bg-white p-5 lg:sticky lg:top-0 lg:flex lg:h-screen`}
       >
         <div className="mb-8 hidden lg:block">
-          <Brand />
+          <Brand sidebar />
         </div>
         <div className="mb-5 flex items-start justify-between gap-2 rounded-2xl bg-[var(--blue-pale)] p-4">
           <div><div className="text-sm font-bold">{name || "Welcome"}</div><div className="mt-1 text-xs capitalize text-[var(--muted)]">{role === "admin" ? "My Nanny team" : `${role} account`}</div></div>

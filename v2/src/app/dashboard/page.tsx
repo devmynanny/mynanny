@@ -14,6 +14,7 @@ import {
   BadgeCheck,
   CalendarDays,
   CircleDashed,
+  Landmark,
   Search,
   Sparkles,
   Video,
@@ -46,6 +47,10 @@ type ParentProfileStatus = {
   is_profile_complete: boolean;
   missing_fields: string[];
 };
+type BankingStatus = {
+  banking_complete: boolean;
+  accounts: { bank_name?: string | null; masked_account_number?: string | null }[];
+};
 export default function Dashboard() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
@@ -56,6 +61,7 @@ export default function Dashboard() {
   >([]);
   const [trustProfile, setTrustProfile] = useState<NannyTrustProfile>({});
   const [trustBadges, setTrustBadges] = useState<TrustBadge[]>([]);
+  const [bankingStatus, setBankingStatus] = useState<BankingStatus | null>(null);
   useEffect(() => {
     apiJson<Me>("/auth/me")
       .then(setMe)
@@ -82,6 +88,9 @@ export default function Dashboard() {
     apiJson<{ badges: TrustBadge[] }>("/nannies/me/trust-badges")
       .then((data) => setTrustBadges(data.badges || []))
       .catch(() => undefined);
+    apiJson<BankingStatus>("/nanny/banking")
+      .then(setBankingStatus)
+      .catch(() => undefined);
   }, [me]);
   if (failed) return null;
   if (!me)
@@ -102,6 +111,7 @@ export default function Dashboard() {
           availability={availability}
           trustProfile={trustProfile}
           trustBadges={trustBadges}
+          bankingStatus={bankingStatus}
         />
       ) : (
         <AdminHome />
@@ -378,12 +388,14 @@ function NannyHome({
   availability,
   trustProfile,
   trustBadges,
+  bankingStatus,
 }: {
   name: string;
   interviewSubmitted: boolean;
   availability: { start_dt: string; type: "available" | "blocked" }[];
   trustProfile: NannyTrustProfile;
   trustBadges: TrustBadge[];
+  bankingStatus: BankingStatus | null;
 }) {
   const events: CalendarEvent[] = availability.map((row) => ({
     date: row.start_dt.slice(0, 10),
@@ -420,6 +432,32 @@ function NannyHome({
               </div>
             </Link>
           )}
+          <Link
+            href="/payout-details"
+            className={`card p-6 transition hover:-translate-y-0.5 ${bankingStatus?.banking_complete ? "bg-emerald-50" : "bg-amber-50"}`}
+          >
+            <div className="flex items-start gap-4">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white ${bankingStatus?.banking_complete ? "text-[var(--green)]" : "text-amber-700"}`}>
+                <Landmark />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-bold">Payout details</h2>
+                  <span className="text-xs font-bold">
+                    {bankingStatus?.banking_complete ? "Ready" : "Required"}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                  {bankingStatus?.banking_complete
+                    ? `${bankingStatus.accounts[0]?.bank_name || "Bank account"} ${bankingStatus.accounts[0]?.masked_account_number || ""}`
+                    : "Add your bank account so Paystack can send your earnings."}
+                </p>
+                <span className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-[var(--blue-dark)]">
+                  {bankingStatus?.banking_complete ? "View payout details" : "Set up payouts"} <ArrowRight size={16} />
+                </span>
+              </div>
+            </div>
+          </Link>
           <TrustBadges
             profile={trustProfile}
             interviewSubmitted={interviewSubmitted}
