@@ -165,7 +165,10 @@ function Communicator() {
   useEffect(() => {
     messageEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [thread?.results.length]);
-  async function sendText(text = body.trim(), replyId = replyTo?.id) {
+  async function sendText(
+    text = body.trim(),
+    replyId: number | null | undefined = replyTo?.id,
+  ) {
     if (!selectedId || !text) return;
     setSending(true);
     setMessage("");
@@ -335,7 +338,7 @@ function Communicator() {
                     >
                       <div className="group flex max-w-[82%] items-center gap-2">
                         {item.direction === "outbound" && (
-                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, item.id)} disabled={blocked || sending} />
+                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, null)} disabled={blocked || sending} />
                         )}
                         <div
                           className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${item.direction === "outbound" ? "bg-[var(--blue-dark)] text-white" : "border border-[var(--line)] bg-white"}`}
@@ -373,7 +376,7 @@ function Communicator() {
                         )}
                         </div>
                         {item.direction === "inbound" && (
-                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, item.id)} disabled={blocked || sending} />
+                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, null)} disabled={blocked || sending} />
                         )}
                       </div>
                     </div>
@@ -493,8 +496,9 @@ function MessageActions({
   onReact: (emoji: string) => void;
   disabled: boolean;
 }) {
+  const [reactionsOpen, setReactionsOpen] = useState(false);
   return (
-    <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+    <div className="flex shrink-0 items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
       <button
         className="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:text-[var(--blue)]"
         title="Reply"
@@ -503,25 +507,32 @@ function MessageActions({
       >
         <Reply size={14} />
       </button>
-      <div className="relative group/reaction">
+      <div className="relative">
         <button
           className="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:text-[var(--blue)]"
           title="Send an emoji response"
           disabled={disabled}
+          aria-expanded={reactionsOpen}
+          onClick={() => setReactionsOpen((current) => !current)}
         >
           <Smile size={14} />
         </button>
-        <div className="invisible absolute bottom-full z-20 mb-1 flex -translate-x-1/2 gap-1 rounded-full border border-[var(--line)] bg-white p-1 opacity-0 shadow-lg transition group-hover/reaction:visible group-hover/reaction:opacity-100">
-          {["👍", "❤️", "😂", "🙏"].map((emoji) => (
+        {reactionsOpen && (
+        <div className="absolute bottom-full left-1/2 z-30 mb-2 grid w-48 -translate-x-1/2 grid-cols-6 gap-1 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-xl">
+          {EMOJIS.map((emoji) => (
             <button
               key={emoji}
-              className="rounded-full p-1 text-base hover:bg-slate-100"
-              onClick={() => onReact(emoji)}
+              className="rounded-lg p-1.5 text-lg hover:bg-slate-100"
+              onClick={() => {
+                onReact(emoji);
+                setReactionsOpen(false);
+              }}
             >
               {emoji}
             </button>
           ))}
         </div>
+        )}
       </div>
     </div>
   );
