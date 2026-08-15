@@ -1956,12 +1956,11 @@ def reply_to_conversation(
         )
         if not replied:
             raise HTTPException(status_code=400, detail="Reply target is not in this conversation")
-    provider_body = body
-    if replied:
-        quote = (replied.body or "Attachment").strip().replace("\n", " ")[:140]
-        provider_body = f'Replying to: "{quote}"\n\n{body}'
-
-    ok, error = messaging.send_chat_message(conv.channel, conv.external_id, provider_body)
+    # Twilio exposes reply context for inbound WhatsApp webhooks, but its
+    # outbound Message resource has no native quoted-reply parameter. Preserve
+    # the relationship in My Nanny while sending the reply body normally so it
+    # is delivered cleanly to the recipient.
+    ok, error = messaging.send_chat_message(conv.channel, conv.external_id, body)
     if not ok and conv.channel == "whatsapp" and "63016" in (error or ""):
         # Twilio's window-violation error code - translate into the same clear
         # message as the proactive check above, in case last_inbound_at drifted.

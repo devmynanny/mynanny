@@ -254,8 +254,8 @@ function Communicator() {
           {message}
         </div>
       )}
-      <div className="card mt-7 grid min-h-[680px] overflow-hidden lg:grid-cols-[360px_1fr]">
-        <aside className="border-b border-[var(--line)] lg:border-b-0 lg:border-r">
+      <div className="card mt-7 grid h-[calc(100dvh-220px)] min-h-[620px] max-h-[850px] overflow-hidden lg:grid-cols-[360px_1fr]">
+        <aside className="min-h-0 overflow-hidden border-b border-[var(--line)] lg:border-b-0 lg:border-r">
           <label className="relative m-4 block">
             <Search
               className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
@@ -268,7 +268,7 @@ function Communicator() {
               placeholder="Search conversations"
             />
           </label>
-          <div className="max-h-[610px] overflow-auto px-3 pb-3">
+          <div className="h-[calc(100%-88px)] overflow-y-auto px-3 pb-3">
             {loading ? (
               <LoaderCircle className="mx-auto mt-16 animate-spin" />
             ) : filtered.length ? (
@@ -312,7 +312,7 @@ function Communicator() {
             )}
           </div>
         </aside>
-        <section className="flex min-h-[680px] min-w-0 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           {thread ? (
             <>
               <header className="border-b border-[var(--line)] p-5">
@@ -329,7 +329,7 @@ function Communicator() {
                   <Channel channel={thread.conversation.channel} />
                 </div>
               </header>
-              <div className="flex-1 space-y-3 overflow-auto bg-slate-50/70 p-5">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain bg-slate-50/70 p-5">
                 {thread.results.length ? (
                   thread.results.map((item) => (
                     <div
@@ -338,7 +338,7 @@ function Communicator() {
                     >
                       <div className="group flex max-w-[82%] items-center gap-2">
                         {item.direction === "outbound" && (
-                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, null)} disabled={blocked || sending} />
+                          <MessageActions item={item} onReply={setReplyTo} disabled={blocked || sending} />
                         )}
                         <div
                           className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${item.direction === "outbound" ? "bg-[var(--blue-dark)] text-white" : "border border-[var(--line)] bg-white"}`}
@@ -376,7 +376,7 @@ function Communicator() {
                         )}
                         </div>
                         {item.direction === "inbound" && (
-                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, null)} disabled={blocked || sending} />
+                          <MessageActions item={item} onReply={setReplyTo} disabled={blocked || sending} />
                         )}
                       </div>
                     </div>
@@ -488,17 +488,14 @@ function Channel({ channel }: { channel: string }) {
 function MessageActions({
   item,
   onReply,
-  onReact,
   disabled,
 }: {
   item: Message;
   onReply: (message: Message) => void;
-  onReact: (emoji: string) => void;
   disabled: boolean;
 }) {
-  const [reactionsOpen, setReactionsOpen] = useState(false);
   return (
-    <div className="flex shrink-0 items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+    <div className="flex shrink-0 items-center opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
       <button
         className="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:text-[var(--blue)]"
         title="Reply"
@@ -507,33 +504,6 @@ function MessageActions({
       >
         <Reply size={14} />
       </button>
-      <div className="relative">
-        <button
-          className="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:text-[var(--blue)]"
-          title="Send an emoji response"
-          disabled={disabled}
-          aria-expanded={reactionsOpen}
-          onClick={() => setReactionsOpen((current) => !current)}
-        >
-          <Smile size={14} />
-        </button>
-        {reactionsOpen && (
-        <div className="absolute bottom-full left-1/2 z-30 mb-2 grid w-48 -translate-x-1/2 grid-cols-6 gap-1 rounded-2xl border border-[var(--line)] bg-white p-2 shadow-xl">
-          {EMOJIS.map((emoji) => (
-            <button
-              key={emoji}
-              className="rounded-lg p-1.5 text-lg hover:bg-slate-100"
-              onClick={() => {
-                onReact(emoji);
-                setReactionsOpen(false);
-              }}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-        )}
-      </div>
     </div>
   );
 }

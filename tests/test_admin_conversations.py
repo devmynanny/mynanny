@@ -207,7 +207,7 @@ def test_reply_persists_reply_context(monkeypatch):
             headers=_auth(admin),
         )
         assert res.status_code == 200
-        assert "Replying to" in sent["body"]
+        assert sent["body"] == "Yes, certainly"
         db.expire_all()
         outbound = db.query(models.Message).filter(
             models.Message.conversation_id == conv.id,
