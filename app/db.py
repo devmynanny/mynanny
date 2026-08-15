@@ -758,6 +758,9 @@ def ensure_messages_schema() -> None:
         return
     with engine.begin() as conn:
         if _table_exists(conn, "messages"):
+            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(messages)"))}
+            if "attachments_json" not in existing:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN attachments_json TEXT"))
             return
         conn.execute(text("""
             CREATE TABLE messages (
@@ -770,6 +773,7 @@ def ensure_messages_schema() -> None:
               external_message_id TEXT,
               sender_user_id INTEGER,
               error_message TEXT,
+              attachments_json TEXT,
               created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY(conversation_id) REFERENCES conversations (id),
               FOREIGN KEY(sender_user_id) REFERENCES users (id),

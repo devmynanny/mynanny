@@ -62,6 +62,10 @@ class Message(Base):
     external_message_id = Column(String, nullable=True)
     sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     error_message = Column(Text, nullable=True)
+    # JSON array of private media references copied from the messaging
+    # provider into My Nanny storage. Provider credentials are never exposed
+    # to the browser.
+    attachments_json = Column(Text, nullable=True)
 
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 

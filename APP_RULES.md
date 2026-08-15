@@ -203,6 +203,25 @@ It is intended as an operational source of truth for product, support, and engin
   - Suspensions imposed for unrelated reasons are not automatically lifted.
 - Passport compliance is checked when the backend starts and by a scheduled sweep every 24 hours.
 
+## 8E. Uploaded Media Retention Rules
+
+- Retention applies to profile photos, family photos, identity and legal documents, certificates, references, and video interview recordings stored by the platform.
+- The database reference to an uploaded file identifies the active version. Replacing a file creates a new storage object and makes the previous object superseded; replacement must not silently overwrite the previous object under the same storage key.
+- Superseded photos, documents, and video answers are retained for a **30-day recovery period** and then permanently deleted from private object storage, unless a legal or operational hold applies.
+- Uploaded objects that are never linked to a valid database record, or that become orphaned because an upload flow fails, are permanently deleted after **7 days**.
+- Active profile photos, family photos, approved documents, and submitted interview videos are retained while the related account remains active and the material remains necessary for screening, trust, bookings, compliance, or dispute handling.
+- After account deactivation:
+  - Identity, passport, permit, police-clearance, licence, certificate, reference, and other screening documents are deleted after **12 months**.
+  - Submitted video interviews are deleted after **12 months**.
+  - Parent family photos are deleted within **30 days**.
+  - Nanny profile photos are deleted after **12 months**, unless earlier deletion is approved through a verified data-subject request.
+- Financial, payout, booking, refund, tax, and dispute records remain subject to their separate **5-year** retention rule. Deleting uploaded media must not delete required financial or booking records.
+- A documented legal, safety, fraud, chargeback, safeguarding, or active-dispute hold pauses scheduled deletion only for the affected records. The reason, owner, start date, and release date of the hold must be auditable.
+- Deletion must remove the storage object, not only clear its database URL. Deletion actions and failures must be logged without recording sensitive document contents.
+- Retention enforcement must use an automated scheduled cleanup job. S3 lifecycle rules should provide a secondary safeguard where appropriate, but may not replace database-aware checks for active references and legal holds.
+- Cleanup must be idempotent and must never delete the currently active file referenced by an account, candidate profile, document approval, or submitted interview record.
+- Backups follow the hosting provider's backup-expiry schedule; deleted media must not be restored into active use after its retention period without an authorized recovery or legal-hold process.
+
 ## 9. Calendar and Dashboard Rules
 
 - Nanny home calendar shows current work schedule (upcoming/in-progress context).
@@ -218,7 +237,19 @@ It is intended as an operational source of truth for product, support, and engin
 - Action-required events, including passport expiry warnings and passport-related suspensions, additionally write an in-app notification.
 - Every delivery attempt is logged to `notification_log` with the message body.
 - A scheduled sweep (every 15 minutes) retries failed notifications: max 3 attempts per (user, event, reference) tuple within a 48-hour window; stops permanently once any channel delivers.
-- Twilio requires env vars `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`. Until configured, WhatsApp attempts fail fast and email delivers - behavior is unchanged from email-only.
+- A duty-monitoring sweep runs every 5 minutes and sends each reminder or escalation only once per user, event, and booking.
+- Nannies receive a booking reminder approximately one hour before the scheduled start.
+- If no check-in is recorded 15 minutes after the scheduled start, the nanny is prompted to check in, the parent is warned, and active administrators receive an operations alert.
+- A checked-in nanny who has not checked out by the scheduled finish receives a checkout reminder.
+- Parent check-in and checkout confirmations are action-required notifications linked to the booking screen.
+- Confirmed late arrival or early departure notifies the parent of the recorded refund and the nanny of the adjusted service earnings.
+- Parent time corrections notify the nanny and administrators. A time dispute creates an operations alert and keeps payout frozen for review.
+- Multi-position broadcasts notify the parent after every filled position, remain open while positions are outstanding, and notify remaining invited nannies when the broadcast closes.
+- Business-initiated WhatsApp notifications use approved, privacy-safe Utility templates. Detailed names, addresses, rates, and service times remain inside the authenticated application.
+- Every templated event resolves its Twilio Content SID from `TWILIO_CONTENT_SID_<EVENT_TYPE>`.
+- Production sets `TWILIO_REQUIRE_TEMPLATES=true`; a missing template must fail safely to email rather than attempt an out-of-session free-form WhatsApp message.
+- Free-form WhatsApp content is reserved for manual replies during an open 24-hour customer-service window.
+- Twilio requires env vars `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`. Until configured, WhatsApp attempts fail fast and email delivers.
 
 ## 9B. Parent Payment Readiness Rules
 

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="310" height="112" viewBox="0 0 310 112" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">Powered by TIQET</title>
+  <desc id="description">TIQET powered-by brand lockup with connected systems motif.</desc>
+
+  <rect x="1" y="1" width="308" height="110" rx="22" fill="#F3EEE6" stroke="#DDD6CC" stroke-width="2"/>
+
+  <g aria-hidden="true" transform="translate(30 29)">
+    <circle cx="8" cy="39" r="7" fill="#7C5CFC"/>
+    <path d="M15 39H43C50.732 39 57 32.732 57 25V13" stroke="#7C5CFC" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="57" cy="7" r="7" fill="#7C5CFC"/>
+  </g>
+
+  <text x="119" y="42" fill="#687A90" font-family="Avenir Next, Montserrat, Helvetica Neue, sans-serif" font-size="14" font-weight="700" letter-spacing="3.2">POWERED BY</text>
+  <text x="116" y="82" fill="#111827" font-family="Avenir Next, Montserrat, Helvetica Neue, sans-serif" font-size="39" font-weight="800" letter-spacing="5">TIQET</text>
+</svg>

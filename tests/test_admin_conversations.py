@@ -3,6 +3,8 @@ Tests for the admin conversations inbox: list, thread view (mark-read),
 and reply (including the WhatsApp 24h window guard).
 """
 
+import json
+
 from datetime import timedelta
 
 from app import models
@@ -106,6 +108,31 @@ def test_get_thread_marks_conversation_read():
         db.expire_all()
         updated = db.query(models.Conversation).filter(models.Conversation.id == conv.id).first()
         assert updated.unread_count == 0
+    finally:
+        db.close()
+
+
+def test_get_thread_returns_message_attachments():
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        conv = _seed_conversation(db, external_id="+27821230012")
+        msg = _seed_message(db, conv, body="")
+        msg.attachments_json = json.dumps([{
+            "url": "/media/communicator/whatsapp/SM1/0.ogg",
+            "content_type": "audio/ogg",
+            "size": 123,
+        }])
+        db.commit()
+
+        res = client.get(
+            f"/admin/conversations/{conv.id}/messages",
+            headers=_auth(admin),
+        )
+        assert res.status_code == 200
+        attachment = res.json()["results"][0]["attachments"][0]
+        assert attachment["content_type"] == "audio/ogg"
+        assert attachment["url"].startswith("/media/communicator/")
     finally:
         db.close()
 

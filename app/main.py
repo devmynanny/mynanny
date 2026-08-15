@@ -18,6 +18,7 @@ from app.request_context import auth_token_ctx
 from app.services.payout import run_scheduled_payouts
 from app.services.advert_expiry import expire_stale_booking_requests
 from app.services.notifications import retry_failed_notifications
+from app.services.duty_notifications import run_duty_notification_sweep
 from app.services.passport_compliance import run_passport_compliance
 from app.services.storage import open_media
 
@@ -59,6 +60,8 @@ def _upload_access_status(path: str, user: dict | None) -> int | None:
         return None
     if user is None:
         return 401
+    if path.startswith("/media/communicator/"):
+        return None if user.get("is_admin") else 403
     if user.get("is_admin"):
         return None
     filename = path.rsplit("/", 1)[-1]
@@ -229,12 +232,21 @@ def passport_compliance_wrapper() -> None:
         db.close()
 
 
+def duty_notification_sweep_wrapper() -> None:
+    db = SessionLocal()
+    try:
+        run_duty_notification_sweep(db)
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def _startup_scheduler() -> None:
     if not scheduler.get_jobs():
         scheduler.add_job(run_scheduled_payouts_wrapper, "interval", minutes=30)
         scheduler.add_job(expire_stale_adverts_wrapper, "interval", minutes=30)
         scheduler.add_job(retry_failed_notifications_wrapper, "interval", minutes=15)
+        scheduler.add_job(duty_notification_sweep_wrapper, "interval", minutes=5)
         scheduler.add_job(passport_compliance_wrapper, "interval", hours=24)
         passport_compliance_wrapper()
     if not scheduler.running:

@@ -20,6 +20,14 @@ from app.utils.time import utc_now
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+def _message_attachments(message: models.Message) -> list[dict]:
+    try:
+        value = json.loads(message.attachments_json or "[]")
+        return value if isinstance(value, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
 class RefundRequest(BaseModel):
     amount_cents: Optional[int] = None
 
@@ -1828,6 +1836,11 @@ def list_conversations(db: Session = Depends(get_db)):
             .order_by(models.Message.created_at.desc())
             .first()
         )
+        last_attachments = _message_attachments(last_message) if last_message else []
+        preview = last_message.body[:200] if last_message and last_message.body else None
+        if not preview and last_attachments:
+            content_type = str(last_attachments[0].get("content_type") or "")
+            preview = "Audio message" if content_type.startswith("audio/") else "Photo"
         results.append({
             "id": c.id,
             "channel": c.channel,
@@ -1838,7 +1851,7 @@ def list_conversations(db: Session = Depends(get_db)):
             "last_message_at": c.last_message_at,
             "last_inbound_at": c.last_inbound_at,
             "unread_count": c.unread_count,
-            "last_message_preview": last_message.body[:200] if last_message else None,
+            "last_message_preview": preview,
             "last_message_direction": last_message.direction if last_message else None,
         })
     return {"results": results}
@@ -1879,6 +1892,7 @@ def get_conversation_messages(conversation_id: int, db: Session = Depends(get_db
                 "body": m.body,
                 "status": m.status,
                 "error_message": m.error_message,
+                "attachments": _message_attachments(m),
                 "created_at": m.created_at,
             }
             for m in rows

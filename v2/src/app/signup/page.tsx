@@ -1,6 +1,7 @@
 "use client";
 
 import { Brand } from "@/components/brand";
+import { PoweredByTiqet } from "@/components/powered-by-tiqet";
 import { apiJson } from "@/lib/api";
 import {
   ArrowLeft,
@@ -558,6 +559,9 @@ function SignupForm() {
             </form>
           </section>
         </div>
+        <footer className="mt-10 flex justify-center border-t border-[var(--line)] pt-8 sm:justify-end">
+          <PoweredByTiqet />
+        </footer>
       </div>
     </main>
   );

@@ -37,3 +37,10 @@ def test_private_media_uses_existing_owner_access_rules():
 def test_signed_in_users_can_view_non_sensitive_profile_media():
     assert _upload_access_status("/media/nannies/42_photo.jpg", None) == 401
     assert _upload_access_status("/media/nannies/42_photo.jpg", {"id": 7, "is_admin": False}) is None
+
+
+def test_communicator_media_is_admin_only():
+    path = "/media/communicator/whatsapp/SM123/0.ogg"
+    assert _upload_access_status(path, None) == 401
+    assert _upload_access_status(path, {"id": 7, "is_admin": False}) == 403
+    assert _upload_access_status(path, {"id": 1, "is_admin": True}) is None

@@ -34,6 +34,89 @@ services:
         sync: false
       - key: S3_SECRET_ACCESS_KEY
         sync: false
+      # WhatsApp credentials and approved template SIDs are managed in Render.
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: TWILIO_REQUIRE_TEMPLATES
+        sync: false
+      - key: TWILIO_CONTENT_SID_BOOKING_CANCELLED
+        sync: false
+      - key: TWILIO_CONTENT_SID_BOOKING_CANCELLED_NANNY
+        sync: false
+      - key: TWILIO_CONTENT_SID_BOOKING_CONFIRMED
+        sync: false
+      - key: TWILIO_CONTENT_SID_BOOKING_START_REMINDER
+        sync: false
+      - key: TWILIO_CONTENT_SID_BROADCAST_CLOSED_NANNY
+        sync: false
+      - key: TWILIO_CONTENT_SID_BROADCAST_FILLED
+        sync: false
+      - key: TWILIO_CONTENT_SID_BROADCAST_POSITION_FILLED
+        sync: false
+      - key: TWILIO_CONTENT_SID_CHECKOUT_REMINDER
+        sync: false
+      - key: TWILIO_CONTENT_SID_CHECK_IN_CONFIRMATION_REQUIRED
+        sync: false
+      - key: TWILIO_CONTENT_SID_CHECK_OUT_CONFIRMATION_REQUIRED
+        sync: false
+      - key: TWILIO_CONTENT_SID_DECIDING_REMINDER
+        sync: false
+      - key: TWILIO_CONTENT_SID_MISSED_CHECK_IN
+        sync: false
+      - key: TWILIO_CONTENT_SID_NANNY_ACCEPTED
+        sync: false
+      - key: TWILIO_CONTENT_SID_NANNY_APPROVED
+        sync: false
+      - key: TWILIO_CONTENT_SID_NANNY_CHECKED_IN
+        sync: false
+      - key: TWILIO_CONTENT_SID_NANNY_DECLINED
+        sync: false
+      - key: TWILIO_CONTENT_SID_NANNY_LATE_ALERT
+        sync: false
+      - key: TWILIO_CONTENT_SID_NANNY_REACTIVATED
+        sync: false
+      - key: TWILIO_CONTENT_SID_NEW_BOOKING_REQUEST
+        sync: false
+      - key: TWILIO_CONTENT_SID_NO_NANNY_YET
+        sync: false
+      - key: TWILIO_CONTENT_SID_OVERTIME_REQUEST
+        sync: false
+      - key: TWILIO_CONTENT_SID_PASSPORT_EXPIRED_SUSPENSION
+        sync: false
+      - key: TWILIO_CONTENT_SID_PASSPORT_EXPIRY_WARNING
+        sync: false
+      - key: TWILIO_CONTENT_SID_PASSPORT_RENEWAL_APPROVED
+        sync: false
+      - key: TWILIO_CONTENT_SID_PAYMENT_DUE
+        sync: false
+      - key: TWILIO_CONTENT_SID_PAYMENT_FAILED
+        sync: false
+      - key: TWILIO_CONTENT_SID_PAYMENT_PENDING
+        sync: false
+      - key: TWILIO_CONTENT_SID_PAYMENT_SUCCESS
+        sync: false
+      - key: TWILIO_CONTENT_SID_PAYOUT_PENDING
+        sync: false
+      - key: TWILIO_CONTENT_SID_PAYOUT_SENT
+        sync: false
+      - key: TWILIO_CONTENT_SID_REFUND_PROCESSED
+        sync: false
+      - key: TWILIO_CONTENT_SID_REQUEST_EXPIRED
+        sync: false
+      - key: TWILIO_CONTENT_SID_REVIEW_REQUEST
+        sync: false
+      - key: TWILIO_CONTENT_SID_SERVICE_FEE_ADJUSTED
+        sync: false
+      - key: TWILIO_CONTENT_SID_SERVICE_REFUND_REQUESTED
+        sync: false
+      - key: TWILIO_CONTENT_SID_SERVICE_TIME_CORRECTED
+        sync: false
+      - key: TWILIO_CONTENT_SID_SERVICE_TIME_DISPUTED
+        sync: false
 
   - type: web
     name: mynanny-v2

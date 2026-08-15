@@ -1,6 +1,7 @@
 "use client";
 
 import { Brand } from "@/components/brand";
+import { PoweredByTiqet } from "@/components/powered-by-tiqet";
 import { apiJson } from "@/lib/api";
 import {
   ArrowRight,
@@ -75,7 +76,7 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
-        <div className="relative text-xs text-white/45">A Tiqet product</div>
+        <PoweredByTiqet className="relative" />
       </section>
       <section className="flex items-center justify-center px-5 py-10 sm:px-10">
         <div className="w-full max-w-md rise">
@@ -161,6 +162,9 @@ export default function LoginPage() {
               Create an account
             </Link>
           </p>
+          <div className="mt-10 flex justify-center lg:hidden">
+            <PoweredByTiqet />
+          </div>
         </div>
       </section>
     </main>

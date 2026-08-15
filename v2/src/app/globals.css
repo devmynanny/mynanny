@@ -49,6 +49,15 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .rise { animation: rise .55s both; }
 .rise-delay { animation: rise .55s .12s both; }
 
+html { scroll-behavior: smooth; }
+
+summary::-webkit-details-marker { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .rise, .rise-delay { animation: none; }
+}
+
 @media (max-width: 760px) {
   .desktop-only { display: none !important; }
   .card { border-radius: 20px; }

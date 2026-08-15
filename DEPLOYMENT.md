@@ -42,11 +42,27 @@ The bucket must remain private. Do not configure public-read ACLs or expose its 
 | TWILIO_ACCOUNT_SID | Existing WhatsApp notification sending (unchanged) |
 | TWILIO_AUTH_TOKEN | Also verifies inbound `/whatsapp/webhook` signatures |
 | TWILIO_WHATSAPP_FROM | Existing WhatsApp notification sending (unchanged) |
+| TWILIO_REQUIRE_TEMPLATES | Set `true` in production to block out-of-session free-form sends |
+| TWILIO_CONTENT_SID_* | Approved Content SID generated for each notification event |
 | TELEGRAM_BOT_TOKEN | Bot API token from @BotFather - outbound sends |
 | TELEGRAM_BOT_USERNAME | Bot's @username (no @) - used to build the `/me/telegram/connect` deep link |
 | TELEGRAM_WEBHOOK_SECRET | Random secret; also the path segment in `/telegram/webhook/{secret}` and the `setWebhook` `secret_token` |
 
 ### Conversations (WhatsApp/Telegram inbox) one-off setup
+
+Create the privacy-safe Utility templates and request WhatsApp approval from a secure development machine:
+
+```bash
+.venv/bin/python -m scripts.setup_twilio_whatsapp_templates --env-file .env --submit
+```
+
+The command is idempotent, records the returned Content SIDs in the ignored `.env`, and enables template enforcement. Check asynchronous approval status with:
+
+```bash
+.venv/bin/python -m scripts.setup_twilio_whatsapp_templates --env-file .env --status
+```
+
+Copy `TWILIO_REQUIRE_TEMPLATES` and every generated `TWILIO_CONTENT_SID_*` value into the Render environment before production notification testing. Content SIDs identify templates but should remain tenant-specific configuration for white-label deployments.
 
 1. In Twilio's console, set the WhatsApp sender's inbound webhook URL to `https://<render-url>/whatsapp/webhook` (POST). No code-side registration call needed - Twilio just needs the URL configured.
 2. Register the Telegram webhook once (from any machine with `TELEGRAM_BOT_TOKEN` and the deployed URL):

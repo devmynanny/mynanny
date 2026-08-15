@@ -30,6 +30,11 @@ type Message = {
   body: string;
   status: string;
   error_message?: string | null;
+  attachments?: Array<{
+    url: string;
+    content_type: string;
+    size?: number;
+  }>;
   created_at: string;
 };
 type Thread = { conversation: Conversation; results: Message[] };
@@ -261,9 +266,21 @@ function Communicator() {
                       <div
                         className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm shadow-sm ${item.direction === "outbound" ? "bg-[var(--blue-dark)] text-white" : "border border-[var(--line)] bg-white"}`}
                       >
-                        <p className="whitespace-pre-wrap leading-6">
-                          {item.body}
-                        </p>
+                        {!!item.attachments?.length && (
+                          <div className="mb-2 space-y-2">
+                            {item.attachments.map((attachment, index) => (
+                              <MessageAttachment
+                                key={`${attachment.url}-${index}`}
+                                attachment={attachment}
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {item.body && (
+                          <p className="whitespace-pre-wrap leading-6">
+                            {item.body}
+                          </p>
+                        )}
                         <div
                           className={`mt-1 text-[10px] ${item.direction === "outbound" ? "text-white/55" : "text-slate-400"}`}
                         >
@@ -350,10 +367,57 @@ function Channel({ channel }: { channel: string }) {
     </span>
   );
 }
+
+function MessageAttachment({
+  attachment,
+}: {
+  attachment: { url: string; content_type: string; size?: number };
+}) {
+  const src = attachment.url.startsWith("/media/")
+    ? `/api${attachment.url}`
+    : attachment.url;
+  if (attachment.content_type.startsWith("image/")) {
+    return (
+      <a href={src} target="_blank" rel="noreferrer" className="block">
+        {/* Inbound media dimensions are not known until it is loaded. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt="WhatsApp attachment"
+          className="max-h-80 w-auto max-w-full rounded-xl object-contain"
+          loading="lazy"
+        />
+      </a>
+    );
+  }
+  if (attachment.content_type.startsWith("audio/")) {
+    return (
+      <audio className="w-full min-w-64" controls preload="metadata">
+        <source src={src} type={attachment.content_type} />
+        Your browser cannot play this audio message.
+      </audio>
+    );
+  }
+  return (
+    <a className="underline" href={src} target="_blank" rel="noreferrer">
+      Open attachment
+    </a>
+  );
+}
+
 function formatTime(value?: string | null) {
   if (!value) return "";
-  const date = new Date(value);
+  // API timestamps are UTC. Older rows may be serialized without a timezone
+  // suffix, so make that UTC assumption explicit before converting to SAST.
+  const normalized = /(?:z|[+-]\d{2}:?\d{2})$/i.test(value)
+    ? value
+    : `${value}Z`;
+  const date = new Date(normalized);
   return Number.isNaN(date.getTime())
     ? String(value)
-    : date.toLocaleString("en-ZA", { dateStyle: "medium", timeStyle: "short" });
+    : date.toLocaleString("en-ZA", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "Africa/Johannesburg",
+      });
 }

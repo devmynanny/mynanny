@@ -7,14 +7,35 @@ place an HTTP call to each provider.
 """
 from __future__ import annotations
 
-import base64
 import os
+import re
 from typing import Optional
-from urllib import request as urllib_request
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote
 
 import requests
+import truststore
+
+from app.services.whatsapp_templates import content_sid_env_key
+
+
+# Use the operating system trust store so local and hosted runtimes validate
+# provider certificates consistently without disabling TLS verification.
+truststore.inject_into_ssl()
+
+
+def normalize_phone_number(value: str, default_country_code: str = "27") -> str:
+    """Return an E.164-style number, defaulting local numbers to South Africa."""
+    raw = str(value or "").strip()
+    has_plus = raw.startswith("+")
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return raw
+    if has_plus:
+        return f"+{digits}"
+    if digits.startswith("0"):
+        return f"+{default_country_code}{digits[1:]}"
+    if digits.startswith(default_country_code):
+        return f"+{digits}"
+    return f"+{digits}"
 
 
 def send_whatsapp_message(to_number: str, body: str, template_name: Optional[str] = None) -> tuple[bool, str]:
@@ -27,43 +48,27 @@ def send_whatsapp_message(to_number: str, body: str, template_name: Optional[str
     # Twilio requires the whatsapp: prefix on both From and To.
     if not from_number.startswith("whatsapp:"):
         from_number = f"whatsapp:{from_number}"
-    to_number = str(to_number).strip()
+    to_number = normalize_phone_number(to_number)
     if not to_number.startswith("whatsapp:"):
         to_number = f"whatsapp:{to_number}"
 
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    payload = {
-        "From": from_number,
-        "To": to_number,
-        "Body": body,
-    }
-    if template_name:
+    payload = {"From": from_number, "To": to_number}
+    content_sid = (os.getenv(content_sid_env_key(template_name)) or "").strip() if template_name else ""
+    if content_sid:
+        payload["ContentSid"] = content_sid
+    elif template_name and (os.getenv("TWILIO_REQUIRE_TEMPLATES") or "").strip().lower() in ("1", "true", "yes"):
+        return False, f"Approved WhatsApp template is not configured for {template_name}"
+    else:
+        # Free-form bodies are valid only in an open WhatsApp customer-service
+        # window. Production should set TWILIO_REQUIRE_TEMPLATES=true.
         payload["Body"] = body
-    data = "&".join(f"{k}={quote(str(v))}" for k, v in payload.items()).encode("utf-8")
-    auth = base64.b64encode(f"{sid}:{token}".encode("utf-8")).decode("ascii")
-    req = urllib_request.Request(
-        url,
-        data=data,
-        headers={
-            "Authorization": f"Basic {auth}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        method="POST",
-    )
     try:
-        with urllib_request.urlopen(req, timeout=20) as res:
-            res.read()
-        return True, ""
-    except HTTPError as exc:
-        # Read the response body when available - Twilio's error payloads
-        # (e.g. code 63016, outside the 24h customer-service window) live
-        # here, not in str(exc).
-        try:
-            detail = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            detail = str(exc)
-        return False, detail
-    except URLError as exc:
+        response = requests.post(url, data=payload, auth=(sid, token), timeout=20)
+        if 200 <= response.status_code < 300:
+            return True, ""
+        return False, response.text or f"Twilio API error (status {response.status_code})"
+    except requests.RequestException as exc:
         return False, str(exc)
     except Exception as exc:
         return False, str(exc)

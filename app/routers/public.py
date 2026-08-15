@@ -35,8 +35,10 @@ from app.services.payout import run_scheduled_payouts
 from app.services.paystack import create_supplementary_charge, create_refund, create_transfer_recipient, initialize_transaction, list_banks, verify_transaction
 from app.services.trust import build_nanny_trust_badges, nanny_meets_required_trust
 from app.services.notifications import notify, send_notification
+from app.services.duty_notifications import notify_once
 from app.services import conversations
 from app.services import messaging
+from app.services.twilio_media import import_twilio_media
 from app.services.booking_status import booking_state_from_booking, booking_state_from_request, canonical_booking_status
 from app.services.messaging_status import PREFERRED_MESSAGING_CHANNELS
 from app.services.advert_expiry import is_request_expired
@@ -2271,9 +2273,6 @@ def notify_admin_parent_denied_booking_time(
     corrected_time: Optional[datetime] = None,
 ) -> None:
     admins = admin_emails()
-    if not admins:
-        return
-    client = get_email_client()
     nanny_user = None
     if getattr(booking, "nanny_id", None):
         try:
@@ -2286,10 +2285,32 @@ def notify_admin_parent_denied_booking_time(
     if getattr(booking, "booking_request_id", None):
         request_row = db.query(models.BookingRequest).filter(models.BookingRequest.id == booking.booking_request_id).first()
     noun = "arrival" if kind == "check-in" else "completion"
-    subject = f"Parent denied nanny {noun} time"
+    action = "corrected" if corrected_time else "disputed"
+    event_type = "service_time_corrected" if corrected_time else "service_time_disputed"
+    notify_once(
+        db,
+        user_id=getattr(nanny_user, "id", None),
+        event_type=event_type,
+        message=f"The parent {action} the recorded {noun} time for booking #{booking.id}.",
+        booking_id=int(booking.id),
+    )
+    for admin in db.query(models.User).filter(models.User.is_admin.is_(True), models.User.is_active.is_(True)).all():
+        notify_once(
+            db,
+            user_id=admin.id,
+            event_type="duty_attention_required" if not corrected_time else event_type,
+            message=f"Booking #{booking.id}: parent {action} the nanny {noun} time.",
+            booking_id=int(booking.id),
+            action_url="/operations",
+        )
+    db.commit()
+    if not admins:
+        return
+    client = get_email_client()
+    subject = f"Parent {action} nanny {noun} time"
     body = "\n".join(
         [
-            f"A parent denied the nanny's {noun} time and admin attention may be required.",
+            f"A parent {action} the nanny's {noun} time and admin attention may be required.",
             f"booking_id: {booking.id}",
             f"booking_request_id: {getattr(booking, 'booking_request_id', None) or '-'}",
             f"parent: {getattr(parent_user, 'name', None) or '-'} ({getattr(parent_user, 'email', None) or '-'})",
@@ -5007,6 +5028,7 @@ def _finalize_service_adjustment(db: Session, booking: models.Booking) -> None:
     """Finalize a partial refund only after both duty timestamps are confirmed."""
     if not booking.check_in_confirmed_at or not booking.check_out_confirmed_at:
         return
+    first_finalization = booking.service_adjusted_at is None
     result = _recalculate_duty_financials(db, booking)
     refund_cents = int(result.get("refund_cents") or 0)
     if refund_cents <= 0:
@@ -5038,6 +5060,34 @@ def _finalize_service_adjustment(db: Session, booking: models.Booking) -> None:
     if booking.overrun_status not in ("awaiting_parent", "queried") and booking.status != "admin_review":
         booking.status = "completed"
         booking.payout_hold_until = utc_now() + timedelta(hours=max(1, int(settings.get("payout_hold_hours") or 24)))
+    if first_finalization:
+        nanny_row = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
+        nanny_user_id = getattr(nanny_row, "user_id", None)
+        late_minutes = int(result.get("late_minutes") or 0)
+        early_minutes = int(result.get("early_departure_minutes") or 0)
+        service_wage = int(result.get("service_wage_cents") or 0)
+        if refund_cents > 0:
+            notify_once(
+                db,
+                user_id=booking.client_user_id,
+                event_type="service_refund_requested",
+                message=(
+                    f"Booking #{booking.id} was adjusted for {late_minutes} late minute(s) and "
+                    f"{early_minutes} early-departure minute(s). A refund of R{refund_cents / 100:.2f} "
+                    "has been recorded."
+                ),
+                booking_id=int(booking.id),
+            )
+            notify_once(
+                db,
+                user_id=nanny_user_id,
+                event_type="service_fee_adjusted",
+                message=(
+                    f"Booking #{booking.id} was adjusted to R{service_wage / 100:.2f} based on the "
+                    "confirmed service time."
+                ),
+                booking_id=int(booking.id),
+            )
 
 
 def _parent_owned_booking_or_404(db: Session, booking_id: int, user_id: int) -> models.Booking:
@@ -5150,6 +5200,7 @@ def nanny_check_in_booking(
     booking.check_in_lat = float(payload.lat)
     booking.check_in_lng = float(payload.lng)
     booking.check_in_distance_m = float(round(distance_m, 2))
+    service = _recalculate_duty_financials(db, booking)
     if booking.status in ("approved", "pending"):
         booking.status = "accepted"
     db.commit()
@@ -5163,13 +5214,25 @@ def nanny_check_in_booking(
         after_status=booking.status,
         request=request,
     )
-    notifications = notify_parent_nanny_checked_in(db, booking, user)
+    late_minutes = int(service.get("late_minutes") or 0)
+    message = f"{user.name} checked in for booking #{booking.id}. Please confirm the arrival time."
+    if late_minutes > 0:
+        message += f" The recorded arrival is {late_minutes} minute(s) after the scheduled start."
+    notified = notify_once(
+        db,
+        user_id=booking.client_user_id,
+        event_type="check_in_confirmation_required",
+        message=message,
+        booking_id=int(booking.id),
+    )
+    db.commit()
     return {
         "ok": True,
         "booking_id": booking.id,
         "check_in_at": _to_iso_z(booking.check_in_at) if booking.check_in_at else None,
         "check_in_distance_m": booking.check_in_distance_m,
-        "notifications": notifications,
+        "notification_sent": notified,
+        "notifications": {"policy_delivery": notified},
     }
 
 
@@ -5238,35 +5301,24 @@ def nanny_check_out_booking(
         booking.overrun_status = "awaiting_parent"
         booking.status = "awaiting_overtime_approval"
         booking.payout_hold_until = None
-        send_notification(
+        notify(
             db,
             getattr(parent_user, "id", None),
             "overtime_request",
-            "email",
             (
                 f"Your nanny worked {overrun_minutes/60.0:.2f} extra hours. "
                 f"Please approve or query the overtime charge of R{(overrun_amount_cents/100):.2f}."
             ),
             reference_id=int(booking.id),
+            action_url="/bookings",
         )
-        send_notification(
-            db,
-            getattr(parent_user, "id", None),
-            "overtime_request",
-            "in_app",
-            (
-                f"Nanny worked {overrun_minutes/60.0:.2f} extra hours. "
-                f"Approve or query R{(overrun_amount_cents/100):.2f}."
-            ),
-            reference_id=int(booking.id),
-        )
-        send_notification(
+        notify(
             db,
             getattr(nanny_user, "id", None),
             "payout_pending",
-            "email",
             "Your overtime is awaiting parent approval before payout can be released.",
             reference_id=int(booking.id),
+            action_url="/bookings",
         )
     else:
         booking.overrun_status = "none"
@@ -5286,30 +5338,17 @@ def nanny_check_out_booking(
         after_status=booking.status,
         request=request,
     )
-    try:
-        _safe_send(
-            getattr(parent_user, "email", None),
-            "Booking complete",
-            "Your booking is complete. You can now leave a review.",
-        )
-        _log_notification_best_effort(
-            db,
-            user_id=getattr(parent_user, "id", None),
-            event_type="booking_completed_parent",
-            channel="email",
-            status="sent",
-            reference_id=str(booking.id),
-        )
-    except Exception as exc:
-        _log_notification_best_effort(
-            db,
-            user_id=getattr(parent_user, "id", None),
-            event_type="booking_completed_parent",
-            channel="email",
-            status="failed",
-            error_message=str(exc)[:500],
-            reference_id=str(booking.id),
-        )
+    adjustment_note = ""
+    if int(service.get("refund_cents") or 0) > 0:
+        adjustment_note = f" A provisional adjustment of R{int(service['refund_cents']) / 100:.2f} is shown for review."
+    notify_once(
+        db,
+        user_id=getattr(parent_user, "id", None),
+        event_type="check_out_confirmation_required",
+        message=f"{getattr(nanny_user, 'name', None) or 'Your nanny'} checked out of booking #{booking.id}. Confirm or correct both duty times.{adjustment_note}",
+        booking_id=int(booking.id),
+    )
+    db.commit()
 
     return {
         "ok": True,
@@ -5954,6 +5993,41 @@ def accept_nanny_booking_request(
                 end_dt=_to_iso_z(slot_end),
             )
             db.add(block_row)
+
+    accepted_count = sum(
+        1
+        for item in group_requests
+        if item.status == "approved"
+        and (getattr(item, "nanny_response_status", None) or "").lower() == "accepted"
+        and (getattr(item, "payment_status", None) or "").lower() == "paid"
+    )
+    required_count = _booking_group_required_count(group_requests)
+    group_filled = accepted_count >= required_count
+    notify(
+        db,
+        parent_user.id,
+        "broadcast_filled" if group_filled else "broadcast_position_filled",
+        (
+            f"All {required_count} nanny position(s) for your booking are filled."
+            if group_filled
+            else f"{accepted_count} of {required_count} nanny position(s) for your booking are now filled. The broadcast remains open."
+        ),
+        reference_id=int(req.id),
+        action_url="/bookings",
+    )
+    if group_filled:
+        for item in group_requests:
+            if item.status != "rejected" or item.admin_reason != "filled":
+                continue
+            sibling_nanny = db.query(models.Nanny).filter(models.Nanny.id == item.nanny_id).first()
+            notify(
+                db,
+                getattr(sibling_nanny, "user_id", None),
+                "broadcast_closed_nanny",
+                "This booking broadcast has closed because all required nanny positions were filled.",
+                reference_id=int(item.id),
+                action_url="/requests",
+            )
 
     db.commit()
     _sync_confirmed_booking_request_to_google_calendar(db, req)
@@ -11726,8 +11800,31 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         body = str(params.get("Body") or "")
         message_sid = params.get("MessageSid") or params.get("SmsMessageSid")
         if from_number:
+            media_count = min(int(params.get("NumMedia") or 0), 10)
+            media = [
+                (
+                    str(params.get(f"MediaUrl{index}") or ""),
+                    str(params.get(f"MediaContentType{index}") or ""),
+                )
+                for index in range(media_count)
+                if params.get(f"MediaUrl{index}")
+            ]
+            attachments = []
+            if media:
+                try:
+                    attachments = import_twilio_media(
+                        str(message_sid or uuid.uuid4()), media
+                    )
+                except Exception:
+                    # A provider/storage problem must not discard the text or
+                    # trigger repeated WhatsApp delivery attempts.
+                    attachments = []
             conversations.ingest_inbound_whatsapp(
-                db, from_phone=from_number, body=body, message_sid=message_sid
+                db,
+                from_phone=from_number,
+                body=body,
+                message_sid=message_sid,
+                attachments=attachments,
             )
     except Exception:
         pass

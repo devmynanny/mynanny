@@ -11,32 +11,9 @@ from app import models
 from app.utils.time import utc_now
 from app.utils.email import EmailMessage, get_email_client
 from app.services import messaging
+from app.services.whatsapp_templates import WHATSAPP_UTILITY_TEMPLATES
 
-WHATSAPP_TEMPLATE_NAMES = {
-    "nanny_accepted",
-    "payment_due",
-    "payment_success",
-    "payment_failed",
-    "booking_confirmed",
-    "nanny_checked_in",
-    "overtime_request",
-    "payout_pending",
-    "payout_sent",
-    "nanny_approved",
-    "booking_cancelled",
-    "refund_processed",
-    "review_request",
-    # Broadcast / request lifecycle
-    "new_booking_request",
-    "nanny_declined",
-    "no_nanny_yet",
-    "request_expired",
-    "deciding_reminder",
-    # Payment retry flow
-    "payment_pending",
-    # Nanny-specific cancellation notice
-    "booking_cancelled_nanny",
-}
+WHATSAPP_TEMPLATE_NAMES = set(WHATSAPP_UTILITY_TEMPLATES)
 
 # ---------------------------------------------------------------------------
 # Notification policy matrix (single source of truth).
@@ -56,6 +33,17 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     "booking_cancelled": {"channels": ("chat", "email"), "in_app": True},
     "nanny_accepted": {"channels": ("chat", "email")},
     "nanny_checked_in": {"channels": ("chat", "email")},
+    "booking_start_reminder": {"channels": ("chat", "email"), "in_app": True},
+    "missed_check_in": {"channels": ("chat", "email"), "in_app": True},
+    "nanny_late_alert": {"channels": ("chat", "email"), "in_app": True},
+    "checkout_reminder": {"channels": ("chat", "email"), "in_app": True},
+    "check_in_confirmation_required": {"channels": ("chat", "email"), "in_app": True},
+    "check_out_confirmation_required": {"channels": ("chat", "email"), "in_app": True},
+    "service_fee_adjusted": {"channels": ("chat", "email"), "in_app": True},
+    "service_refund_requested": {"channels": ("chat", "email"), "in_app": True},
+    "service_time_corrected": {"channels": ("chat", "email"), "in_app": True},
+    "service_time_disputed": {"channels": ("chat", "email"), "in_app": True},
+    "duty_attention_required": {"channels": ("email",), "in_app": True},
     # Action required - in-app pop-up mandatory.
     "overtime_request": {"channels": ("chat", "email"), "in_app": True},
     "review_request": {"channels": ("chat", "email"), "in_app": True},
@@ -65,6 +53,9 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     "no_nanny_yet": {"channels": ("chat", "email"), "in_app": True},
     "request_expired": {"channels": ("chat", "email"), "in_app": True},
     "deciding_reminder": {"channels": ("chat", "email")},
+    "broadcast_position_filled": {"channels": ("chat", "email"), "in_app": True},
+    "broadcast_filled": {"channels": ("chat", "email"), "in_app": True},
+    "broadcast_closed_nanny": {"channels": ("chat", "email"), "in_app": True},
     # Payment retry flow.
     "payment_pending": {"channels": ("chat", "email")},
     "booking_cancelled_nanny": {"channels": ("chat", "email"), "in_app": True},
@@ -147,6 +138,7 @@ def send_notification(
     message: str,
     template_name: Optional[str] = None,
     reference_id: Optional[int] = None,
+    action_url: Optional[str] = None,
 ) -> bool:
     if channel == "whatsapp":
         user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
@@ -258,7 +250,7 @@ def send_notification(
                         "user_id": user_id,
                         "title": event_type.replace("_", " ").title(),
                         "body": message,
-                        "action_url": None,
+                        "action_url": action_url,
                         "created_at": utc_now(),
                     },
                 )
@@ -304,6 +296,8 @@ def notify(
     event_type: str,
     message: str,
     reference_id: Optional[int] = None,
+    action_url: Optional[str] = None,
+    include_in_app: bool = True,
 ) -> bool:
     """Policy-driven delivery: consult NOTIFICATION_POLICY for the event's
     channel fallback chain, write an in-app notification when the policy
@@ -322,13 +316,22 @@ def notify(
             message,
             template_name=event_type if (resolved_channel == "whatsapp" and event_type in WHATSAPP_TEMPLATE_NAMES) else None,
             reference_id=reference_id,
+            action_url=action_url,
         )
         if ok:
             delivered = True
             break
 
-    if policy.get("in_app"):
-        send_notification(db, user_id, event_type, "in_app", message, reference_id=reference_id)
+    if include_in_app and policy.get("in_app"):
+        send_notification(
+            db,
+            user_id,
+            event_type,
+            "in_app",
+            message,
+            reference_id=reference_id,
+            action_url=action_url,
+        )
 
     return delivered
 
@@ -391,7 +394,14 @@ def retry_failed_notifications(
             continue
         if entry["failed"] >= max_attempts:
             continue
-        notify(db, user_id, event_type, entry["message"], reference_id=reference_id)
+        notify(
+            db,
+            user_id,
+            event_type,
+            entry["message"],
+            reference_id=reference_id,
+            include_in_app=False,
+        )
         retried += 1
 
     if retried:

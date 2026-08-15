@@ -104,6 +104,37 @@ def test_whatsapp_webhook_ingests_matched_user_message(monkeypatch):
         db.close()
 
 
+def test_whatsapp_webhook_ingests_private_media_attachment(monkeypatch):
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", TWILIO_AUTH_TOKEN)
+    monkeypatch.setattr(
+        "app.routers.public.import_twilio_media",
+        lambda sid, media: [{
+            "url": f"/media/communicator/whatsapp/{sid}/0.jpg",
+            "content_type": "image/jpeg",
+            "size": 4,
+        }],
+    )
+    db = _db()
+    try:
+        res = _signed_whatsapp_post({
+            "From": "whatsapp:+27821117777",
+            "Body": "",
+            "MessageSid": "SM_media_001",
+            "NumMedia": "1",
+            "MediaUrl0": "https://api.twilio.com/media/ME1",
+            "MediaContentType0": "image/jpeg",
+        })
+        assert res.status_code == 200
+
+        msg = db.query(models.Message).filter(
+            models.Message.external_message_id == "SM_media_001"
+        ).one()
+        assert '"content_type": "image/jpeg"' in msg.attachments_json
+        assert "/media/communicator/whatsapp/SM_media_001/0.jpg" in msg.attachments_json
+    finally:
+        db.close()
+
+
 def test_telegram_webhook_rejects_wrong_secret(monkeypatch):
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", TELEGRAM_SECRET)
     res = client.post(

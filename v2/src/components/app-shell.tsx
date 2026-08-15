@@ -1,6 +1,7 @@
 "use client";
 
 import { Brand } from "@/components/brand";
+import { PoweredByTiqet } from "@/components/powered-by-tiqet";
 import { NotificationBell } from "@/components/notification-bell";
 import {
   CalendarDays,
@@ -94,7 +95,7 @@ export function AppShell({
         <div className="flex items-center gap-1"><NotificationBell/><button className="btn-quiet !min-h-10 !px-3" onClick={() => setOpen(!open)} aria-label="Open navigation">{open ? <X /> : <Menu />}</button></div>
       </header>
       <aside
-        className={`${open ? "flex" : "hidden"} fixed inset-x-0 top-[74px] bottom-0 z-20 flex-col border-r border-[var(--line)] bg-white p-5 lg:sticky lg:top-0 lg:flex lg:h-screen`}
+        className={`${open ? "flex" : "hidden"} fixed inset-x-0 top-[74px] bottom-0 z-20 flex-col overflow-y-auto border-r border-[var(--line)] bg-white p-5 lg:sticky lg:top-0 lg:flex lg:h-screen`}
       >
         <div className="mb-8 hidden lg:block">
           <Brand sidebar />
@@ -126,8 +127,8 @@ export function AppShell({
           <LogOut size={18} />
           Log out
         </button>
-        <div className="mt-4 border-t border-[var(--line)] pt-4 text-[10px] font-bold uppercase tracking-[.16em] text-slate-400">
-          Powered by Tiqet
+        <div className="mt-4 border-t border-[var(--line)] pt-4">
+          <PoweredByTiqet className="max-w-full" />
         </div>
       </aside>
       <main className="min-w-0 px-4 py-6 sm:px-8 lg:px-10 lg:py-9">

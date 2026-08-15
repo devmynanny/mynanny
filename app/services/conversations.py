@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import timedelta
+import json
 from typing import Optional
 
 from sqlalchemy import or_
@@ -73,6 +74,7 @@ def _record_inbound_message(
     *,
     body: str,
     external_message_id: Optional[str],
+    attachments: Optional[list[dict]] = None,
 ) -> models.Message:
     if external_message_id:
         existing = (
@@ -95,6 +97,7 @@ def _record_inbound_message(
         body=body,
         status="received",
         external_message_id=external_message_id,
+        attachments_json=json.dumps(attachments) if attachments else None,
     )
     db.add(message)
 
@@ -108,9 +111,22 @@ def _record_inbound_message(
     return message
 
 
-def ingest_inbound_whatsapp(db: Session, *, from_phone: str, body: str, message_sid: Optional[str]) -> models.Message:
+def ingest_inbound_whatsapp(
+    db: Session,
+    *,
+    from_phone: str,
+    body: str,
+    message_sid: Optional[str],
+    attachments: Optional[list[dict]] = None,
+) -> models.Message:
     conversation = find_or_create_conversation(db, channel="whatsapp", external_id=from_phone)
-    return _record_inbound_message(db, conversation, body=body, external_message_id=message_sid)
+    return _record_inbound_message(
+        db,
+        conversation,
+        body=body,
+        external_message_id=message_sid,
+        attachments=attachments,
+    )
 
 
 def ingest_inbound_telegram(
