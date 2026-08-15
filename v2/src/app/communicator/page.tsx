@@ -5,11 +5,15 @@ import { apiJson } from "@/lib/api";
 import {
   LoaderCircle,
   MessageCircle,
+  Paperclip,
+  Reply,
   RefreshCw,
   Search,
   Send,
+  Smile,
+  X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Conversation = {
   id: number;
@@ -34,10 +38,18 @@ type Message = {
     url: string;
     content_type: string;
     size?: number;
+    name?: string;
   }>;
+  reply_to?: {
+    id: number;
+    direction: "inbound" | "outbound";
+    body: string;
+    has_attachment: boolean;
+  } | null;
   created_at: string;
 };
 type Thread = { conversation: Conversation; results: Message[] };
+const EMOJIS = ["😊", "👍", "❤️", "🙏", "😂", "🎉", "✅", "👋", "🤗", "😢", "😮", "👏"];
 
 export default function CommunicatorPage() {
   return (
@@ -63,8 +75,13 @@ function Communicator() {
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
   const [message, setMessage] = useState("");
   const [openedAt] = useState(() => Date.now());
+  const fileInput = useRef<HTMLInputElement>(null);
+  const messageEnd = useRef<HTMLDivElement>(null);
   async function loadList(preferredId?: number) {
     const data = await apiJson<{ results: Conversation[] }>(
       "/admin/conversations",
@@ -128,16 +145,38 @@ function Communicator() {
         ),
       );
   }, [selectedId]);
-  async function send() {
-    if (!selectedId || !body.trim()) return;
+  useEffect(() => {
+    if (!selectedId) return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void Promise.all([loadList(selectedId), loadThread(selectedId)]).catch(
+        () => undefined,
+      );
+    };
+    const interval = window.setInterval(refresh, 3000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [selectedId]);
+  useEffect(() => {
+    messageEnd.current?.scrollIntoView({ behavior: "smooth" });
+  }, [thread?.results.length]);
+  async function sendText(text = body.trim(), replyId = replyTo?.id) {
+    if (!selectedId || !text) return;
     setSending(true);
     setMessage("");
     try {
       await apiJson(`/admin/conversations/${selectedId}/reply`, {
         method: "POST",
-        body: JSON.stringify({ body: body.trim() }),
+        body: JSON.stringify({ body: text, reply_to_message_id: replyId }),
       });
       setBody("");
+      setReplyTo(null);
+      setShowEmoji(false);
       await loadThread(selectedId);
       await loadList(selectedId);
     } catch (err) {
@@ -146,6 +185,29 @@ function Communicator() {
       );
     } finally {
       setSending(false);
+    }
+  }
+  async function sendFile(file: File) {
+    if (!selectedId) return;
+    setUploading(true);
+    setMessage("");
+    const form = new FormData();
+    form.set("attachment", file);
+    form.set("caption", body.trim());
+    if (replyTo) form.set("reply_to_message_id", String(replyTo.id));
+    try {
+      await apiJson(`/admin/conversations/${selectedId}/attachments`, {
+        method: "POST",
+        body: form,
+      });
+      setBody("");
+      setReplyTo(null);
+      await Promise.all([loadThread(selectedId), loadList(selectedId)]);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Unable to send file.");
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
     }
   }
   const filtered = rows.filter((row) =>
@@ -167,10 +229,18 @@ function Communicator() {
           <p className="mt-3 text-[var(--muted)]">
             WhatsApp and Telegram conversations with parents and nannies.
           </p>
+          <p className="mt-1 text-xs font-bold text-emerald-700">
+            Live · checks for new messages every 3 seconds
+          </p>
         </div>
         <button
           className="btn-secondary"
-          onClick={() => void loadList(selectedId || undefined)}
+          onClick={() =>
+            void Promise.all([
+              loadList(selectedId || undefined),
+              ...(selectedId ? [loadThread(selectedId)] : []),
+            ])
+          }
         >
           <RefreshCw size={16} />
           Refresh
@@ -263,9 +333,18 @@ function Communicator() {
                       key={item.id}
                       className={`flex ${item.direction === "outbound" ? "justify-end" : "justify-start"}`}
                     >
-                      <div
-                        className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm shadow-sm ${item.direction === "outbound" ? "bg-[var(--blue-dark)] text-white" : "border border-[var(--line)] bg-white"}`}
-                      >
+                      <div className="group flex max-w-[82%] items-center gap-2">
+                        {item.direction === "outbound" && (
+                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, item.id)} disabled={blocked || sending} />
+                        )}
+                        <div
+                          className={`rounded-2xl px-4 py-3 text-sm shadow-sm ${item.direction === "outbound" ? "bg-[var(--blue-dark)] text-white" : "border border-[var(--line)] bg-white"}`}
+                        >
+                        {item.reply_to && (
+                          <div className={`mb-2 rounded-lg border-l-2 px-3 py-2 text-xs ${item.direction === "outbound" ? "border-white/60 bg-white/10 text-white/75" : "border-[var(--blue)] bg-slate-50 text-[var(--muted)]"}`}>
+                            {item.reply_to.body || (item.reply_to.has_attachment ? "Attachment" : "Message")}
+                          </div>
+                        )}
                         {!!item.attachments?.length && (
                           <div className="mb-2 space-y-2">
                             {item.attachments.map((attachment, index) => (
@@ -292,6 +371,10 @@ function Communicator() {
                             {item.error_message}
                           </div>
                         )}
+                        </div>
+                        {item.direction === "inbound" && (
+                          <MessageActions item={item} onReply={setReplyTo} onReact={(emoji) => void sendText(emoji, item.id)} disabled={blocked || sending} />
+                        )}
                       </div>
                     </div>
                   ))
@@ -300,6 +383,7 @@ function Communicator() {
                     No messages in this conversation yet.
                   </div>
                 )}
+                <div ref={messageEnd} />
               </div>
               <footer className="border-t border-[var(--line)] p-4">
                 {blocked && (
@@ -309,25 +393,55 @@ function Communicator() {
                     reply can be sent.
                   </div>
                 )}
+                {replyTo && (
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-slate-50 px-4 py-3 text-sm">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-[var(--blue)]">Replying to {replyTo.direction === "outbound" ? "your message" : "contact"}</div>
+                      <div className="truncate text-[var(--muted)]">{replyTo.body || (replyTo.attachments?.length ? "Attachment" : "Message")}</div>
+                    </div>
+                    <button aria-label="Cancel reply" onClick={() => setReplyTo(null)}><X size={18} /></button>
+                  </div>
+                )}
+                {showEmoji && (
+                  <div className="mb-3 flex flex-wrap gap-2 rounded-xl border border-[var(--line)] bg-white p-3 shadow-sm">
+                    {EMOJIS.map((emoji) => (
+                      <button key={emoji} className="rounded-lg p-1.5 text-xl hover:bg-slate-100" onClick={() => setBody((value) => `${value}${emoji}`)}>{emoji}</button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex items-end gap-3">
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    className="hidden"
+                    accept="image/jpeg,image/png,image/webp,audio/*,video/mp4,video/3gpp,.pdf,.txt,.doc,.docx,.xls,.xlsx"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void sendFile(file);
+                    }}
+                  />
+                  <button className="btn-secondary !px-3" title="Add emoji" disabled={blocked || sending || uploading} onClick={() => setShowEmoji((value) => !value)}><Smile size={18} /></button>
+                  <button className="btn-secondary !px-3" title="Send a file" disabled={blocked || sending || uploading || thread.conversation.channel !== "whatsapp"} onClick={() => fileInput.current?.click()}>
+                    {uploading ? <LoaderCircle className="animate-spin" size={18} /> : <Paperclip size={18} />}
+                  </button>
                   <textarea
                     className="field min-h-12 flex-1 resize-none"
                     rows={2}
                     value={body}
-                    disabled={blocked || sending}
+                    disabled={blocked || sending || uploading}
                     onChange={(event) => setBody(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {
                         event.preventDefault();
-                        void send();
+                        void sendText();
                       }
                     }}
                     placeholder="Write a reply..."
                   />
                   <button
                     className="btn-primary !px-4"
-                    disabled={blocked || sending || !body.trim()}
-                    onClick={() => void send()}
+                    disabled={blocked || sending || uploading || !body.trim()}
+                    onClick={() => void sendText()}
                   >
                     {sending ? (
                       <LoaderCircle className="animate-spin" size={17} />
@@ -365,6 +479,51 @@ function Channel({ channel }: { channel: string }) {
     >
       {channel}
     </span>
+  );
+}
+
+function MessageActions({
+  item,
+  onReply,
+  onReact,
+  disabled,
+}: {
+  item: Message;
+  onReply: (message: Message) => void;
+  onReact: (emoji: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+      <button
+        className="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:text-[var(--blue)]"
+        title="Reply"
+        disabled={disabled}
+        onClick={() => onReply(item)}
+      >
+        <Reply size={14} />
+      </button>
+      <div className="relative group/reaction">
+        <button
+          className="rounded-full bg-white p-2 text-slate-500 shadow-sm hover:text-[var(--blue)]"
+          title="Send an emoji response"
+          disabled={disabled}
+        >
+          <Smile size={14} />
+        </button>
+        <div className="invisible absolute bottom-full z-20 mb-1 flex -translate-x-1/2 gap-1 rounded-full border border-[var(--line)] bg-white p-1 opacity-0 shadow-lg transition group-hover/reaction:visible group-hover/reaction:opacity-100">
+          {["👍", "❤️", "😂", "🙏"].map((emoji) => (
+            <button
+              key={emoji}
+              className="rounded-full p-1 text-base hover:bg-slate-100"
+              onClick={() => onReact(emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

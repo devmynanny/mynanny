@@ -74,6 +74,34 @@ def send_whatsapp_message(to_number: str, body: str, template_name: Optional[str
         return False, str(exc)
 
 
+def send_whatsapp_media(to_number: str, media_url: str, body: str = "") -> tuple[bool, str]:
+    sid = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
+    token = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+    from_number = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
+    if not sid or not token or not from_number:
+        return False, "Twilio WhatsApp not configured"
+    if not from_number.startswith("whatsapp:"):
+        from_number = f"whatsapp:{from_number}"
+    to_number = normalize_phone_number(to_number)
+    if not to_number.startswith("whatsapp:"):
+        to_number = f"whatsapp:{to_number}"
+    payload = {"From": from_number, "To": to_number, "MediaUrl": media_url}
+    if body:
+        payload["Body"] = body
+    try:
+        response = requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+            data=payload,
+            auth=(sid, token),
+            timeout=30,
+        )
+        if 200 <= response.status_code < 300:
+            return True, ""
+        return False, response.text or f"Twilio API error (status {response.status_code})"
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
 def send_telegram_message(chat_id: str, body: str) -> tuple[bool, str]:
     bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
     if not bot_token:

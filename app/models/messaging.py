@@ -66,6 +66,10 @@ class Message(Base):
     # provider into My Nanny storage. Provider credentials are never exposed
     # to the browser.
     attachments_json = Column(Text, nullable=True)
+    # App-level reply context. Twilio Programmable Messaging does not expose
+    # native outbound WhatsApp quoted replies, so the transport includes a
+    # readable quote while the Communicator preserves the relationship.
+    reply_to_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
 
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
@@ -90,6 +94,7 @@ class Message(Base):
     __table_args__ = (
         UniqueConstraint("channel", "external_message_id", name="uq_message_channel_external_id"),
         Index("ix_messages_conversation_id_created_at", "conversation_id", "created_at"),
+        Index("ix_messages_reply_to_message_id", "reply_to_message_id"),
     )
 
 

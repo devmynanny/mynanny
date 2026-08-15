@@ -79,3 +79,15 @@ def open_media(key: str) -> tuple[BinaryIO, str | None, int | None]:
     path = LOCAL_UPLOAD_ROOT / safe_key
     data = path.read_bytes()
     return io.BytesIO(data), mimetypes.guess_type(safe_key)[0], len(data)
+
+
+def temporary_provider_url(key: str, expires_seconds: int = 900) -> str:
+    """Create a short-lived URL a messaging provider can fetch server-side."""
+    safe_key = _safe_key(key)
+    if _backend() != "s3":
+        raise RuntimeError("Outbound messaging attachments require STORAGE_BACKEND=s3")
+    return _s3_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": _bucket(), "Key": safe_key},
+        ExpiresIn=expires_seconds,
+    )

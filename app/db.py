@@ -761,6 +761,8 @@ def ensure_messages_schema() -> None:
             existing = {row[1] for row in conn.execute(text("PRAGMA table_info(messages)"))}
             if "attachments_json" not in existing:
                 conn.execute(text("ALTER TABLE messages ADD COLUMN attachments_json TEXT"))
+            if "reply_to_message_id" not in existing:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN reply_to_message_id INTEGER"))
             return
         conn.execute(text("""
             CREATE TABLE messages (
@@ -774,9 +776,11 @@ def ensure_messages_schema() -> None:
               sender_user_id INTEGER,
               error_message TEXT,
               attachments_json TEXT,
+              reply_to_message_id INTEGER,
               created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY(conversation_id) REFERENCES conversations (id),
               FOREIGN KEY(sender_user_id) REFERENCES users (id),
+              FOREIGN KEY(reply_to_message_id) REFERENCES messages (id),
               UNIQUE(channel, external_message_id)
             )
         """))

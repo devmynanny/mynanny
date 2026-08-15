@@ -1,8 +1,10 @@
 import os
 from datetime import date, time, datetime, timedelta, timezone
 import json
+import re
+import uuid
 from typing import Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, UploadFile, File, Form
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import and_, func, or_, Numeric, text
@@ -11,7 +13,7 @@ from app import models
 from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny, _ensure_default_nanny_tags
 from app.services.audit import log_audit
 from app.services.paystack import create_refund
-from app.services import conversations, messaging
+from app.services import conversations, messaging, storage
 from app.services.passport_compliance import run_passport_compliance
 from app.services.trust import DEFAULT_TRUST_BADGES, get_trust_config as load_trust_config
 from app.utils.email import EmailMessage, get_email_client
@@ -1791,6 +1793,7 @@ def get_audit_log(audit_id: int, db: Session = Depends(get_db)):
 
 class ConversationReplyPayload(BaseModel):
     body: str
+    reply_to_message_id: Optional[int] = None
 
 
 class ConversationOpenPayload(BaseModel):
@@ -1876,6 +1879,19 @@ def get_conversation_messages(conversation_id: int, db: Session = Depends(get_db
         db.commit()
 
     user = db.query(models.User).filter(models.User.id == conv.user_id).first() if conv.user_id else None
+    message_by_id = {message.id: message for message in rows}
+
+    def reply_context(message: models.Message):
+        replied = message_by_id.get(message.reply_to_message_id)
+        if not replied:
+            return None
+        return {
+            "id": replied.id,
+            "direction": replied.direction,
+            "body": replied.body,
+            "has_attachment": bool(_message_attachments(replied)),
+        }
+
     return {
         "conversation": {
             "id": conv.id,
@@ -1893,6 +1909,7 @@ def get_conversation_messages(conversation_id: int, db: Session = Depends(get_db
                 "status": m.status,
                 "error_message": m.error_message,
                 "attachments": _message_attachments(m),
+                "reply_to": reply_context(m),
                 "created_at": m.created_at,
             }
             for m in rows
@@ -1927,7 +1944,24 @@ def reply_to_conversation(
             ),
         )
 
-    ok, error = messaging.send_chat_message(conv.channel, conv.external_id, body)
+    replied = None
+    if payload.reply_to_message_id is not None:
+        replied = (
+            db.query(models.Message)
+            .filter(
+                models.Message.id == payload.reply_to_message_id,
+                models.Message.conversation_id == conv.id,
+            )
+            .first()
+        )
+        if not replied:
+            raise HTTPException(status_code=400, detail="Reply target is not in this conversation")
+    provider_body = body
+    if replied:
+        quote = (replied.body or "Attachment").strip().replace("\n", " ")[:140]
+        provider_body = f'Replying to: "{quote}"\n\n{body}'
+
+    ok, error = messaging.send_chat_message(conv.channel, conv.external_id, provider_body)
     if not ok and conv.channel == "whatsapp" and "63016" in (error or ""):
         # Twilio's window-violation error code - translate into the same clear
         # message as the proactive check above, in case last_inbound_at drifted.
@@ -1944,6 +1978,7 @@ def reply_to_conversation(
         status="sent" if ok else "failed",
         error_message=None if ok else (error or "")[:500],
         sender_user_id=admin_user.id,
+        reply_to_message_id=replied.id if replied else None,
     )
     db.add(message)
 
@@ -1965,3 +2000,92 @@ def reply_to_conversation(
         "status": message.status,
         "created_at": message.created_at,
     }
+
+
+COMMUNICATOR_MEDIA_TYPES = {
+    "image/jpeg", "image/png", "image/webp",
+    "audio/aac", "audio/amr", "audio/mpeg", "audio/mp4", "audio/ogg",
+    "video/mp4", "video/3gpp",
+    "application/pdf", "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+@router.post("/conversations/{conversation_id}/attachments", dependencies=[Depends(require_admin)])
+async def send_conversation_attachment(
+    conversation_id: int,
+    attachment: UploadFile = File(...),
+    caption: str = Form(default=""),
+    reply_to_message_id: Optional[int] = Form(default=None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin_user = _require_user(authorization, db)
+    conv = db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.channel != "whatsapp":
+        raise HTTPException(status_code=400, detail="File sending is currently available for WhatsApp conversations")
+    if not conv.last_inbound_at or (utc_now() - conv.last_inbound_at) > timedelta(hours=24):
+        raise HTTPException(status_code=422, detail="The customer must message first before a file can be sent")
+
+    content_type = (attachment.content_type or "application/octet-stream").lower()
+    if content_type not in COMMUNICATOR_MEDIA_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported attachment type: {content_type}")
+    data = await attachment.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="WhatsApp attachments may not exceed 20 MB")
+    if not data:
+        raise HTTPException(status_code=400, detail="The selected file is empty")
+
+    replied = None
+    if reply_to_message_id is not None:
+        replied = db.query(models.Message).filter(
+            models.Message.id == reply_to_message_id,
+            models.Message.conversation_id == conv.id,
+        ).first()
+        if not replied:
+            raise HTTPException(status_code=400, detail="Reply target is not in this conversation")
+
+    original_name = re.sub(r"[^A-Za-z0-9._-]", "-", attachment.filename or "file")[-60:]
+    key = f"communicator/outbound/{uuid.uuid4().hex}/{original_name}"
+    private_url = storage.store_bytes(key, data, content_type)
+    try:
+        provider_url = storage.temporary_provider_url(key)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    clean_caption = (caption or "").strip()
+    # WhatsApp captions are supported alongside images. Other media types are
+    # sent without body text because WhatsApp may discard that combination.
+    provider_caption = clean_caption if content_type.startswith("image/") else ""
+    ok, error = messaging.send_whatsapp_media(conv.external_id, provider_url, provider_caption)
+    message = models.Message(
+        conversation_id=conv.id,
+        direction="outbound",
+        channel=conv.channel,
+        body=clean_caption,
+        status="sent" if ok else "failed",
+        error_message=None if ok else (error or "")[:500],
+        sender_user_id=admin_user.id,
+        reply_to_message_id=replied.id if replied else None,
+        attachments_json=json.dumps([{
+            "url": private_url,
+            "content_type": content_type,
+            "size": len(data),
+            "name": original_name,
+        }]),
+    )
+    db.add(message)
+    if ok:
+        now = utc_now()
+        conv.last_outbound_at = now
+        conv.last_message_at = now
+    db.commit()
+    db.refresh(message)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Failed to send: {error}")
+    return {"id": message.id, "status": message.status}

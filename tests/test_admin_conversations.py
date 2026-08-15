@@ -189,6 +189,63 @@ def test_reply_sends_within_whatsapp_window(monkeypatch):
         db.close()
 
 
+def test_reply_persists_reply_context(monkeypatch):
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        conv = _seed_conversation(db, external_id="+27821230014", last_inbound_at=utc_now())
+        inbound = _seed_message(db, conv, body="Can you help me?")
+        sent = {}
+        monkeypatch.setattr(
+            "app.routers.admin.messaging.send_chat_message",
+            lambda channel, external_id, body: (sent.setdefault("body", body) is not None, ""),
+        )
+
+        res = client.post(
+            f"/admin/conversations/{conv.id}/reply",
+            json={"body": "Yes, certainly", "reply_to_message_id": inbound.id},
+            headers=_auth(admin),
+        )
+        assert res.status_code == 200
+        assert "Replying to" in sent["body"]
+        db.expire_all()
+        outbound = db.query(models.Message).filter(
+            models.Message.conversation_id == conv.id,
+            models.Message.direction == "outbound",
+        ).first()
+        assert outbound.reply_to_message_id == inbound.id
+
+        thread = client.get(f"/admin/conversations/{conv.id}/messages", headers=_auth(admin))
+        reply = [row for row in thread.json()["results"] if row["id"] == outbound.id][0]
+        assert reply["reply_to"]["body"] == "Can you help me?"
+    finally:
+        db.close()
+
+
+def test_send_whatsapp_attachment(monkeypatch):
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        conv = _seed_conversation(db, external_id="+27821230015", last_inbound_at=utc_now())
+        monkeypatch.setattr("app.routers.admin.storage.store_bytes", lambda key, data, content_type: f"/media/{key}")
+        monkeypatch.setattr("app.routers.admin.storage.temporary_provider_url", lambda key: "https://signed.example/photo.jpg")
+        monkeypatch.setattr("app.routers.admin.messaging.send_whatsapp_media", lambda number, url, body="": (True, ""))
+
+        res = client.post(
+            f"/admin/conversations/{conv.id}/attachments",
+            files={"attachment": ("photo.jpg", b"jpeg data", "image/jpeg")},
+            data={"caption": "Here it is"},
+            headers=_auth(admin),
+        )
+        assert res.status_code == 200
+        db.expire_all()
+        message = db.query(models.Message).filter(models.Message.conversation_id == conv.id).first()
+        assert message.body == "Here it is"
+        assert json.loads(message.attachments_json)[0]["content_type"] == "image/jpeg"
+    finally:
+        db.close()
+
+
 def test_reply_send_failure_returns_502(monkeypatch):
     db = _db()
     try:
