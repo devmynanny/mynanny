@@ -38,21 +38,6 @@ function FacebookLogo() {
   );
 }
 
-const parentSteps = [
-  {
-    title: "Tell us when you need a helping hand",
-    detail: "Choose your dates, times, location and the kind of care your family needs.",
-  },
-  {
-    title: "View available nannies",
-    detail: "Meet approved local caregivers through real video introductions and verified trust badges.",
-  },
-  {
-    title: "Book and stay connected",
-    detail: "Request the right nanny, receive updates and manage your booking in one place.",
-  },
-];
-
 const faqs = [
   {
     question: "How are My Nanny caregivers screened?",
@@ -254,7 +239,7 @@ export default function Home() {
 
       <section id="how-it-works" className="scroll-mt-8 bg-[var(--ink)] py-24 text-white sm:py-32">
         <div className="mx-auto max-w-7xl px-5 sm:px-9">
-          <div className="grid gap-14 lg:grid-cols-[.85fr_1.15fr]">
+          <div className="grid items-center gap-14 lg:grid-cols-[.78fr_1.22fr]">
             <div>
               <div className="eyebrow !text-[#9ed2e7]">How does it work?</div>
               <h2 className="display mt-4 text-5xl leading-[.95] sm:text-6xl">
@@ -267,19 +252,74 @@ export default function Home() {
                 knows what happens next.
               </p>
             </div>
-            <ol className="grid gap-4">
-              {parentSteps.map((step, index) => (
-                <li className="group flex gap-5 rounded-[28px] border border-white/10 bg-white/[.06] p-6 transition hover:bg-white/[.1] sm:p-7" key={step.title}>
-                  <span className="display flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#9ed2e7] text-2xl text-[var(--ink)]">
-                    {index + 1}
-                  </span>
-                  <span>
-                    <b className="block text-xl">{step.title}</b>
-                    <span className="mt-2 block leading-7 text-white/60">{step.detail}</span>
-                  </span>
-                </li>
-              ))}
-            </ol>
+            <div className="rounded-[38px] border border-white/10 bg-white/[.06] p-4 shadow-[0_30px_80px_rgba(0,0,0,.2)] sm:p-6">
+              <div className="overflow-hidden rounded-[30px] bg-[#f8fcfd] text-[var(--ink)]">
+                <div className="border-b border-[var(--line)] p-5 sm:p-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="eyebrow">1 · Choose your dates</p>
+                      <h3 className="mt-2 text-xl font-extrabold">August 2026</h3>
+                    </div>
+                    <span className="pill !bg-[#dff3ea] !text-[#2e725d]">
+                      <CalendarDays size={16} /> 2 days selected
+                    </span>
+                  </div>
+                  <div className="mt-5 grid grid-cols-7 gap-2 text-center text-sm">
+                    {[
+                      ["S", "9", false],
+                      ["M", "10", true],
+                      ["T", "11", true],
+                      ["W", "12", false],
+                      ["T", "13", false],
+                      ["F", "14", false],
+                      ["S", "15", false],
+                    ].map(([day, date, selected]) => (
+                      <div key={String(date)}>
+                        <span className="block text-xs font-extrabold text-[var(--muted)]">{String(day)}</span>
+                        <span
+                          className={`mt-2 flex aspect-square items-center justify-center rounded-2xl font-extrabold ${selected ? "bg-[var(--blue-dark)] text-white shadow-md" : "bg-white"}`}
+                        >
+                          {String(date)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-5 sm:p-6">
+                  <p className="eyebrow">2 · Meet an available nanny</p>
+                  <div className="mt-4 flex flex-col gap-5 rounded-[26px] border border-[var(--line)] bg-white p-5 sm:flex-row sm:items-center">
+                    <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] bg-[var(--blue-pale)] text-[var(--blue-dark)]">
+                      <UserRoundCheck size={30} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-xl font-extrabold">Veronica M.</h3>
+                        <span className="pill !bg-[#fff9e9]">
+                          <Star size={14} fill="#e5aa45" color="#e5aa45" /> 4.9
+                        </span>
+                      </div>
+                      <p className="mt-2 flex items-center gap-2 text-sm text-[var(--muted)]">
+                        <MapPin size={16} /> 3.2 km away
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <span className="pill"><Play size={14} /> Video introduced</span>
+                        <span className="pill"><BadgeCheck size={14} /> Approved</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-4 rounded-[22px] bg-[#eaf6fa] px-5 py-4">
+                    <div>
+                      <p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--blue-dark)]">3 · Request care</p>
+                      <p className="mt-1 text-sm text-[var(--muted)]">Dates and nanny stay together.</p>
+                    </div>
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--blue-dark)] text-white">
+                      <ArrowRight size={20} />
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div className="mt-16 grid overflow-hidden rounded-[36px] bg-[#f5d3ca] text-[var(--ink)] lg:grid-cols-[1fr_auto]">
             <div className="p-8 sm:p-11">
