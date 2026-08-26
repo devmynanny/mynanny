@@ -1,6 +1,8 @@
 "use client";
 
 import { Brand } from "@/components/brand";
+import type { GoogleAddress } from "@/components/google-address-input";
+import { NannyLocationConfirmation } from "@/components/nanny-location-confirmation";
 import { PoweredByTiqet } from "@/components/powered-by-tiqet";
 import { apiJson } from "@/lib/api";
 import {
@@ -66,20 +68,6 @@ const initialForm: FormState = {
 const boolValue = (value: string) =>
   value === "yes" ? true : value === "no" ? false : null;
 
-function getCurrentPosition() {
-  return new Promise<GeolocationPosition>((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("Location services are not available on this device."));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 20_000,
-      maximumAge: 0,
-    });
-  });
-}
-
 function SignupForm() {
   const router = useRouter();
   const params = useSearchParams();
@@ -90,6 +78,8 @@ function SignupForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [accountCreated, setAccountCreated] = useState(false);
+  const [selectedAddress, setSelectedAddress] =
+    useState<GoogleAddress | null>(null);
   const isSouthAfrican =
     form.nationality.trim().toLowerCase() === "south african";
 
@@ -158,17 +148,14 @@ function SignupForm() {
           my_nanny_training_status: form.trainingStatus,
         }),
       });
-      const position = await getCurrentPosition().catch(() => {
+      if (!selectedAddress) {
         throw new Error(
-          "Your home location is required before the video interview. Please allow location access and try again.",
+          "Use GPS and confirm the address where you live before continuing.",
         );
-      });
+      }
       await apiJson("/nannies/me/location", {
         method: "PATCH",
-        body: JSON.stringify({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        }),
+        body: JSON.stringify(selectedAddress),
       });
       router.push("/interview?welcome=nanny");
       router.refresh();
@@ -510,21 +497,27 @@ function SignupForm() {
                     </label>
                   </fieldset>
 
-                  <div className="flex gap-4 rounded-2xl border border-[var(--line)] bg-[var(--blue-pale)] p-5">
-                    <MapPin
-                      className="mt-0.5 shrink-0 text-[var(--blue)]"
-                      size={24}
-                    />
-                    <div>
-                      <div className="font-extrabold">
-                        Home location required
+                  <div className="grid gap-4 rounded-2xl border border-[var(--line)] bg-[var(--blue-pale)] p-5">
+                    <div className="flex gap-4">
+                      <MapPin
+                        className="mt-0.5 shrink-0 text-[var(--blue)]"
+                        size={24}
+                      />
+                      <div>
+                        <div className="font-extrabold">
+                          Home location required
+                        </div>
+                        <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                          We will use GPS first, show you the matching address,
+                          and ask you to confirm that you live there. If it is
+                          incorrect, you can enter your address manually.
+                        </p>
                       </div>
-                      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-                        When you continue, your device will ask for location
-                        access. We use this to match you with nearby families.
-                        Your exact home address is kept private from parents.
-                      </p>
                     </div>
+                    <NannyLocationConfirmation
+                      onConfirm={(address) => setSelectedAddress(address)}
+                      onReset={() => setSelectedAddress(null)}
+                    />
                   </div>
                 </>
               )}

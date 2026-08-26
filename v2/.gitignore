@@ -4,3 +4,7 @@ dist
 .env.local
 .env
 coverage
+playwright-report
+test-results
+tsconfig.tsbuildinfo
+.e2e-state

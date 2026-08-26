@@ -6,7 +6,14 @@ from typing import BinaryIO
 
 
 MEDIA_PREFIX = "/media/"
-LOCAL_UPLOAD_ROOT = Path(__file__).resolve().parents[1] / "static" / "uploads"
+DEFAULT_LOCAL_UPLOAD_ROOT = Path(__file__).resolve().parents[1] / "static" / "uploads"
+LOCAL_UPLOAD_ROOT = DEFAULT_LOCAL_UPLOAD_ROOT
+
+
+def _local_upload_root() -> Path:
+    """Allow automated tests to keep uploaded media outside the app tree."""
+    configured = (os.getenv("LOCAL_UPLOAD_ROOT") or "").strip()
+    return Path(configured) if configured else Path(LOCAL_UPLOAD_ROOT)
 
 
 def _backend() -> str:
@@ -53,7 +60,7 @@ def store_bytes(key: str, data: bytes, content_type: str | None = None) -> str:
         extra = {"ContentType": content_type} if content_type else {}
         _s3_client().put_object(Bucket=_bucket(), Key=safe_key, Body=data, **extra)
     else:
-        destination = LOCAL_UPLOAD_ROOT / safe_key
+        destination = _local_upload_root() / safe_key
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
     return media_url(safe_key)
@@ -65,7 +72,7 @@ def store_file(key: str, source: Path, content_type: str | None = None) -> str:
         extra = {"ContentType": content_type} if content_type else None
         _s3_client().upload_file(str(source), _bucket(), safe_key, ExtraArgs=extra or {})
     else:
-        destination = LOCAL_UPLOAD_ROOT / safe_key
+        destination = _local_upload_root() / safe_key
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(source.read_bytes())
     return media_url(safe_key)
@@ -76,7 +83,7 @@ def open_media(key: str) -> tuple[BinaryIO, str | None, int | None]:
     if _backend() == "s3":
         result = _s3_client().get_object(Bucket=_bucket(), Key=safe_key)
         return result["Body"], result.get("ContentType"), result.get("ContentLength")
-    path = LOCAL_UPLOAD_ROOT / safe_key
+    path = _local_upload_root() / safe_key
     data = path.read_bytes()
     return io.BytesIO(data), mimetypes.guess_type(safe_key)[0], len(data)
 

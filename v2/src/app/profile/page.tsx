@@ -2,6 +2,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { AuthenticatedPage } from "@/components/authenticated-page";
+import {
+  GoogleAddressInput,
+  type GoogleAddress,
+} from "@/components/google-address-input";
+import { NannyLocationConfirmation } from "@/components/nanny-location-confirmation";
 import { apiFetch, apiJson } from "@/lib/api";
 import { Camera, Check, CreditCard, FileUp, KeyRound, LoaderCircle, MapPin, Save, Settings2, ShieldCheck, Wallet } from "lucide-react";
 import Image from "next/image";
@@ -54,6 +59,18 @@ function southAfricanPhoneInput(value: string) {
   return `+27${national.slice(0, 9)}`;
 }
 
+function normaliseNannyProfile(value: Data): Data {
+  const gender = String(value.gender || "").trim().toLowerCase();
+  const ethnicityValue = String(value.ethnicity || "").trim().toLowerCase();
+  const ethnicity =
+    ethnicityValue === "indian/asian" ? "indian" : ethnicityValue;
+  return {
+    ...value,
+    gender,
+    ethnicity,
+  };
+}
+
 export default function ProfilePage() {
   return (
     <AuthenticatedPage>
@@ -83,6 +100,11 @@ function ParentProfile() {
   const [languages, setLanguages] = useState<NamedOption[]>([]);
   const [locations, setLocations] = useState<ParentLocation[]>([]);
   const [locating, setLocating] = useState(false);
+  const [addressSearch, setAddressSearch] = useState("");
+  const [selectedAddress, setSelectedAddress] =
+    useState<GoogleAddress | null>(null);
+  const [addressLabel, setAddressLabel] = useState("Home");
+  const [savingAddress, setSavingAddress] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
   useEffect(() => {
@@ -185,6 +207,39 @@ function ParentProfile() {
       },
       { enableHighAccuracy: true, timeout: 15000 },
     );
+  }
+  async function saveSelectedAddress() {
+    if (!selectedAddress) {
+      setStatus("Choose an address from the Google suggestions first.");
+      return;
+    }
+    setSavingAddress(true);
+    setStatus("Saving address...");
+    try {
+      const location = await apiJson<ParentLocation>("/parents/me/locations", {
+        method: "POST",
+        body: JSON.stringify({
+          ...selectedAddress,
+          label: addressLabel.trim() || "Home",
+          is_default: locations.length === 0,
+        }),
+      });
+      setLocations((current) => {
+        const withoutDuplicate = current.filter(
+          (item) => item.id !== location.id,
+        );
+        return [location, ...withoutDuplicate];
+      });
+      setAddressSearch("");
+      setSelectedAddress(null);
+      setStatus("Address saved and ready for distance matching.");
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? error.message : "Unable to save address.",
+      );
+    } finally {
+      setSavingAddress(false);
+    }
   }
   async function makeDefaultLocation(locationId: number) {
     try {
@@ -336,6 +391,34 @@ function ParentProfile() {
         <p className="mb-5 text-sm text-[var(--muted)]">
           Your location is used for distance-based nanny matching. Exact details are only shared when needed for a booking.
         </p>
+        <div className="mb-5 grid gap-4 rounded-2xl bg-[var(--blue-pale)] p-5 sm:grid-cols-[1fr_180px_auto] sm:items-end">
+          <GoogleAddressInput
+            label="Add a booking address"
+            value={addressSearch}
+            onChange={(value) => {
+              setAddressSearch(value);
+              setSelectedAddress(null);
+            }}
+            onSelected={(address) => {
+              setAddressSearch(address.formatted_address);
+              setSelectedAddress(address);
+            }}
+          />
+          <Input
+            label="Location name"
+            placeholder="Home"
+            value={addressLabel}
+            onChange={setAddressLabel}
+          />
+          <button
+            className="btn-primary"
+            disabled={!selectedAddress || savingAddress}
+            onClick={() => void saveSelectedAddress()}
+          >
+            <Save size={17} />
+            {savingAddress ? "Saving..." : "Save address"}
+          </button>
+        </div>
         <div className="grid gap-3">
           {locations.map((location) => (
             <div key={location.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--line)] p-4">
@@ -412,9 +495,12 @@ function NannyProfile() {
   const [data, setData] = useState<Data>({});
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
+  const arrivedFromInterview =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("from") === "interview";
   useEffect(() => {
     apiJson<Data>("/nannies/me/profile")
-      .then(setData)
+      .then((value) => setData(normaliseNannyProfile(value)))
       .catch((e) => setStatus(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -433,40 +519,21 @@ function NannyProfile() {
       setStatus(e instanceof Error ? e.message : "Unable to save.");
     }
   }
-  async function captureLocation() {
-    setStatus("Requesting your location...");
+  async function saveConfirmedLocation(address: GoogleAddress) {
+    setStatus("Saving home location...");
     try {
-      const position = await new Promise<GeolocationPosition>(
-        (resolve, reject) => {
-          if (!navigator.geolocation) {
-            reject(
-              new Error("Location services are not available on this device."),
-            );
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 20_000,
-            maximumAge: 0,
-          });
-        },
-      );
       await apiJson("/nannies/me/location", {
         method: "PATCH",
-        body: JSON.stringify({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        }),
+        body: JSON.stringify(address),
       });
       const refreshed = await apiJson<Data>("/nannies/me/profile");
-      setData(refreshed);
+      setData(normaliseNannyProfile(refreshed));
       setStatus("Home location saved.");
-    } catch (e) {
-      setStatus(
-        e instanceof Error
-          ? e.message
-          : "Allow location access to save your home location.",
-      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save location.";
+      setStatus(message);
+      throw new Error(message);
     }
   }
   async function upload(path: string, file: File, key: string, append = false) {
@@ -510,11 +577,112 @@ function NannyProfile() {
   }
   if (loading) return <Loading />;
   const sa = (data.nationality || "").toLowerCase() === "south african";
+  const candidateChecklist = [
+    {
+      label: "Profile photo",
+      complete: Boolean(data.profile_photo_url),
+    },
+    {
+      label: "Gender, race and nationality",
+      complete: Boolean(data.gender && data.ethnicity && data.nationality),
+    },
+    {
+      label: sa ? "Identity document" : "Passport",
+      complete: Boolean(
+        sa
+          ? data.sa_id_number && data.sa_id_document_url
+          : data.passport_number &&
+              data.passport_expiry &&
+              data.passport_document_url,
+      ),
+    },
+    ...(!sa
+      ? [
+          {
+            label: "Permit or waiver",
+            complete: Boolean(
+              data.permit_status && data.work_permit_document_url,
+            ),
+          },
+        ]
+      : []),
+    {
+      label: "Police clearance",
+      complete: Boolean(
+        data.police_clearance_status === "yes" &&
+          data.police_clearance_document_url,
+      ),
+    },
+    ...(data.has_drivers_license
+      ? [
+          {
+            label: "Driver's license",
+            complete: Boolean(data.drivers_license_document_url),
+          },
+        ]
+      : []),
+  ];
+  const completedCandidateItems = candidateChecklist.filter(
+    (item) => item.complete,
+  ).length;
   return (
     <ProfileLayout
       title="Your nanny profile"
       intro="Your application is private until screening and approval. You can save and return at any time."
     >
+      <section
+        className={`mb-6 rounded-3xl border p-6 ${
+          completedCandidateItems === candidateChecklist.length
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-sky-200 bg-[var(--blue-pale)]"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="max-w-2xl">
+            <div className="eyebrow">
+              {arrivedFromInterview
+                ? "Interview successfully submitted"
+                : "Candidate file"}
+            </div>
+            <h2 className="mt-2 text-2xl font-bold">
+              {completedCandidateItems === candidateChecklist.length
+                ? "Your essential profile items are complete"
+                : "Complete your photo and required documents"}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              Complete the essential items below so your candidate file is
+              ready for approval. Uploaded documents remain private and are
+              reviewed by the My Nanny team.
+            </p>
+          </div>
+          <span className="pill bg-white">
+            {completedCandidateItems}/{candidateChecklist.length} complete
+          </span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {candidateChecklist.map((item) => (
+            <div
+              key={item.label}
+              className={`flex items-center gap-3 rounded-2xl border p-4 text-sm font-bold ${
+                item.complete
+                  ? "border-emerald-200 bg-white text-emerald-800"
+                  : "border-white bg-white/70 text-[var(--ink)]"
+              }`}
+            >
+              <span
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                  item.complete
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-slate-100 text-slate-400"
+                }`}
+              >
+                {item.complete ? <Check size={17} /> : <FileUp size={17} />}
+              </span>
+              {item.label}
+            </div>
+          ))}
+        </div>
+      </section>
       <Section title="Profile photo">
         <div className="flex flex-wrap items-center gap-5">
           {data.profile_photo_url ? (
@@ -576,9 +744,9 @@ function NannyProfile() {
             value={data.gender}
             onChange={(v) => set("gender", v)}
             options={[
-              ["Female", "Female"],
-              ["Male", "Male"],
-              ["Other", "Other"],
+              ["female", "Female"],
+              ["male", "Male"],
+              ["other", "Other"],
             ]}
           />
           <Select
@@ -586,11 +754,11 @@ function NannyProfile() {
             value={data.ethnicity}
             onChange={(v) => set("ethnicity", v)}
             options={[
-              ["Black", "Black"],
-              ["Coloured", "Coloured"],
-              ["Indian/Asian", "Indian/Asian"],
-              ["White", "White"],
-              ["Other", "Other"],
+              ["black", "Black"],
+              ["coloured", "Coloured"],
+              ["indian", "Indian/Asian"],
+              ["white", "White"],
+              ["other", "Other"],
             ]}
           />
           <Select
@@ -607,7 +775,7 @@ function NannyProfile() {
         </Grid>
       </Section>
       <Section title="Home location">
-        <div className="flex flex-col gap-5 rounded-2xl bg-[var(--blue-pale)] p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-4 rounded-2xl bg-[var(--blue-pale)] p-5">
           <div className="flex gap-4">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-[var(--blue)] shadow-sm">
               {data.lat != null && data.lng != null ? (
@@ -630,12 +798,11 @@ function NannyProfile() {
               </p>
             </div>
           </div>
-          <button className="btn-secondary shrink-0" onClick={captureLocation}>
-            <MapPin size={17} />
-            {data.lat != null && data.lng != null
-              ? "Update location"
-              : "Add my location"}
-          </button>
+        </div>
+        <div className="mt-4">
+          <NannyLocationConfirmation
+            onConfirm={saveConfirmedLocation}
+          />
         </div>
       </Section>
       <Section title="Identity and eligibility">

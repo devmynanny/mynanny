@@ -55,3 +55,7 @@ export async function apiJson<T>(
   }
   return res.json() as Promise<T>;
 }
+
+export function apiMediaUrl(url: string) {
+  return url.startsWith("/media/") ? `/api${url}` : url;
+}

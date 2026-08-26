@@ -1,7 +1,7 @@
 "use client";
 
 import { AuthenticatedPage } from "@/components/authenticated-page";
-import { apiFetch, apiJson } from "@/lib/api";
+import { apiFetch, apiJson, apiMediaUrl } from "@/lib/api";
 import {
   Check,
   Clock3,
@@ -13,6 +13,7 @@ import {
   Upload,
   Video,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 const questions = [
@@ -38,6 +39,7 @@ const cameraConstraints: MediaStreamConstraints = {
 };
 
 export default function Interview() {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [clips, setClips] = useState<Clip[]>([]);
   const [recording, setRecording] = useState(false);
@@ -47,11 +49,17 @@ export default function Interview() {
   const [message, setMessage] = useState("");
   const [resubmissionRequested, setResubmissionRequested] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(60);
+  const [localReplayUrls, setLocalReplayUrls] = useState<
+    Record<number, string>
+  >({});
   const previewRef = useRef<HTMLVideoElement>(null);
+  const replayRef = useRef<HTMLVideoElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const localReplayUrlsRef = useRef<Record<number, string>>({});
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const profileRedirectTimerRef = useRef<number | null>(null);
   useEffect(() => {
     apiJson<Screening>("/nannies/me/video-screening")
       .then((data) => {
@@ -66,6 +74,12 @@ export default function Interview() {
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       if (timerRef.current) clearInterval(timerRef.current);
+      if (profileRedirectTimerRef.current) {
+        window.clearTimeout(profileRedirectTimerRef.current);
+      }
+      Object.values(localReplayUrlsRef.current).forEach((url) =>
+        URL.revokeObjectURL(url),
+      );
     };
   }, []);
   useEffect(() => {
@@ -98,6 +112,28 @@ export default function Interview() {
       cancelled = true;
     };
   }, [step, clips, screeningLoaded, submitted]);
+  useEffect(() => {
+    if (!recording || !previewRef.current || !streamRef.current) return;
+    const preview = previewRef.current;
+    preview.srcObject = streamRef.current;
+    void preview.play().catch(() => {
+      setMessage(
+        "The camera is recording, but the preview could not be displayed. Please check your browser camera permissions.",
+      );
+    });
+  }, [recording]);
+
+  function setLocalReplay(questionIndex: number, blob: Blob) {
+    const previousUrl = localReplayUrlsRef.current[questionIndex];
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+    const nextUrl = URL.createObjectURL(blob);
+    localReplayUrlsRef.current = {
+      ...localReplayUrlsRef.current,
+      [questionIndex]: nextUrl,
+    };
+    setLocalReplayUrls(localReplayUrlsRef.current);
+  }
+
   async function ensureCamera() {
     let stream = streamRef.current;
     if (
@@ -120,6 +156,7 @@ export default function Interview() {
     setMessage("");
     setSecondsLeft(60);
     try {
+      replayRef.current?.pause();
       const stream = await ensureCamera();
       const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
         ? "video/webm;codecs=vp9,opus"
@@ -133,8 +170,13 @@ export default function Interview() {
       recorder.ondataavailable = (event) => {
         if (event.data.size) chunksRef.current.push(event.data);
       };
-      recorder.onstop = () =>
-        void upload(new Blob(chunksRef.current, { type: "video/webm" }));
+      const questionIndex = step;
+      recorder.onstop = () => {
+        const contentType = recorder.mimeType.split(";", 1)[0] || "video/webm";
+        const blob = new Blob(chunksRef.current, { type: contentType });
+        setLocalReplay(questionIndex, blob);
+        void upload(blob, questionIndex);
+      };
       recorderRef.current = recorder;
       recorder.start(1000);
       setRecording(true);
@@ -149,6 +191,7 @@ export default function Interview() {
         });
       }, 1000);
     } catch (err) {
+      setRecording(false);
       setMessage(
         err instanceof Error
           ? err.message
@@ -162,14 +205,14 @@ export default function Interview() {
     if (recorderRef.current?.state === "recording") recorderRef.current.stop();
     setRecording(false);
   }
-  async function upload(blob: Blob) {
+  async function upload(blob: Blob, questionIndex: number) {
     setUploading(true);
     setMessage("Uploading your answer...");
     try {
       const form = new FormData();
-      form.append("file", blob, `question-${step + 1}.webm`);
+      form.append("file", blob, `question-${questionIndex + 1}.webm`);
       const response = await apiFetch(
-        `/nannies/me/video-screening/clips?question_index=${step}`,
+        `/nannies/me/video-screening/clips?question_index=${questionIndex}`,
         { method: "POST", body: form },
       );
       if (!response.ok) {
@@ -210,7 +253,12 @@ export default function Interview() {
       });
       setSubmitted(true);
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      setMessage("Your interview has been submitted for review.");
+      setMessage(
+        "Interview submitted. Taking you to your profile to complete your photo and documents...",
+      );
+      profileRedirectTimerRef.current = window.setTimeout(() => {
+        router.replace("/profile?from=interview");
+      }, 1500);
     } catch (err) {
       setMessage(
         err instanceof Error ? err.message : "Unable to submit your interview.",
@@ -238,6 +286,8 @@ export default function Interview() {
     }
   }
   const current = clips.find((clip) => clip.question_index === step);
+  const replayUrl =
+    localReplayUrls[step] || (current ? apiMediaUrl(current.url) : "");
   const allAnswersComplete = questions.every((_, index) =>
     clips.some((clip) => clip.question_index === index),
   );
@@ -312,11 +362,19 @@ export default function Interview() {
               </aside>
               <section className="card p-5 sm:p-7">
                 <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-[20px] bg-[var(--ink)] text-white">
-                  {current && !recording ? (
+                  {replayUrl && !recording ? (
                     <video
-                      key={current.url}
-                      src={current.url}
+                      ref={replayRef}
+                      key={replayUrl}
+                      src={replayUrl}
                       controls
+                      playsInline
+                      preload="metadata"
+                      onError={() =>
+                        setMessage(
+                          "This recording could not be replayed. Please record this answer again.",
+                        )
+                      }
                       className="h-full w-full object-cover"
                     />
                   ) : (
@@ -327,7 +385,7 @@ export default function Interview() {
                       className={`h-full w-full object-cover transition duration-300 ${recording ? "blur-none" : "scale-105 blur-xl"}`}
                     />
                   )}
-                  {!current && !recording && (
+                  {!replayUrl && !recording && (
                     <div className="absolute rounded-2xl bg-[var(--ink)]/65 px-7 py-5 text-center backdrop-blur-sm">
                       <Video className="mx-auto h-12 w-12 text-[#a8d9ea]" />
                       <div className="mt-4 font-bold">Get ready</div>
