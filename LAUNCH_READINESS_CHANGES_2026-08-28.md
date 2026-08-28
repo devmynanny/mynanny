@@ -18,7 +18,12 @@ This file records changes and verification performed during the final admin and 
 - Backend regression suite: `182 passed`.
 - Isolated Chromium suite: `3 passed`, covering the complete nanny onboarding/video flow, the incomplete-profile approval safeguard, and every admin menu destination.
 - Admin menu coverage is read-only and runs with Twilio, Paystack, and S3 disabled.
-- Pending: production deployment smoke test.
+- Production frontend health: HTTP 200.
+- Production API health: HTTP 200 with authentication enabled, database connectivity confirmed, and live record counts returned.
+- Production admin authentication: passed with the existing super-admin account.
+- Production admin menu smoke test: all 12 destinations loaded successfully with no visible 500, 502, application-failure, or internal-server-error state.
+- Production overview: live API data displayed `0` bookings for the current Johannesburg date and the empty state replaced all former demo rows.
+- No approvals, declines, refunds, invitations, uploads, outbound messages, payment operations, or other state-changing actions were performed in production.
 
 ## Admin Menu Coverage
 
