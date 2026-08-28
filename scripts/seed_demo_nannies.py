@@ -1,8 +1,9 @@
 """
-Seed clearly labelled demo nannies near Louwlardia, Centurion for testing.
+Seed clearly labelled demo nannies in the live test-parent areas.
 
 Creates fully search-eligible nannies (approved, documents complete, located
-near Louwlardia) with availability for the next 30 days, 06:00-22:00 SA time.
+near Sandhurst or Centurion) with availability for the next 30 days,
+06:00-22:00 SA time.
 
 Usage:
     # Against production (get External Database URL from Render dashboard):
@@ -30,7 +31,6 @@ DEMO_PASSWORD = "Demo1234!"
 DEMO_PROFILE_PHOTO_URL = "https://mynanny-v2.onrender.com/hero-nanny-feeding-v2.png"
 DEMO_DOCUMENT_URL = "https://mynanny-v2.onrender.com/logo.jpg"
 
-# Louwlardia, Centurion (approx). Small offsets so distances differ.
 DEMO_NANNIES = [
     {
         "name": "Thandi Demo Mokoena",
@@ -38,7 +38,10 @@ DEMO_NANNIES = [
         "last_initial": "M",
         "email": "demo.nanny1@mynanny.test",
         "phone": "+27820000001",
-        "lat": -25.9020, "lng": 28.1870,
+        "lat": -26.1070, "lng": 28.0520,
+        "formatted_address": "Sandhurst, Sandton, Gauteng, South Africa",
+        "suburb": "Sandhurst",
+        "city": "Sandton",
         "dob": date(1992, 3, 14),
         "bio": "Warm, energetic nanny with 8 years of experience caring for toddlers and school-age children.",
         "languages": ["English", "Zulu", "Sotho"],
@@ -53,7 +56,10 @@ DEMO_NANNIES = [
         "last_initial": "N",
         "email": "demo.nanny2@mynanny.test",
         "phone": "+27820000002",
-        "lat": -25.8960, "lng": 28.1930,
+        "lat": -26.1150, "lng": 28.0420,
+        "formatted_address": "Sandton, Gauteng, South Africa",
+        "suburb": "Sandton",
+        "city": "Sandton",
         "dob": date(1988, 11, 2),
         "bio": "Experienced night nanny and newborn specialist. Calm, reliable, and great with routines.",
         "languages": ["English", "Tswana"],
@@ -69,6 +75,9 @@ DEMO_NANNIES = [
         "email": "demo.nanny3@mynanny.test",
         "phone": "+27820000003",
         "lat": -25.9080, "lng": 28.1810,
+        "formatted_address": "Louwlardia, Centurion, Gauteng, South Africa",
+        "suburb": "Louwlardia",
+        "city": "Centurion",
         "dob": date(1997, 6, 25),
         "bio": "ECD-qualified nanny who loves educational play. Currently studying part time.",
         "languages": ["English", "Afrikaans", "Xhosa"],
@@ -159,9 +168,9 @@ def seed(db):
         profile.is_approved = 1
         profile.application_status = "approved"
         profile.approved_at = datetime.utcnow().isoformat()
-        profile.formatted_address = "Louwlardia, Centurion, Gauteng, South Africa"
-        profile.suburb = "Louwlardia"
-        profile.city = "Centurion"
+        profile.formatted_address = spec["formatted_address"]
+        profile.suburb = spec["suburb"]
+        profile.city = spec["city"]
         profile.province = "Gauteng"
         profile.country = "South Africa"
         langs = db.query(models.Language).filter(models.Language.name.in_(spec["languages"])).all()
@@ -232,7 +241,7 @@ def main():
             print(f"\nseeded {len(seeded)} demo nannies (password for all: {DEMO_PASSWORD}):")
             for action, email, user_id, nanny_id in seeded:
                 print(f"  {action}: {email}  user_id={user_id} nanny_id={nanny_id}")
-            print("\navailability: today plus 29 days, 06:00-22:00 SA time, near Louwlardia, Centurion")
+            print("\navailability: today plus 29 days, 06:00-22:00 SA time, in Sandhurst/Sandton and Centurion")
             print("cleanup before real launch: python scripts/seed_demo_nannies.py --delete")
     finally:
         db.close()
