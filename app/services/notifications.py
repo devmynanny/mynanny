@@ -98,26 +98,33 @@ def _log_notification(
     reference_id: Optional[int] = None,
     message: Optional[str] = None,
 ) -> None:
-    if not _notification_log_exists(db):
+    try:
+        if not _notification_log_exists(db):
+            return
+        # A stale notification-log schema must not invalidate the caller's
+        # business transaction. The savepoint contains any insert failure.
+        with db.begin_nested():
+            db.execute(
+                text(
+                    """
+                    INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, created_at)
+                    VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :created_at)
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "event_type": event_type,
+                    "channel": channel,
+                    "status": status,
+                    "error_message": error_message,
+                    "reference_id": reference_id,
+                    "message": message,
+                    "created_at": utc_now(),
+                },
+            )
+    except Exception:
+        # Notification logging is diagnostic and remains best-effort.
         return
-    db.execute(
-        text(
-            """
-            INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, created_at)
-            VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :created_at)
-            """
-        ),
-        {
-            "user_id": user_id,
-            "event_type": event_type,
-            "channel": channel,
-            "status": status,
-            "error_message": error_message,
-            "reference_id": reference_id,
-            "message": message,
-            "created_at": utc_now(),
-        },
-    )
 
 
 def _resolve_chat_channel(db: Session, user_id: Optional[int]) -> str:
@@ -155,7 +162,10 @@ def send_notification(
                 message=message,
             )
             return False
-        ok, error = messaging.send_whatsapp_message(phone, message, template_name=template_name)
+        try:
+            ok, error = messaging.send_whatsapp_message(phone, message, template_name=template_name)
+        except Exception as exc:
+            ok, error = False, str(exc)
         _log_notification(
             db,
             user_id=user_id,

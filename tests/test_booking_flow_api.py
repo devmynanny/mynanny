@@ -438,6 +438,37 @@ def test_accept_happy_path_charges_and_creates_booking(db):
     assert len(blocked) >= 1
 
 
+def test_accept_stays_successful_when_post_commit_notification_fails(db, monkeypatch):
+    parent = _seed_parent(db)
+    nanny = _seed_nanny(db)
+    nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first()
+    start, end = _future_window()
+    _add_availability(db, nanny.id, start, end)
+    request_id = _create_request(db, parent, nanny, start, end)
+
+    def failing_notification(*args, **kwargs):
+        raise RuntimeError("simulated WhatsApp failure")
+
+    monkeypatch.setattr(public_router, "notify", failing_notification)
+
+    response = client.post(
+        f"/nannies/me/booking-requests/{request_id}/accept",
+        headers=_auth(nanny_user),
+    )
+
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    request_row = db.query(models.BookingRequest).filter(
+        models.BookingRequest.id == request_id
+    ).first()
+    assert request_row.status == "approved"
+    assert request_row.nanny_response_status == "accepted"
+    assert request_row.payment_status == "paid"
+    assert db.query(models.Booking).filter(
+        models.Booking.booking_request_id == request_id
+    ).count() == 1
+
+
 def test_accept_is_idempotent_when_already_paid(db):
     parent = _seed_parent(db)
     nanny = _seed_nanny(db)

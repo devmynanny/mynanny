@@ -2,6 +2,7 @@
 import math
 import os
 import json
+import logging
 import hmac
 import hashlib
 import base64
@@ -46,6 +47,17 @@ from app.services.storage import store_bytes, store_file
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _run_post_commit_action(db: Session, label: str, action) -> None:
+    """Run a non-critical side effect without undoing committed business data."""
+    try:
+        action()
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Post-commit action failed: %s", label)
 
 
 def _store_uploaded_file(file: UploadFile, key: str) -> str:
@@ -6003,81 +6015,121 @@ def accept_nanny_booking_request(
     )
     required_count = _booking_group_required_count(group_requests)
     group_filled = accepted_count >= required_count
-    notify(
-        db,
-        parent_user.id,
-        "broadcast_filled" if group_filled else "broadcast_position_filled",
-        (
-            f"All {required_count} nanny position(s) for your booking are filled."
-            if group_filled
-            else f"{accepted_count} of {required_count} nanny position(s) for your booking are now filled. The broadcast remains open."
-        ),
-        reference_id=int(req.id),
-        action_url="/bookings",
-    )
+    sibling_notification_targets = []
     if group_filled:
         for item in group_requests:
-            if item.status != "rejected" or item.admin_reason != "filled":
-                continue
-            sibling_nanny = db.query(models.Nanny).filter(models.Nanny.id == item.nanny_id).first()
-            notify(
+            if item.status == "rejected" and item.admin_reason == "filled":
+                sibling_nanny = db.query(models.Nanny).filter(models.Nanny.id == item.nanny_id).first()
+                sibling_notification_targets.append((getattr(sibling_nanny, "user_id", None), int(item.id)))
+
+    # Paystack has already charged the parent. Persist the booking before any
+    # optional messaging, calendar, email, or audit work so those integrations
+    # can never roll back a paid booking or make an acceptance look unsuccessful.
+    db.commit()
+    booking_ids = [booking.id for booking in created_bookings]
+    primary_booking_id = booking_ids[0] if booking_ids else None
+    booking_request_id = int(req.id)
+    parent_user_id = int(req.parent_user_id)
+    payment_status = getattr(req, "payment_status", None)
+    paystack_reference = getattr(req, "paystack_reference", None)
+    final_status = req.status
+
+    _run_post_commit_action(
+        db,
+        "notify parent that broadcast position was filled",
+        lambda: notify(
+            db,
+            parent_user.id,
+            "broadcast_filled" if group_filled else "broadcast_position_filled",
+            (
+                f"All {required_count} nanny position(s) for your booking are filled."
+                if group_filled
+                else f"{accepted_count} of {required_count} nanny position(s) for your booking are now filled. The broadcast remains open."
+            ),
+            reference_id=booking_request_id,
+            action_url="/bookings",
+        ),
+    )
+    for sibling_user_id, sibling_request_id in sibling_notification_targets:
+        _run_post_commit_action(
+            db,
+            "notify nanny that broadcast closed",
+            lambda user_id=sibling_user_id, ref_id=sibling_request_id: notify(
                 db,
-                getattr(sibling_nanny, "user_id", None),
+                user_id,
                 "broadcast_closed_nanny",
                 "This booking broadcast has closed because all required nanny positions were filled.",
-                reference_id=int(item.id),
+                reference_id=ref_id,
                 action_url="/requests",
-            )
+            ),
+        )
 
-    db.commit()
-    _sync_confirmed_booking_request_to_google_calendar(db, req)
-    send_notification(
+    _run_post_commit_action(
         db,
-        req.parent_user_id,
-        "payment_success",
-        "email",
-        f"Your booking has been confirmed and your card was charged R{(amount_cents/100):.2f}.",
-        reference_id=int(req.id),
+        "sync accepted booking to Google Calendar",
+        lambda: _sync_confirmed_booking_request_to_google_calendar(db, req),
     )
-    send_notification(
+    _run_post_commit_action(
         db,
-        user.id,
-        "booking_confirmed",
-        "email",
-        "Your booking has been confirmed. Please check your bookings for the details.",
-        reference_id=int(req.id),
+        "send parent payment confirmation",
+        lambda: send_notification(
+            db,
+            parent_user_id,
+            "payment_success",
+            "email",
+            f"Your booking has been confirmed and your card was charged R{(amount_cents/100):.2f}.",
+            reference_id=booking_request_id,
+        ),
     )
-    db.commit()
-    log_booking_request_status_change(
+    _run_post_commit_action(
         db,
-        actor_user=user,
-        target_user_id=req.parent_user_id,
-        booking_request_id=req.id,
-        before_status=before_status,
-        after_status=req.status,
-        request=request,
+        "send nanny booking confirmation",
+        lambda: send_notification(
+            db,
+            user.id,
+            "booking_confirmed",
+            "email",
+            "Your booking has been confirmed. Please check your bookings for the details.",
+            reference_id=booking_request_id,
+        ),
     )
-    log_audit(
+
+    def record_acceptance_audit() -> None:
+        log_booking_request_status_change(
+            db,
+            actor_user=user,
+            target_user_id=parent_user_id,
+            booking_request_id=booking_request_id,
+            before_status=before_status,
+            after_status=final_status,
+            request=request,
+        )
+        log_audit(
+            db,
+            actor_user=user,
+            target_user_id=parent_user_id,
+            entity="booking_requests",
+            entity_id=booking_request_id,
+            action="nanny_response",
+            before_obj={"status": before_status, "nanny_response_status": before_response},
+            after_obj={"status": final_status, "nanny_response_status": "accepted"},
+            changed_fields=["nanny_response_status", "nanny_responded_at"],
+            request=request,
+        )
+
+    _run_post_commit_action(db, "record nanny acceptance audit", record_acceptance_audit)
+    _run_post_commit_action(
         db,
-        actor_user=user,
-        target_user_id=req.parent_user_id,
-        entity="booking_requests",
-        entity_id=req.id,
-        action="nanny_response",
-        before_obj={"status": before_status, "nanny_response_status": before_response},
-        after_obj={"status": req.status, "nanny_response_status": "accepted"},
-        changed_fields=["nanny_response_status", "nanny_responded_at"],
-        request=request,
+        "send administrative nanny-response notification",
+        lambda: notify_booking_nanny_response(req, user, "accepted"),
     )
-    notify_booking_nanny_response(req, user, "accepted")
-    primary_booking_id = created_bookings[0].id if created_bookings else None
     return {
         "ok": True,
         "booking_id": primary_booking_id,
-        "booking_ids": [b.id for b in created_bookings],
-        "booking_request_id": req.id,
-        "payment_status": getattr(req, "payment_status", None),
-        "paystack_reference": getattr(req, "paystack_reference", None),
+        "booking_ids": booking_ids,
+        "booking_request_id": booking_request_id,
+        "payment_status": payment_status,
+        "paystack_reference": paystack_reference,
     }
 
 
@@ -8789,14 +8841,17 @@ def create_booking_request_bulk(
         )
     db.commit()
     for nanny_user_id, request_id in created_nanny_users:
-        notify(
+        _run_post_commit_action(
             db,
-            nanny_user_id,
-            "new_booking_request",
-            "A family has sent you a new booking request. Open Requests to review the dates, location and earnings.",
-            reference_id=request_id,
+            "notify nanny of new booking request",
+            lambda user_id=nanny_user_id, ref_id=request_id: notify(
+                db,
+                user_id,
+                "new_booking_request",
+                "A family has sent you a new booking request. Open Requests to review the dates, location and earnings.",
+                reference_id=ref_id,
+            ),
         )
-    db.commit()
     return {"ok": True, "group_id": group_id, "created_ids": created, "errors": errors}
 
 
