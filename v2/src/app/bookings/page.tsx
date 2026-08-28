@@ -370,7 +370,7 @@ export default function Bookings() {
                         type="time"
                         className="field"
                         value={startTime}
-                        onChange={(e) => setStartTime(e.target.value)}
+                        onInput={(e) => setStartTime(e.currentTarget.value)}
                       />
                     </label>
                     <label>
@@ -382,7 +382,7 @@ export default function Bookings() {
                         type="time"
                         className="field"
                         value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
+                        onInput={(e) => setEndTime(e.currentTarget.value)}
                       />
                     </label>
                   </div>
