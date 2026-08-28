@@ -10972,6 +10972,33 @@ def admin_list_users(
     query = db.query(models.User)
     if role:
         query = query.filter(models.User.role == role)
+
+    search_term = (q or "").strip().lower()
+    if search_term:
+        basic_match = f"%{search_term}%"
+        query = query.filter(
+            or_(
+                func.lower(models.User.name).like(basic_match),
+                func.lower(models.User.email).like(basic_match),
+                func.lower(func.coalesce(models.User.phone, "")).like(basic_match),
+                func.lower(func.coalesce(models.User.phone_alt, "")).like(basic_match),
+                models.User.id.in_(
+                    db.query(models.ParentProfile.user_id).filter(
+                        func.lower(func.coalesce(models.ParentProfile.phone, "")).like(basic_match)
+                    )
+                ),
+                models.User.id.in_(
+                    db.query(models.Nanny.user_id)
+                    .join(models.NannyProfile, models.NannyProfile.nanny_id == models.Nanny.id)
+                    .filter(
+                        or_(
+                            func.lower(func.coalesce(models.NannyProfile.sa_id_number, "")).like(basic_match),
+                            func.lower(func.coalesce(models.NannyProfile.passport_number, "")).like(basic_match),
+                        )
+                    )
+                ),
+            )
+        )
     users = query.order_by(models.User.id.asc()).all()
 
     user_ids = [u.id for u in users]
@@ -11021,31 +11048,31 @@ def admin_list_users(
             nanny_approved_map[nanny.user_id] = bool(getattr(nanny, "approved", False)) or bool(getattr(profile, "is_approved", 0) if profile else 0)
             nanny_video_map[nanny.user_id] = bool(getattr(nanny, "video_screening_complete", False))
 
-    search_term = (q or "").strip().lower()
-    if search_term:
-        def _matches_search(user):
-            parent_profile = parent_profiles.get(user.id)
-            nanny_profile = nanny_profiles.get(user.id)
-            haystack = [
-                getattr(user, "name", None),
-                getattr(user, "email", None),
-                getattr(user, "phone", None),
-                getattr(user, "phone_alt", None),
-                getattr(parent_profile, "phone", None) if parent_profile else None,
-                getattr(nanny_profile, "sa_id_number", None) if nanny_profile else None,
-                getattr(nanny_profile, "passport_number", None) if nanny_profile else None,
-            ]
-            return any(search_term in str(value or "").strip().lower() for value in haystack if value)
-
-        users = [u for u in users if _matches_search(u)]
-
     rating_map = {}
-    for nanny_id in set(nanny_ids.values()):
-        try:
-            avg, cnt = get_rating_12m_for_nanny(db, nanny_id)
-            rating_map[nanny_id] = {"rating": avg, "review_count": cnt or 0}
-        except Exception:
-            rating_map[nanny_id] = {"rating": None, "review_count": 0}
+    listed_nanny_ids = set(nanny_ids.values())
+    if listed_nanny_ids:
+        window_start = utc_now() - timedelta(days=365)
+        rating_rows = (
+            db.query(
+                models.Review.nanny_id,
+                func.avg(models.Review.stars),
+                func.count(models.Review.id),
+            )
+            .filter(
+                models.Review.nanny_id.in_(listed_nanny_ids),
+                models.Review.approved == True,
+                models.Review.created_at >= window_start,
+            )
+            .group_by(models.Review.nanny_id)
+            .all()
+        )
+        rating_map = {
+            nanny_id: {
+                "rating": float(avg) if avg is not None else None,
+                "review_count": int(count or 0),
+            }
+            for nanny_id, avg, count in rating_rows
+        }
 
     def location_for_user(u):
         if u.role == "parent":
