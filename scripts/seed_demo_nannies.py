@@ -1,8 +1,8 @@
 """
-Seed demo nannies near Louwlardia, Centurion for end-to-end testing.
+Seed clearly labelled demo nannies near Louwlardia, Centurion for testing.
 
 Creates fully search-eligible nannies (approved, documents complete, located
-near Louwlardia) with availability for the next 7 days, 06:00-20:00 SA time.
+near Louwlardia) with availability for the next 30 days, 06:00-22:00 SA time.
 
 Usage:
     # Against production (get External Database URL from Render dashboard):
@@ -11,9 +11,10 @@ Usage:
     # Against local SQLite (default):
     python scripts/seed_demo_nannies.py
 
-Idempotent: skips any demo nanny whose email already exists.
+Idempotent: creates or refreshes only the three fixed @mynanny.test accounts.
 Cleanup: python scripts/seed_demo_nannies.py --delete
 """
+import json
 import os
 import sys
 from datetime import date, datetime, time, timedelta
@@ -26,6 +27,8 @@ from app import models  # noqa: E402
 from app.security import hash_password  # noqa: E402
 
 DEMO_PASSWORD = "Demo1234!"
+DEMO_PROFILE_PHOTO_URL = "https://mynanny-v2.onrender.com/hero-nanny-feeding-v2.png"
+DEMO_DOCUMENT_URL = "https://mynanny-v2.onrender.com/logo.jpg"
 
 # Louwlardia, Centurion (approx). Small offsets so distances differ.
 DEMO_NANNIES = [
@@ -76,9 +79,9 @@ DEMO_NANNIES = [
     },
 ]
 
-AVAILABILITY_DAYS = 7
+AVAILABILITY_DAYS = 30
 AVAIL_START = time(6, 0)   # SA local
-AVAIL_END = time(20, 0)    # SA local
+AVAIL_END = time(22, 0)    # SA local
 SA_UTC_OFFSET = timedelta(hours=2)
 
 
@@ -87,62 +90,80 @@ def _iso_z(dt: datetime) -> str:
 
 
 def seed(db):
-    created = []
-    for spec in DEMO_NANNIES:
-        existing = db.query(models.User).filter(models.User.email == spec["email"]).first()
-        if existing:
-            print(f"skip: {spec['email']} already exists (user id {existing.id})")
-            continue
+    seeded = []
+    for index, spec in enumerate(DEMO_NANNIES, start=1):
+        user = db.query(models.User).filter(models.User.email == spec["email"]).first()
+        action = "refreshed"
+        if not user:
+            action = "created"
+            user = models.User(email=spec["email"], password_hash=hash_password(DEMO_PASSWORD))
+            db.add(user)
 
-        user = models.User(
-            name=spec["name"],
-            role="nanny",
-            email=spec["email"],
-            password_hash=hash_password(DEMO_PASSWORD),
-            is_admin=False,
-            is_active=True,
-            phone=spec["phone"],
-            nickname=spec["nickname"],
-            last_initial=spec["last_initial"],
-        )
-        db.add(user)
+        user.name = spec["name"]
+        user.role = "nanny"
+        user.is_admin = False
+        user.is_active = True
+        user.phone = spec["phone"]
+        user.nickname = spec["nickname"]
+        user.last_initial = spec["last_initial"]
+        user.profile_photo_url = DEMO_PROFILE_PHOTO_URL
         db.flush()
 
-        nanny = models.Nanny(
-            user_id=user.id,
-            approved=True,
-            is_suspended=False,
-            profile_complete=True,
-            availability_complete=True,
-            banking_complete=True,
-        )
-        db.add(nanny)
+        nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
+        if not nanny:
+            nanny = models.Nanny(user_id=user.id)
+            db.add(nanny)
+        nanny.approved = True
+        nanny.is_suspended = False
+        nanny.profile_complete = True
+        nanny.availability_complete = True
+        nanny.banking_complete = True
+        nanny.video_screening_complete = True
+        nanny.video_screening_json = json.dumps([])
+        nanny.video_screening_submitted_at = datetime.utcnow()
         db.flush()
 
-        profile = models.NannyProfile(
-            nanny_id=nanny.id,
-            bio=spec["bio"],
-            date_of_birth=spec["dob"],
-            nationality="South African",
-            gender="Female",
-            sa_id_number=f"920314{user.id:07d}",
-            sa_id_document_url="/static/uploads/id_demo_placeholder.pdf",
-            police_clearance_status="yes",
-            has_drivers_license=spec["has_drivers_license"],
-            has_own_car=spec["has_own_car"],
-            dog_preference=spec["dog_preference"],
-            job_type="both",
-            lat=spec["lat"],
-            lng=spec["lng"],
-            is_approved=1,
-            application_status="approved",
-            approved_at=datetime.utcnow().isoformat(),
-            formatted_address="Louwlardia, Centurion, Gauteng, South Africa",
-            suburb="Louwlardia",
-            city="Centurion",
-            province="Gauteng",
-            country="South Africa",
-        )
+        profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
+        if not profile:
+            profile = models.NannyProfile(nanny_id=nanny.id)
+            db.add(profile)
+
+        approvals = {
+            "sa_id_document_url": {"approved": True, "demo": True},
+            "police_clearance_document_url": {"approved": True, "demo": True},
+        }
+        if spec["has_drivers_license"]:
+            approvals["drivers_license_document_url"] = {"approved": True, "demo": True}
+
+        profile.bio = f"TEST PROFILE: {spec['bio']}"
+        profile.date_of_birth = spec["dob"]
+        profile.nationality = "South African"
+        profile.gender = "Female"
+        profile.ethnicity = "Black"
+        profile.sa_id_number = f"{spec['dob']:%y%m%d}{index:07d}"
+        profile.sa_id_document_url = DEMO_DOCUMENT_URL
+        profile.police_clearance_status = "yes"
+        profile.police_clearance_document_url = DEMO_DOCUMENT_URL
+        profile.document_approvals_json = json.dumps(approvals)
+        profile.has_drivers_license = spec["has_drivers_license"]
+        profile.drivers_license_document_url = DEMO_DOCUMENT_URL if spec["has_drivers_license"] else None
+        profile.has_own_car = spec["has_own_car"]
+        profile.has_own_kids = False
+        profile.medical_conditions = "None"
+        profile.dog_preference = spec["dog_preference"]
+        profile.job_type = "both"
+        profile.current_job_availability = "piece_and_permanent"
+        profile.my_nanny_training_status = "yes"
+        profile.lat = spec["lat"]
+        profile.lng = spec["lng"]
+        profile.is_approved = 1
+        profile.application_status = "approved"
+        profile.approved_at = datetime.utcnow().isoformat()
+        profile.formatted_address = "Louwlardia, Centurion, Gauteng, South Africa"
+        profile.suburb = "Louwlardia"
+        profile.city = "Centurion"
+        profile.province = "Gauteng"
+        profile.country = "South Africa"
         langs = db.query(models.Language).filter(models.Language.name.in_(spec["languages"])).all()
         quals = db.query(models.Qualification).filter(models.Qualification.name.in_(spec["qualifications"])).all()
         profile.languages = langs
@@ -150,7 +171,12 @@ def seed(db):
         db.add(profile)
         db.flush()
 
-        start_day = date.today() + timedelta(days=1)
+        db.query(models.NannyAvailability).filter(
+            models.NannyAvailability.nanny_id == nanny.id,
+            models.NannyAvailability.notes == "demo seed",
+        ).delete(synchronize_session=False)
+
+        start_day = date.today()
         for offset in range(AVAILABILITY_DAYS):
             d = start_day + timedelta(days=offset)
             local_start = datetime.combine(d, AVAIL_START)
@@ -168,10 +194,10 @@ def seed(db):
                 notes="demo seed",
             ))
 
-        created.append((spec["email"], user.id, nanny.id))
+        seeded.append((action, spec["email"], user.id, nanny.id))
 
     db.commit()
-    return created
+    return seeded
 
 
 def delete(db):
@@ -201,12 +227,12 @@ def main():
         if "--delete" in sys.argv:
             delete(db)
             return
-        created = seed(db)
-        if created:
-            print(f"\ncreated {len(created)} demo nannies (password for all: {DEMO_PASSWORD}):")
-            for email, user_id, nanny_id in created:
-                print(f"  {email}  user_id={user_id} nanny_id={nanny_id}")
-            print("\navailability: next 7 days, 06:00-20:00 SA time, near Louwlardia, Centurion")
+        seeded = seed(db)
+        if seeded:
+            print(f"\nseeded {len(seeded)} demo nannies (password for all: {DEMO_PASSWORD}):")
+            for action, email, user_id, nanny_id in seeded:
+                print(f"  {action}: {email}  user_id={user_id} nanny_id={nanny_id}")
+            print("\navailability: today plus 29 days, 06:00-22:00 SA time, near Louwlardia, Centurion")
             print("cleanup before real launch: python scripts/seed_demo_nannies.py --delete")
     finally:
         db.close()
