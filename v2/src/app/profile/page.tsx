@@ -391,7 +391,7 @@ function ParentProfile() {
         <p className="mb-5 text-sm text-[var(--muted)]">
           Your location is used for distance-based nanny matching. Exact details are only shared when needed for a booking.
         </p>
-        <div className="mb-5 grid gap-4 rounded-2xl bg-[var(--blue-pale)] p-5 sm:grid-cols-[1fr_180px_auto] sm:items-end">
+        <div className="mb-5 grid gap-4 rounded-2xl bg-[var(--blue-pale)] p-5 sm:grid-cols-[minmax(0,1fr)_minmax(180px,240px)_auto] sm:items-start">
           <GoogleAddressInput
             label="Add a booking address"
             value={addressSearch}
@@ -411,7 +411,7 @@ function ParentProfile() {
             onChange={setAddressLabel}
           />
           <button
-            className="btn-primary"
+            className="btn-primary w-full sm:mt-7 sm:w-auto"
             disabled={!selectedAddress || savingAddress}
             onClick={() => void saveSelectedAddress()}
           >

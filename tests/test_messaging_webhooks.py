@@ -38,6 +38,16 @@ def _signed_whatsapp_post(params: dict, auth_token: str = TWILIO_AUTH_TOKEN):
     )
 
 
+def _signed_whatsapp_status_post(params: dict, auth_token: str = TWILIO_AUTH_TOKEN):
+    url = "http://testserver/whatsapp/status"
+    signature = _twilio_signature(url, params, auth_token)
+    return client.post(
+        "/whatsapp/status",
+        data=params,
+        headers={"x-twilio-signature": signature},
+    )
+
+
 def test_whatsapp_webhook_rejects_missing_signature(monkeypatch):
     monkeypatch.setenv("TWILIO_AUTH_TOKEN", TWILIO_AUTH_TOKEN)
     res = client.post("/whatsapp/webhook", data={"From": "whatsapp:+27821112222", "Body": "hi"})
@@ -50,6 +60,40 @@ def test_whatsapp_webhook_rejects_bad_signature(monkeypatch):
         "/whatsapp/webhook",
         data={"From": "whatsapp:+27821112222", "Body": "hi"},
         headers={"x-twilio-signature": "deadbeef" * 5},
+    )
+    assert res.status_code == 400
+
+
+def test_whatsapp_status_callback_is_verified_and_reconciled(monkeypatch):
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", TWILIO_AUTH_TOKEN)
+    captured = {}
+
+    def fake_reconcile(db, message_sid, status, error):
+        captured.update(message_sid=message_sid, status=status, error=error)
+        return True
+
+    monkeypatch.setattr("app.routers.public.record_twilio_delivery_status", fake_reconcile)
+    res = _signed_whatsapp_status_post({
+        "MessageSid": "SM_status_001",
+        "MessageStatus": "undelivered",
+        "ErrorCode": "63112",
+        "ErrorMessage": "Meta disabled the WABA",
+    })
+
+    assert res.status_code == 204
+    assert captured == {
+        "message_sid": "SM_status_001",
+        "status": "undelivered",
+        "error": "63112: Meta disabled the WABA",
+    }
+
+
+def test_whatsapp_status_callback_rejects_bad_signature(monkeypatch):
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", TWILIO_AUTH_TOKEN)
+    res = client.post(
+        "/whatsapp/status",
+        data={"MessageSid": "SM_status_002", "MessageStatus": "failed"},
+        headers={"x-twilio-signature": "invalid"},
     )
     assert res.status_code == 400
 

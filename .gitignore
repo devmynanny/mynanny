@@ -8,3 +8,4 @@ __pycache__/
 .aws-backups/
 app/static/uploads/**
 app/static/v2/
+v2/out/

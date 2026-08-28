@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from pathlib import Path
 
 import requests
@@ -49,7 +50,44 @@ def main() -> int:
     parser.add_argument("--env-file", default=".env")
     parser.add_argument("--submit", action="store_true", help="Request WhatsApp Utility approval")
     parser.add_argument("--status", action="store_true", help="Only report current WhatsApp approval states")
+    parser.add_argument(
+        "--only",
+        choices=sorted(WHATSAPP_UTILITY_TEMPLATES),
+        help="Create, submit, or inspect one event template only",
+    )
+    parser.add_argument(
+        "--bulk-new",
+        action="store_true",
+        help="Allow a new-name suffix to be applied to multiple templates",
+    )
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        choices=sorted(WHATSAPP_UTILITY_TEMPLATES),
+        default=[],
+        help="Exclude an event template from a bulk operation; may be repeated",
+    )
+    parser.add_argument(
+        "--name-suffix",
+        help="Create a separate test template by appending a lowercase suffix to its name",
+    )
+    parser.add_argument(
+        "--no-env-update",
+        action="store_true",
+        help="Do not replace the application's configured Content SID",
+    )
     args = parser.parse_args()
+
+    if args.only and args.bulk_new:
+        parser.error("--only and --bulk-new cannot be used together")
+    if args.exclude and not args.bulk_new:
+        parser.error("--exclude requires --bulk-new")
+    if args.name_suffix and not (args.only or args.bulk_new):
+        parser.error("--name-suffix requires --only or --bulk-new")
+    if args.bulk_new and not args.name_suffix:
+        parser.error("--bulk-new requires --name-suffix")
+    if args.name_suffix and not re.fullmatch(r"[a-z0-9_]+", args.name_suffix):
+        parser.error("--name-suffix must contain only lowercase letters, numbers, and underscores")
 
     env_path = Path(args.env_file).resolve()
     load_dotenv(env_path)
@@ -58,11 +96,22 @@ def main() -> int:
     if not sid or not token:
         raise SystemExit("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required")
 
+    templates = WHATSAPP_UTILITY_TEMPLATES.items()
+    if args.only:
+        templates = [(args.only, WHATSAPP_UTILITY_TEMPLATES[args.only])]
+    elif args.bulk_new:
+        excluded = set(args.exclude)
+        templates = [item for item in templates if item[0] not in excluded]
+
     existing = _existing_templates(sid, token)
     if args.status:
         counts: dict[str, int] = {}
-        for event_type, template in WHATSAPP_UTILITY_TEMPLATES.items():
-            content_sid = (os.getenv(content_sid_env_key(event_type)) or existing.get(template["name"]) or "").strip()
+        for event_type, template in templates:
+            template_name = template["name"]
+            if args.name_suffix:
+                template_name = f"{template_name}_{args.name_suffix}"
+            configured_sid = "" if args.name_suffix else os.getenv(content_sid_env_key(event_type))
+            content_sid = (configured_sid or existing.get(template_name) or "").strip()
             if not content_sid:
                 status = "missing"
             else:
@@ -79,8 +128,11 @@ def main() -> int:
 
     env_values: dict[str, str] = {}
     failures: list[str] = []
-    for event_type, template in WHATSAPP_UTILITY_TEMPLATES.items():
-        content_sid = existing.get(template["name"])
+    for event_type, template in templates:
+        template_name = template["name"]
+        if args.name_suffix:
+            template_name = f"{template_name}_{args.name_suffix}"
+        content_sid = existing.get(template_name)
         if not content_sid:
             created = _request(
                 "POST",
@@ -88,7 +140,7 @@ def main() -> int:
                 sid,
                 token,
                 json={
-                    "friendly_name": template["name"],
+                    "friendly_name": template_name,
                     "language": "en",
                     "variables": {},
                     "types": {"twilio/text": {"body": template["body"]}},
@@ -107,7 +159,7 @@ def main() -> int:
                     f"https://content.twilio.com/v1/Content/{content_sid}/ApprovalRequests/whatsapp",
                     sid,
                     token,
-                    json={"name": template["name"], "category": "UTILITY"},
+                    json={"name": template_name, "category": "UTILITY"},
                 )
                 print(f"approval {event_type}: {approval.get('status', 'submitted')}")
             except RuntimeError as exc:
@@ -116,9 +168,12 @@ def main() -> int:
                 else:
                     failures.append(f"{event_type}: {exc}")
 
-    env_values["TWILIO_REQUIRE_TEMPLATES"] = "true"
-    _update_env(env_path, env_values)
-    print(f"saved {len(env_values) - 1} Content SIDs to {env_path}")
+    if not args.no_env_update:
+        env_values["TWILIO_REQUIRE_TEMPLATES"] = "true"
+        _update_env(env_path, env_values)
+        print(f"saved {len(env_values) - 1} Content SIDs to {env_path}")
+    else:
+        print("application Content SID configuration left unchanged")
     if failures:
         print("Approval requests requiring attention:")
         for failure in failures:

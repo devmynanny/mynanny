@@ -33,7 +33,7 @@ scheduler = AsyncIOScheduler()
 # Unauthenticated inbound webhooks (external services can't do cookie/CSRF
 # auth) - exempted from the CSRF double-submit check below. Each of these
 # routes is responsible for its own signature/secret verification.
-UNAUTHENTICATED_WEBHOOK_PATHS = {"/paystack/webhook", "/whatsapp/webhook"}
+UNAUTHENTICATED_WEBHOOK_PATHS = {"/paystack/webhook", "/whatsapp/webhook", "/whatsapp/status"}
 UNAUTHENTICATED_WEBHOOK_PATH_PREFIXES = ("/telegram/webhook/",)
 
 

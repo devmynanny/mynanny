@@ -1223,6 +1223,9 @@ def ensure_notification_log_schema() -> None:
             existing = {row[1] for row in cols}
             if "message" not in existing:
                 conn.execute(text("ALTER TABLE notification_log ADD COLUMN message TEXT"))
+            if "provider_message_id" not in existing:
+                conn.execute(text("ALTER TABLE notification_log ADD COLUMN provider_message_id TEXT"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_log_provider_message_id ON notification_log (provider_message_id)"))
             return
         conn.execute(text("""
             CREATE TABLE notification_log (
@@ -1234,10 +1237,12 @@ def ensure_notification_log_schema() -> None:
               error_message TEXT,
               reference_id INTEGER,
               message TEXT,
+              provider_message_id TEXT,
               created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY(user_id) REFERENCES users (id)
             )
         """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_log_provider_message_id ON notification_log (provider_message_id)"))
 
 
 def ensure_in_app_notifications_schema() -> None:
@@ -1371,8 +1376,24 @@ def ensure_bootstrap_admin() -> None:
 
         conn.execute(
             text("""
-                INSERT INTO users (name, role, email, password_hash, is_admin, is_active)
-                VALUES (:name, 'admin', :email, :password_hash, :is_admin, :is_active)
+                INSERT INTO users (
+                  name,
+                  role,
+                  email,
+                  password_hash,
+                  is_admin,
+                  is_active,
+                  preferred_messaging_channel
+                )
+                VALUES (
+                  :name,
+                  'admin',
+                  :email,
+                  :password_hash,
+                  :is_admin,
+                  :is_active,
+                  'whatsapp'
+                )
             """),
             {
                 "name": email.split("@", 1)[0],

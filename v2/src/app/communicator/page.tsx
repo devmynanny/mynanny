@@ -1,7 +1,7 @@
 "use client";
 
 import { AuthenticatedPage } from "@/components/authenticated-page";
-import { apiJson } from "@/lib/api";
+import { apiJson, apiMediaUrl } from "@/lib/api";
 import {
   LoaderCircle,
   MessageCircle,
@@ -513,9 +513,7 @@ function MessageAttachment({
 }: {
   attachment: { url: string; content_type: string; size?: number };
 }) {
-  const src = attachment.url.startsWith("/media/")
-    ? `/api${attachment.url}`
-    : attachment.url;
+  const src = apiMediaUrl(attachment.url);
   if (attachment.content_type.startsWith("image/")) {
     return (
       <a href={src} target="_blank" rel="noreferrer" className="block">

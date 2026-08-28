@@ -14,6 +14,9 @@ class _Response:
     status_code = 201
     text = ""
 
+    def json(self):
+        return {"sid": "SMtest123"}
+
 
 def _twilio_env(monkeypatch):
     monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACtest")
@@ -39,10 +42,27 @@ def test_whatsapp_uses_content_sid_for_configured_template(monkeypatch):
     )
 
     assert ok is True
-    assert error == ""
+    assert error == "SMtest123"
     assert captured["data"]["ContentSid"] == "HXapproved"
     assert "Body" not in captured["data"]
     assert captured["data"]["To"] == "whatsapp:+27762027746"
+
+
+def test_whatsapp_registers_delivery_status_callback(monkeypatch):
+    _twilio_env(monkeypatch)
+    monkeypatch.setenv("TWILIO_STATUS_CALLBACK_URL", "https://api.example.com/whatsapp/status")
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured.update(kwargs)
+        return _Response()
+
+    monkeypatch.setattr(messaging.requests, "post", fake_post)
+    ok, provider_id = messaging.send_whatsapp_message("0762027746", "Hello")
+
+    assert ok is True
+    assert provider_id == "SMtest123"
+    assert captured["data"]["StatusCallback"] == "https://api.example.com/whatsapp/status"
 
 
 def test_production_mode_rejects_missing_template(monkeypatch):

@@ -54,6 +54,9 @@ def send_whatsapp_message(to_number: str, body: str, template_name: Optional[str
 
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
     payload = {"From": from_number, "To": to_number}
+    status_callback = (os.getenv("TWILIO_STATUS_CALLBACK_URL") or "").strip()
+    if status_callback:
+        payload["StatusCallback"] = status_callback
     content_sid = (os.getenv(content_sid_env_key(template_name)) or "").strip() if template_name else ""
     if content_sid:
         payload["ContentSid"] = content_sid
@@ -66,7 +69,10 @@ def send_whatsapp_message(to_number: str, body: str, template_name: Optional[str
     try:
         response = requests.post(url, data=payload, auth=(sid, token), timeout=20)
         if 200 <= response.status_code < 300:
-            return True, ""
+            try:
+                return True, str(response.json().get("sid") or "")
+            except (ValueError, AttributeError):
+                return True, ""
         return False, response.text or f"Twilio API error (status {response.status_code})"
     except requests.RequestException as exc:
         return False, str(exc)
@@ -86,6 +92,9 @@ def send_whatsapp_media(to_number: str, media_url: str, body: str = "") -> tuple
     if not to_number.startswith("whatsapp:"):
         to_number = f"whatsapp:{to_number}"
     payload = {"From": from_number, "To": to_number, "MediaUrl": media_url}
+    status_callback = (os.getenv("TWILIO_STATUS_CALLBACK_URL") or "").strip()
+    if status_callback:
+        payload["StatusCallback"] = status_callback
     if body:
         payload["Body"] = body
     try:

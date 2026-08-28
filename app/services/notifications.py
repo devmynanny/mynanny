@@ -29,7 +29,7 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     "payment_failed": {"channels": ("chat", "email"), "in_app": True},
     "refund_processed": {"channels": ("chat", "email")},
     # Booking lifecycle.
-    "booking_confirmed": {"channels": ("chat", "email")},
+    "booking_confirmed": {"channels": ("chat", "email"), "in_app": True},
     "booking_cancelled": {"channels": ("chat", "email"), "in_app": True},
     "nanny_accepted": {"channels": ("chat", "email")},
     "nanny_checked_in": {"channels": ("chat", "email")},
@@ -97,6 +97,7 @@ def _log_notification(
     error_message: Optional[str] = None,
     reference_id: Optional[int] = None,
     message: Optional[str] = None,
+    provider_message_id: Optional[str] = None,
 ) -> None:
     try:
         if not _notification_log_exists(db):
@@ -107,8 +108,8 @@ def _log_notification(
             db.execute(
                 text(
                     """
-                    INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, created_at)
-                    VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :created_at)
+                    INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, provider_message_id, created_at)
+                    VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :provider_message_id, :created_at)
                     """
                 ),
                 {
@@ -119,6 +120,7 @@ def _log_notification(
                     "error_message": error_message,
                     "reference_id": reference_id,
                     "message": message,
+                    "provider_message_id": provider_message_id,
                     "created_at": utc_now(),
                 },
             )
@@ -163,18 +165,19 @@ def send_notification(
             )
             return False
         try:
-            ok, error = messaging.send_whatsapp_message(phone, message, template_name=template_name)
+            ok, provider_result = messaging.send_whatsapp_message(phone, message, template_name=template_name)
         except Exception as exc:
-            ok, error = False, str(exc)
+            ok, provider_result = False, str(exc)
         _log_notification(
             db,
             user_id=user_id,
             event_type=event_type,
             channel=channel,
             status="sent" if ok else "failed",
-            error_message=None if ok else error[:500],
+            error_message=None if ok else provider_result[:500],
             reference_id=reference_id,
             message=message,
+            provider_message_id=provider_result if ok else None,
         )
         return ok
 
@@ -346,6 +349,68 @@ def notify(
     return delivered
 
 
+def record_twilio_delivery_status(
+    db: Session,
+    provider_message_id: str,
+    provider_status: str,
+    error_message: Optional[str] = None,
+) -> bool:
+    """Reconcile Twilio's asynchronous delivery result.
+
+    Twilio can accept a message and only later report that Meta rejected it.
+    On the first terminal failure, update the original WhatsApp attempt and
+    deliver the policy's email fallback. Repeated callbacks are idempotent.
+    """
+    normalized_status = (provider_status or "").strip().lower()
+    if not provider_message_id or normalized_status not in {
+        "accepted", "queued", "sending", "sent", "delivered", "read", "failed", "undelivered"
+    }:
+        return False
+
+    row = (
+        db.query(models.NotificationLog)
+        .filter(
+            models.NotificationLog.channel == "whatsapp",
+            models.NotificationLog.provider_message_id == provider_message_id,
+        )
+        .order_by(models.NotificationLog.id.desc())
+        .first()
+    )
+    if not row:
+        return False
+
+    is_failure = normalized_status in {"failed", "undelivered"}
+    already_failed = row.status == "failed"
+    row.status = "failed" if is_failure else normalized_status
+    row.error_message = (error_message or "")[:500] or None
+
+    if is_failure and not already_failed:
+        policy = NOTIFICATION_POLICY.get(row.event_type, DEFAULT_POLICY)
+        if "email" in policy.get("channels", DEFAULT_POLICY["channels"]):
+            email_already_sent = (
+                db.query(models.NotificationLog.id)
+                .filter(
+                    models.NotificationLog.user_id == row.user_id,
+                    models.NotificationLog.event_type == row.event_type,
+                    models.NotificationLog.reference_id == row.reference_id,
+                    models.NotificationLog.channel == "email",
+                    models.NotificationLog.status == "sent",
+                )
+                .first()
+                is not None
+            )
+            if not email_already_sent:
+                send_notification(
+                    db,
+                    row.user_id,
+                    row.event_type,
+                    "email",
+                    row.message or row.event_type.replace("_", " ").title(),
+                    reference_id=row.reference_id,
+                )
+    return True
+
+
 def send_critical(
     db: Session,
     user_id: Optional[int],
@@ -391,7 +456,7 @@ def retry_failed_notifications(
     for row in rows:
         key = (row.user_id, row.event_type, row.reference_id)
         entry = grouped.setdefault(key, {"failed": 0, "sent": False, "message": None})
-        if row.status == "sent":
+        if row.status in {"accepted", "sent", "delivered", "read"}:
             entry["sent"] = True
         elif row.status == "failed":
             entry["failed"] += 1

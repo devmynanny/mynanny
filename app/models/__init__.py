@@ -428,6 +428,8 @@ class NotificationLog(Base):
     reference_id = Column(Integer, nullable=True)
     # Message body persisted so failed notifications can be retried.
     message = Column(Text, nullable=True)
+    # Provider identifier used to reconcile asynchronous delivery callbacks.
+    provider_message_id = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 

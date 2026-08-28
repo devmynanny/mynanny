@@ -6,6 +6,7 @@ import { apiJson } from "@/lib/api";
 import {
   CalendarDay,
   DayBookingsDrawer,
+  OperationsBooking,
   OperationsOverview,
 } from "@/app/bookings/page";
 import {
@@ -46,6 +47,16 @@ type TrustBadge = { key: string; label: string; detail: string; required: boolea
 type ParentProfileStatus = {
   is_profile_complete: boolean;
   missing_fields: string[];
+};
+type ParentBookingSummary = {
+  job_id: number;
+  status: string;
+  booking_state?: string;
+  start_dt?: string;
+  accepted_nanny_name?: string | null;
+  accepted_nannies?: { name?: string }[];
+  requested_nannies_count?: number;
+  filled_nannies_count?: number;
 };
 type BankingStatus = {
   banking_complete: boolean;
@@ -148,11 +159,39 @@ function ParentHome({ name }: { name: string }) {
       window.sessionStorage.getItem("parent-profile-saved") === "true",
   );
   const [profileNoticeLeaving, setProfileNoticeLeaving] = useState(false);
+  const [nextBooking, setNextBooking] = useState<ParentBookingSummary | null>(
+    null,
+  );
+  const [bookingsLoaded, setBookingsLoaded] = useState(false);
   useEffect(() => {
     window.sessionStorage.removeItem("parent-profile-saved");
     apiJson<ParentProfileStatus>("/parents/me/profile-status")
       .then(setProfileStatus)
       .catch(() => undefined);
+    apiJson<{ results?: ParentBookingSummary[] } | ParentBookingSummary[]>(
+      "/parents/me/booking-requests",
+    )
+      .then((data) => {
+        const rows = Array.isArray(data) ? data : data.results || [];
+        const current = rows
+          .filter((booking) =>
+            !["completed", "past", "cancelled", "rejected"].includes(
+              booking.booking_state || booking.status,
+            ),
+          )
+          .sort((left, right) => {
+            const leftTime = left.start_dt
+              ? new Date(left.start_dt).getTime()
+              : Number.MAX_SAFE_INTEGER;
+            const rightTime = right.start_dt
+              ? new Date(right.start_dt).getTime()
+              : Number.MAX_SAFE_INTEGER;
+            return leftTime - rightTime;
+          });
+        setNextBooking(current[0] || null);
+      })
+      .catch(() => undefined)
+      .finally(() => setBookingsLoaded(true));
   }, []);
   useEffect(() => {
     if (!showSavedProfile) return;
@@ -226,13 +265,46 @@ function ParentHome({ name }: { name: string }) {
         <div className="flex items-center justify-between">
           <div>
             <div className="eyebrow">Your next booking</div>
-            <h2 className="mt-2 text-xl font-bold">No upcoming care booked</h2>
+            <h2 className="mt-2 text-xl font-bold">
+              {!bookingsLoaded
+                ? "Loading your care schedule..."
+                : nextBooking
+                  ? nextBooking.accepted_nannies?.length
+                    ? nextBooking.accepted_nannies
+                        .map((nanny) => nanny.name)
+                        .filter(Boolean)
+                        .join(", ")
+                    : nextBooking.accepted_nanny_name || "Finding your nanny"
+                  : "No upcoming care booked"}
+            </h2>
           </div>
           <Sparkles className="text-[var(--blue)]" />
         </div>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          When a nanny accepts your request, all the details will appear here.
-        </p>
+        {nextBooking ? (
+          <>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              {nextBooking.start_dt
+                ? new Date(nextBooking.start_dt).toLocaleString("en-ZA", {
+                    dateStyle: "full",
+                    timeStyle: "short",
+                  })
+                : "Schedule awaiting confirmation"}
+              {` · ${nextBooking.filled_nannies_count || 0} of ${nextBooking.requested_nannies_count || 1} positions filled`}
+            </p>
+            <Link
+              href="/bookings"
+              className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-[var(--blue-dark)]"
+            >
+              View booking #{nextBooking.job_id} <ArrowRight size={17} />
+            </Link>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            {bookingsLoaded
+              ? "When a nanny accepts your request, all the details will appear here."
+              : "Checking your upcoming care..."}
+          </p>
+        )}
       </section>
     </div>
   );
@@ -606,6 +678,38 @@ function adminWelcome() {
   };
 }
 
+function johannesburgDateKey(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-ZA", {
+    timeZone: "Africa/Johannesburg",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
+function bookingTime(start: string) {
+  const date = new Date(start);
+  if (Number.isNaN(date.getTime())) return "Time pending";
+  return new Intl.DateTimeFormat("en-ZA", {
+    timeZone: "Africa/Johannesburg",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
+function bookingStatus(booking: OperationsBooking) {
+  const value = booking.booking_state || booking.status || "confirmed";
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+type ReviewApplication = { video_screening_complete?: boolean };
+
 function AdminHome() {
   const [selectedBookingDay, setSelectedBookingDay] =
     useState<CalendarDay | null>(null);
@@ -614,10 +718,23 @@ function AdminHome() {
   );
   const [bookingOverview, setBookingOverview] =
     useState<OperationsOverview | null>(null);
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+  const [overviewError, setOverviewError] = useState(false);
   useEffect(() => {
     apiJson<OperationsOverview>("/admin/bookings/overview")
       .then(setBookingOverview)
-      .catch(() => undefined);
+      .catch(() => setOverviewError(true));
+    apiJson<{ results?: ReviewApplication[] }>(
+      "/admin/nannies/applications?status=pending",
+    )
+      .then((data) =>
+        setReviewCount(
+          (data.results || []).filter(
+            (application) => application.video_screening_complete,
+          ).length,
+        ),
+      )
+      .catch(() => setReviewCount(0));
   }, []);
   function openBooking(id: number) {
     const day = bookingOverview?.month_calendar.days.find((item) =>
@@ -630,16 +747,23 @@ function AdminHome() {
     setSelectedBookingDay(day);
   }
   const welcome = adminWelcome();
+  const today = bookingOverview?.month_calendar.days.find(
+    (day) => day.date === johannesburgDateKey(),
+  );
+  const todayBookings = [...(today?.bookings || [])].sort(
+    (left, right) =>
+      new Date(left.start_dt).getTime() - new Date(right.start_dt).getTime(),
+  );
   const metrics = [
     {
-      value: "12",
+      value: reviewCount === null ? "..." : String(reviewCount),
       label: "Interviews to review",
       Icon: Video,
       href: "/review" as const,
       action: "Open review queue",
     },
     {
-      value: "3",
+      value: bookingOverview === null ? "..." : String(todayBookings.length),
       label: "Bookings today",
       Icon: CalendarDays,
       href: "/bookings" as const,
@@ -680,39 +804,41 @@ function AdminHome() {
           <h2 className="mt-2 text-xl font-bold">Booking operations</h2>
         </div>
         <div className="mt-5 grid gap-3">
-          {[
-            {
-              id: 21,
-              time: "14:00",
-              title: "Test Nanny with Mariette",
-              status: "In progress",
-            },
-            {
-              id: 22,
-              time: "15:30",
-              title: "Nanny Two with David Diener",
-              status: "Confirmed",
-            },
-            {
-              id: 23,
-              time: "18:00",
-              title: "Nanny Three with MM Mynhardt",
-              status: "Confirmed",
-            },
-          ].map(({ id, time, title, status }) => (
+          {todayBookings.map((booking, index) => {
+            const id = booking.booking_id || booking.request_id;
+            return (
             <button
               type="button"
-              onClick={() => openBooking(id)}
-              key={id}
+              onClick={() => id && openBooking(id)}
+              key={`${booking.source}-${id || index}`}
               className="group flex w-full flex-wrap items-center gap-4 rounded-2xl border border-[var(--line)] p-4 text-left transition hover:-translate-y-0.5 hover:border-[var(--blue)] hover:shadow-md disabled:cursor-wait disabled:opacity-60"
-              disabled={!bookingOverview}
+              disabled={!id}
             >
-              <div className="font-bold">{time}</div>
-              <div className="min-w-[220px] flex-1 text-sm">{title}</div>
-              <span className="pill">{status}</span>
+              <div className="font-bold">{bookingTime(booking.start_dt)}</div>
+              <div className="min-w-[220px] flex-1 text-sm">
+                {booking.nanny_name || "Nanny assignment pending"} with{" "}
+                {booking.parent_name || "parent"}
+              </div>
+              <span className="pill">{bookingStatus(booking)}</span>
               <ArrowRight className="text-[var(--blue-dark)]" size={17} />
             </button>
-          ))}
+            );
+          })}
+          {!bookingOverview && !overviewError && (
+            <div className="rounded-2xl border border-[var(--line)] p-5 text-sm text-[var(--muted)]">
+              Loading today&apos;s bookings...
+            </div>
+          )}
+          {bookingOverview && todayBookings.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-[var(--line)] p-5 text-sm text-[var(--muted)]">
+              No confirmed bookings are scheduled for today.
+            </div>
+          )}
+          {overviewError && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
+              Today&apos;s bookings could not be loaded. Open Bookings to retry.
+            </div>
+          )}
         </div>
       </div>
       {selectedBookingDay && (

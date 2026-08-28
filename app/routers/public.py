@@ -35,7 +35,7 @@ from app.services.google_calendar import sync_booking_to_google_calendar
 from app.services.payout import run_scheduled_payouts
 from app.services.paystack import create_supplementary_charge, create_refund, create_transfer_recipient, initialize_transaction, list_banks, verify_transaction
 from app.services.trust import build_nanny_trust_badges, nanny_meets_required_trust
-from app.services.notifications import notify, send_notification
+from app.services.notifications import notify, record_twilio_delivery_status, send_notification
 from app.services.duty_notifications import notify_once
 from app.services import conversations
 from app.services import messaging
@@ -6084,13 +6084,13 @@ def accept_nanny_booking_request(
     _run_post_commit_action(
         db,
         "send nanny booking confirmation",
-        lambda: send_notification(
+        lambda: notify(
             db,
             user.id,
             "booking_confirmed",
-            "email",
             "Your booking has been confirmed. Please check your bookings for the details.",
             reference_id=booking_request_id,
+            action_url="/requests",
         ),
     )
 
@@ -11912,6 +11912,27 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         pass
 
     return Response(content="<Response></Response>", media_type="application/xml")
+
+
+@router.post("/whatsapp/status")
+async def whatsapp_status_callback(request: Request, db: Session = Depends(get_db)):
+    """Receive Twilio's final outbound delivery state and trigger fallback."""
+    auth_token = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+    form = await request.form()
+    params = dict(form)
+    signature = request.headers.get("x-twilio-signature") or request.headers.get("X-Twilio-Signature")
+    if not auth_token or not signature:
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    if not _twilio_signature_valid(_reconstruct_webhook_url(request), params, signature, auth_token):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    message_sid = str(params.get("MessageSid") or params.get("SmsSid") or "").strip()
+    message_status = str(params.get("MessageStatus") or params.get("SmsStatus") or "").strip()
+    error_parts = [str(params.get("ErrorCode") or "").strip(), str(params.get("ErrorMessage") or "").strip()]
+    error_message = ": ".join(part for part in error_parts if part)
+    record_twilio_delivery_status(db, message_sid, message_status, error_message or None)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/telegram/webhook/{secret}")

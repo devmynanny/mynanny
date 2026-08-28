@@ -51,7 +51,7 @@ type PaymentMethod = {
   card_brand?: string | null;
   card_last4?: string | null;
 };
-type OperationsBooking = {
+export type OperationsBooking = {
   source: string;
   request_id?: number | null;
   booking_id?: number | null;
@@ -84,6 +84,14 @@ export type CalendarDay = {
   bookings: OperationsBooking[];
 };
 export type OperationsOverview = {
+  pending_requests: OperationsBooking[];
+  confirmed_bookings: OperationsBooking[];
+  bookings_tomorrow: OperationsBooking[];
+  upcoming_bookings: OperationsBooking[];
+  bookings_in_progress: OperationsBooking[];
+  past_bookings: OperationsBooking[];
+  cancelled_bookings: OperationsBooking[];
+  unsuccessful_bookings: OperationsBooking[];
   month_calendar: {
     year: number;
     month: number;

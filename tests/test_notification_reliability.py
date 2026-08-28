@@ -112,6 +112,30 @@ def test_notify_writes_in_app_for_action_required_events(db, monkeypatch):
     assert "overtime" in in_app[0].body.lower()
 
 
+def test_booking_confirmation_is_written_in_app(db, monkeypatch):
+    user = _seed_user(db)
+    monkeypatch.setattr(notif.messaging, "send_whatsapp_message", lambda *a, **k: (True, ""))
+
+    ok = notif.notify(
+        db,
+        user.id,
+        "booking_confirmed",
+        "Your booking has been confirmed.",
+        reference_id=42,
+        action_url="/requests",
+    )
+    db.commit()
+
+    assert ok is True
+    in_app = (
+        db.query(models.InAppNotification)
+        .filter(models.InAppNotification.user_id == user.id)
+        .one()
+    )
+    assert in_app.action_url == "/requests"
+    assert "confirmed" in in_app.body.lower()
+
+
 def test_retry_sweep_resends_failed_and_respects_success(db, monkeypatch):
     user = _seed_user(db)
     email_client = _FakeEmailClient(fail=True)
@@ -166,3 +190,31 @@ def test_send_critical_is_policy_driven_alias(db, monkeypatch):
     assert ok is True
     rows = _log_rows(db, user.id)
     assert [(r.channel, r.status) for r in rows] == [("whatsapp", "sent")]
+
+
+def test_twilio_async_failure_updates_log_and_sends_email_once(db, monkeypatch):
+    user = _seed_user(db)
+    email_client = _FakeEmailClient()
+    monkeypatch.setattr(
+        notif.messaging,
+        "send_whatsapp_message",
+        lambda *a, **k: (True, "SMasyncfailure"),
+    )
+    monkeypatch.setattr(notif, "get_email_client", lambda: email_client)
+
+    assert notif.notify(db, user.id, "booking_confirmed", "Confirmed!", reference_id=101)
+    db.commit()
+    whatsapp = _log_rows(db, user.id)[0]
+    assert whatsapp.provider_message_id == "SMasyncfailure"
+    assert whatsapp.status == "sent"
+
+    assert notif.record_twilio_delivery_status(db, "SMasyncfailure", "undelivered", "63112")
+    db.commit()
+    assert whatsapp.status == "failed"
+    assert whatsapp.error_message == "63112"
+    assert len(email_client.sent) == 1
+
+    # Twilio retries callbacks; fallback must not be duplicated.
+    assert notif.record_twilio_delivery_status(db, "SMasyncfailure", "failed", "63112")
+    db.commit()
+    assert len(email_client.sent) == 1
