@@ -10103,6 +10103,45 @@ def list_admin_bookings_overview(
         for booking, _, _ in booking_rows
         if getattr(booking, "booking_request_id", None) is not None
     }
+    bookings_by_request_id: dict[int, list[models.Booking]] = {}
+    for booking, _, _ in booking_rows:
+        request_id = getattr(booking, "booking_request_id", None)
+        if request_id is not None:
+            bookings_by_request_id.setdefault(request_id, []).append(booking)
+
+    # Older request-generated bookings were persisted with a zero price. Derive
+    # their share from the paid request so existing operations records remain useful.
+    derived_price_by_booking_id: dict[int, int] = {}
+    for request_id, linked_bookings in bookings_by_request_id.items():
+        related_request = request_by_id.get(request_id)
+        request_total_cents = int(getattr(related_request, "total_cents", 0) or 0)
+        zero_price_bookings = [
+            booking
+            for booking in linked_bookings
+            if int(getattr(booking, "price_cents", 0) or 0) <= 0
+        ]
+        if (
+            request_total_cents <= 0
+            or not zero_price_bookings
+            or len(zero_price_bookings) != len(linked_bookings)
+        ):
+            continue
+
+        weighted_bookings = []
+        for booking in sorted(zero_price_bookings, key=lambda row: row.id):
+            start_at = getattr(booking, "starts_at", None)
+            end_at = getattr(booking, "ends_at", None)
+            minutes = int((end_at - start_at).total_seconds() // 60) if start_at and end_at and end_at > start_at else 1
+            weighted_bookings.append((booking, max(1, minutes)))
+
+        total_weight = sum(weight for _, weight in weighted_bookings)
+        allocated = 0
+        for booking, weight in weighted_bookings:
+            amount = request_total_cents * weight // total_weight
+            derived_price_by_booking_id[booking.id] = amount
+            allocated += amount
+        for booking, _ in weighted_bookings[: request_total_cents - allocated]:
+            derived_price_by_booking_id[booking.id] += 1
 
     pending_requests = []
     unsuccessful_bookings = []
@@ -10203,7 +10242,8 @@ def list_admin_bookings_overview(
                 "formatted_address": getattr(booking, "formatted_address", None),
                 "lat": getattr(booking, "lat", None),
                 "lng": getattr(booking, "lng", None),
-                "price_cents": int(getattr(booking, "price_cents", 0) or 0),
+                "price_cents": int(getattr(booking, "price_cents", 0) or 0)
+                or derived_price_by_booking_id.get(booking.id, 0),
                 "payout_amount_cents": getattr(booking, "payout_amount_cents", None),
                 "overrun_minutes": getattr(booking, "overrun_minutes", None),
                 "overrun_amount_cents": getattr(booking, "overrun_amount_cents", None),

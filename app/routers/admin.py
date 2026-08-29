@@ -1233,6 +1233,7 @@ def accounting_payouts(
                 ),
                 and_(
                     models.Booking.payout_hold_until.isnot(None),
+                    models.Booking.payout_hold_until >= start_dt,
                     models.Booking.payout_hold_until <= end_dt,
                     models.Booking.payout_released_at.is_(None),
                     models.Booking.status == "completed",
@@ -1449,8 +1450,9 @@ def refund_booking_request(
 @router.get("/refunds", dependencies=[Depends(require_finance)])
 def list_refunds(status: Optional[str] = Query(default="pending_review"), db: Session = Depends(get_db)):
     q = db.query(models.BookingRequest).filter(models.BookingRequest.payment_status == "paid")
-    if status:
-        q = q.filter(models.BookingRequest.refund_status == status)
+    status_key = (status or "all").strip().lower()
+    if status_key != "all":
+        q = q.filter(models.BookingRequest.refund_status == status_key)
     rows = q.order_by(models.BookingRequest.updated_at.desc()).limit(100).all()
     results = []
     for r in rows:

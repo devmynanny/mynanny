@@ -154,3 +154,117 @@ def test_requires_admin():
         assert res.status_code in (401, 403)
     finally:
         db.close()
+
+
+def test_refunds_all_includes_paid_requests_without_a_refund_status():
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        parent = _seed_parent(db)
+        nanny = _seed_nanny(db)
+        req = _seed_paid_request(db, parent, nanny, refund_status=None)
+
+        res = client.get("/admin/refunds?status=all", headers=_auth(admin))
+        assert res.status_code == 200, res.text
+        ids = {row["request_id"] for row in res.json()["results"]}
+        assert req.id in ids
+    finally:
+        db.close()
+
+
+def test_pending_payouts_are_limited_to_the_reporting_period():
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        parent = _seed_parent(db)
+        nanny = _seed_nanny(db)
+        now = datetime.utcnow()
+        current_req = _seed_paid_request(db, parent, nanny, nanny_retained_cents=24000)
+        old_req = _seed_paid_request(db, parent, nanny, nanny_retained_cents=24000)
+        current_booking = models.Booking(
+            booking_request_id=current_req.id,
+            nanny_id=nanny.id,
+            client_user_id=parent.id,
+            day=now.date(),
+            status="completed",
+            price_cents=0,
+            starts_at=now - timedelta(hours=4),
+            ends_at=now,
+            payout_hold_until=now,
+        )
+        old_booking = models.Booking(
+            booking_request_id=old_req.id,
+            nanny_id=nanny.id,
+            client_user_id=parent.id,
+            day=(now - timedelta(days=60)).date(),
+            status="completed",
+            price_cents=0,
+            starts_at=now - timedelta(days=60, hours=4),
+            ends_at=now - timedelta(days=60),
+            payout_hold_until=now - timedelta(days=60),
+        )
+        db.add_all([current_booking, old_booking])
+        db.commit()
+        db.refresh(current_booking)
+        db.refresh(old_booking)
+
+        start = (now - timedelta(days=2)).date().isoformat()
+        end = (now + timedelta(days=2)).date().isoformat()
+        res = client.get(
+            f"/admin/accounting/payouts?range=custom&start={start}&end={end}",
+            headers=_auth(admin),
+        )
+        assert res.status_code == 200, res.text
+        booking_ids = {row["booking_id"] for row in res.json()["results"]}
+        assert current_booking.id in booking_ids
+        assert old_booking.id not in booking_ids
+    finally:
+        db.close()
+
+
+def test_admin_booking_overview_derives_zero_prices_from_the_paid_request():
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        parent = _seed_parent(db)
+        nanny = _seed_nanny(db)
+        req = _seed_paid_request(db, parent, nanny, total=45500, fee=10500, wage=35000)
+        start = datetime.utcnow() + timedelta(days=1)
+        short_booking = models.Booking(
+            booking_request_id=req.id,
+            nanny_id=nanny.id,
+            client_user_id=parent.id,
+            day=start.date(),
+            status="accepted",
+            price_cents=0,
+            starts_at=start,
+            ends_at=start + timedelta(hours=1),
+        )
+        long_booking = models.Booking(
+            booking_request_id=req.id,
+            nanny_id=nanny.id,
+            client_user_id=parent.id,
+            day=start.date(),
+            status="accepted",
+            price_cents=0,
+            starts_at=start + timedelta(hours=2),
+            ends_at=start + timedelta(hours=4),
+        )
+        db.add_all([short_booking, long_booking])
+        db.commit()
+        db.refresh(short_booking)
+        db.refresh(long_booking)
+
+        res = client.get("/admin/bookings/overview", headers=_auth(admin))
+        assert res.status_code == 200, res.text
+        rows = {
+            row["booking_id"]: row
+            for section in res.json().values()
+            if isinstance(section, list)
+            for row in section
+            if isinstance(row, dict) and row.get("booking_id") in {short_booking.id, long_booking.id}
+        }
+        assert rows[short_booking.id]["price_cents"] + rows[long_booking.id]["price_cents"] == 45500
+        assert rows[long_booking.id]["price_cents"] > rows[short_booking.id]["price_cents"]
+    finally:
+        db.close()
