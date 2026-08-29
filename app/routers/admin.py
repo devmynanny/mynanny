@@ -1628,7 +1628,11 @@ def approve_charge_dispute(
         target_user_id=dispute.parent_user_id,
         entity="charge_disputes",
         entity_id=dispute.id,
-        action="partial_refund_approved",
+        action=(
+            "full_refund_approved"
+            if refund_amount == int(dispute.charge_amount_cents or 0)
+            else "partial_refund_approved"
+        ),
         before_obj={"status": "open"},
         after_obj={"status": dispute.status, "approved_refund_cents": refund_amount},
         changed_fields=["status", "approved_refund_cents"],
