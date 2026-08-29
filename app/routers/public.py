@@ -2898,6 +2898,8 @@ def verify_parent_payment_method(
     reference = (payload.reference or "").strip()
     if not reference:
         raise HTTPException(status_code=400, detail="reference is required")
+    if not reference.startswith(f"MN-CARD-{user.id}-"):
+        raise HTTPException(status_code=403, detail="Payment reference does not belong to this parent")
 
     ok, data = verify_transaction(reference)
     if not ok:
@@ -2905,6 +2907,19 @@ def verify_parent_payment_method(
     result = _paystack_data(data)
     if str(result.get("status") or "").lower() != "success":
         raise HTTPException(status_code=400, detail="Payment method verification was not successful")
+
+    verified_reference = str(result.get("reference") or "").strip()
+    if verified_reference and verified_reference != reference:
+        raise HTTPException(status_code=400, detail="Paystack returned a different payment reference")
+    metadata = result.get("metadata") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            metadata = {}
+    metadata_parent_id = metadata.get("parent_user_id") if isinstance(metadata, dict) else None
+    if metadata_parent_id is not None and str(metadata_parent_id) != str(user.id):
+        raise HTTPException(status_code=403, detail="Payment authorization belongs to another parent")
 
     authorization_data = result.get("authorization") or {}
     customer_data = result.get("customer") or {}
