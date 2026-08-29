@@ -7,6 +7,7 @@ import {
   Check,
   Clock,
   LoaderCircle,
+  MessageSquareWarning,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -33,6 +34,20 @@ type BookingDay = {
   service_refund_cents?: number;
   service_adjustment_status?: string | null;
 };
+type ChargeQuery = {
+  id: number;
+  booking_id?: number | null;
+  line_item: "nanny_wage" | "booking_fee" | "overtime" | "other";
+  charge_amount_cents: number;
+  disputed_amount_cents: number;
+  approved_refund_cents?: number;
+  reason: string;
+  details?: string | null;
+  status: string;
+  resolution_reason?: string | null;
+  failure_reason?: string | null;
+  created_at?: string | null;
+};
 type ParentBooking = {
   job_id: number;
   status: string;
@@ -52,6 +67,8 @@ type ParentBooking = {
   requested_nannies?: { name?: string; response_status?: string }[];
   booking_days?: BookingDay[];
   booking_form?: Record<string, unknown>;
+  payment_status?: string | null;
+  charge_disputes?: ChargeQuery[];
 };
 
 const stateLabels: Record<string, string> = {
@@ -66,6 +83,14 @@ const stateLabels: Record<string, string> = {
   admin_review: "Admin review",
   awaiting_overtime_approval: "Overtime approval",
 };
+const chargeQueryStatusLabels: Record<string, string> = {
+  open: "Finance review",
+  refund_requested: "Refund processing",
+  refunded: "Refund completed",
+  denied: "Not approved",
+  failed: "Needs finance attention",
+};
+const activeChargeQueryStatuses = new Set(["open", "refund_requested", "failed"]);
 
 function dateTime(value?: string) {
   if (!value) return "Not scheduled";
@@ -84,6 +109,12 @@ export function ParentBookingManager() {
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState("current");
   const [busy, setBusy] = useState("");
+  const [queryJobId, setQueryJobId] = useState<number | null>(null);
+  const [queryLineItem, setQueryLineItem] = useState<ChargeQuery["line_item"]>("nanny_wage");
+  const [queryBookingId, setQueryBookingId] = useState("");
+  const [queryAmount, setQueryAmount] = useState("");
+  const [queryReason, setQueryReason] = useState("");
+  const [queryDetails, setQueryDetails] = useState("");
   async function correctTime(day: BookingDay, kind: "in" | "out") {
     const current = kind === "in" ? day.check_in_at : day.check_out_at;
     const corrected = window.prompt(
@@ -146,6 +177,62 @@ export function ParentBookingManager() {
       `/parents/me/booking-requests/${jobId}/cancel`,
       { reason: reason.trim() },
     );
+  }
+  function openChargeQuery(booking: ParentBooking) {
+    setQueryJobId(booking.job_id);
+    setQueryLineItem("nanny_wage");
+    setQueryBookingId("");
+    setQueryAmount(((booking.wage_cents || 0) / 100).toFixed(2));
+    setQueryReason("");
+    setQueryDetails("");
+  }
+  function changeQueryLine(booking: ParentBooking, lineItem: ChargeQuery["line_item"]) {
+    setQueryLineItem(lineItem);
+    if (lineItem !== "overtime") setQueryBookingId("");
+    const amount = lineItem === "nanny_wage"
+      ? booking.wage_cents
+      : lineItem === "booking_fee"
+        ? booking.booking_fee_cents
+        : lineItem === "other"
+          ? booking.total_cents
+          : 0;
+    setQueryAmount(amount ? (amount / 100).toFixed(2) : "");
+  }
+  async function submitChargeQuery(booking: ParentBooking) {
+    const amountCents = Math.round(Number(queryAmount) * 100);
+    if (!Number.isFinite(amountCents) || amountCents < 1) {
+      setMessage("Enter the amount you want finance to review.");
+      return;
+    }
+    if (queryReason.trim().length < 3) {
+      setMessage("Please briefly explain why you are querying this charge.");
+      return;
+    }
+    if (queryLineItem === "overtime" && !queryBookingId) {
+      setMessage("Choose the booking day linked to the overtime charge.");
+      return;
+    }
+    setBusy(`charge-query-${booking.job_id}`);
+    setMessage("");
+    try {
+      await apiJson(`/parents/me/booking-requests/${booking.job_id}/charge-disputes`, {
+        method: "POST",
+        body: JSON.stringify({
+          line_item: queryLineItem,
+          booking_id: queryBookingId ? Number(queryBookingId) : null,
+          amount_cents: amountCents,
+          reason: queryReason.trim(),
+          details: queryDetails.trim() || null,
+        }),
+      });
+      setQueryJobId(null);
+      await load();
+      setMessage("Your charge query has been sent to the finance team. The related nanny payout is on hold while it is reviewed.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to submit this charge query.");
+    } finally {
+      setBusy("");
+    }
   }
   const visible = rows.filter((row) => {
     const state = row.booking_state || row.status;
@@ -233,6 +320,53 @@ export function ParentBookingManager() {
                     <div className="flex justify-between"><span>Booking fee</span><b>{money(booking.booking_fee_cents)}</b></div>
                     <div className="flex justify-between border-t border-[var(--line)] pt-3 text-base"><span>Estimated total</span><b>{money(booking.estimated_group_total_cents ?? booking.total_cents)}</b></div>
                   </div>
+                  {(booking.charge_disputes || []).length > 0 && (
+                    <div className="mt-5 border-t border-[var(--line)] pt-4">
+                      <h4 className="text-sm font-bold">Charge queries</h4>
+                      <div className="mt-3 grid gap-2">
+                        {(booking.charge_disputes || []).map((query) => (
+                          <div className="rounded-xl bg-white p-3 text-xs" key={query.id}>
+                            <div className="flex items-start justify-between gap-3">
+                              <b className="capitalize">{query.line_item.replaceAll("_", " ")}</b>
+                              <span className="pill !min-h-0 !px-2 !py-1 text-[10px]">{chargeQueryStatusLabels[query.status] || query.status.replaceAll("_", " ")}</span>
+                            </div>
+                            <div className="mt-2">Queried: <b>{money(query.disputed_amount_cents)}</b>{query.approved_refund_cents ? <> · Refund: <b>{money(query.approved_refund_cents)}</b></> : null}</div>
+                            <p className="mt-1 text-[var(--muted)]">{query.reason}</p>
+                            {query.resolution_reason && <p className="mt-1"><b>Finance:</b> {query.resolution_reason}</p>}
+                            {query.failure_reason && <p className="mt-1 text-red-700"><b>Processing issue:</b> {query.failure_reason}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {booking.payment_status === "paid" && !(booking.charge_disputes || []).some((query) => activeChargeQueryStatuses.has(query.status)) && queryJobId !== booking.job_id && (
+                    <button className="btn-secondary mt-5 w-full" onClick={() => openChargeQuery(booking)}><MessageSquareWarning size={16} />Query this charge</button>
+                  )}
+                  {queryJobId === booking.job_id && (
+                    <div className="mt-5 border-t border-[var(--line)] pt-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div><h4 className="font-bold">Query a charge</h4><p className="mt-1 text-xs text-[var(--muted)]">Finance can approve a full or partial refund. The related payout is held during review.</p></div>
+                        <button className="btn-quiet !min-h-8 !px-2" onClick={() => setQueryJobId(null)} aria-label="Close charge query"><X size={16} /></button>
+                      </div>
+                      <label className="mt-4 block text-xs font-bold">Charge</label>
+                      <select className="field mt-2" value={queryLineItem} onChange={(event) => changeQueryLine(booking, event.target.value as ChargeQuery["line_item"])}>
+                        <option value="nanny_wage">Nanny wage</option>
+                        <option value="booking_fee">Booking fee</option>
+                        <option value="overtime">Overtime</option>
+                        <option value="other">Another part of the total</option>
+                      </select>
+                      {queryLineItem === "overtime" && (
+                        <><label className="mt-3 block text-xs font-bold">Booking day</label><select className="field mt-2" value={queryBookingId} onChange={(event) => setQueryBookingId(event.target.value)}><option value="">Choose a day</option>{(booking.booking_days || []).map((day) => <option key={day.booking_id} value={day.booking_id}>{dateTime(day.start_dt)} · {money(day.overrun_amount_cents)}</option>)}</select></>
+                      )}
+                      <label className="mt-3 block text-xs font-bold">Amount to review</label>
+                      <div className="relative mt-2"><span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold">R</span><input className="field !pl-9" inputMode="decimal" min="0.01" step="0.01" type="number" value={queryAmount} onChange={(event) => setQueryAmount(event.target.value)} /></div>
+                      <label className="mt-3 block text-xs font-bold">Reason</label>
+                      <input className="field mt-2" maxLength={200} placeholder="For example: nanny arrived late" value={queryReason} onChange={(event) => setQueryReason(event.target.value)} />
+                      <label className="mt-3 block text-xs font-bold">More detail <span className="font-normal text-[var(--muted)]">(optional)</span></label>
+                      <textarea className="field mt-2 min-h-24 resize-y" maxLength={2000} placeholder="Tell our finance team what happened." value={queryDetails} onChange={(event) => setQueryDetails(event.target.value)} />
+                      <button className="btn-primary mt-4 w-full" disabled={busy === `charge-query-${booking.job_id}`} onClick={() => void submitChargeQuery(booking)}>{busy === `charge-query-${booking.job_id}` ? <LoaderCircle className="animate-spin" size={16} /> : <MessageSquareWarning size={16} />}Send to finance</button>
+                    </div>
+                  )}
                   {!['completed','past','cancelled','rejected'].includes(booking.booking_state || booking.status) && (
                     <button className="btn-quiet mt-5 text-red-700" disabled={busy === `cancel-${booking.job_id}`} onClick={() => cancel(booking.job_id)}><X size={16} />Cancel booking</button>
                   )}

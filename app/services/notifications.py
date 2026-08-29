@@ -27,7 +27,11 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     # Payments - critical, user must know immediately.
     "payment_success": {"channels": ("chat", "email")},
     "payment_failed": {"channels": ("chat", "email"), "in_app": True},
-    "refund_processed": {"channels": ("chat", "email")},
+    "refund_processed": {"channels": ("chat", "email"), "in_app": True},
+    "charge_query_refund_approved": {"channels": ("chat", "email"), "in_app": True},
+    "charge_query_opened": {"channels": ("chat", "email"), "in_app": True},
+    "charge_query_denied": {"channels": ("chat", "email"), "in_app": True},
+    "charge_query_failed": {"channels": ("chat", "email"), "in_app": True},
     # Booking lifecycle.
     "booking_confirmed": {"channels": ("chat", "email"), "in_app": True},
     "booking_cancelled": {"channels": ("chat", "email"), "in_app": True},

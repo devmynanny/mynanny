@@ -307,6 +307,20 @@ It is intended as an operational source of truth for product, support, and engin
 - Administrator access is scoped as `operations`, `finance`, or `superadmin`; server-side permissions are authoritative even when navigation is hidden.
 - Operations administrators manage bookings, candidates, users, and customer communication.
 - Finance administrators manage finance, payouts, refunds, and customer communication.
+
+## Client charge queries and partial refunds
+
+- A parent may query a specific charge only after the related booking payment has been recorded as paid.
+- A query must identify the affected line item: nanny wage, booking fee, overtime, or another booking charge. Overtime queries must identify the specific booking day.
+- The parent must provide the amount being queried and a reason. The queried amount may not exceed the recorded amount of that charge.
+- Only one active query may exist for the same booking charge at a time.
+- An open, failed, or Paystack-processing query places the related nanny payout on hold so disputed funds are not paid out before the matter is resolved.
+- Finance administrators may decline the query or approve a full or partial refund. Every decision requires a reason for the audit trail and client notification.
+- A partial refund may not exceed the amount queried, the original line-item charge, or the remaining refundable amount on the paid transaction.
+- Finance approval starts a refund request with Paystack. Approval does not mean the refund has completed; completion is recorded only after a valid Paystack webhook confirms it.
+- A failed refund remains visible for finance action and keeps the payout hold in place. A declined query or confirmed refund releases the payout hold when no other active query remains.
+- Confirmed charge refunds are included in accounting and refund reporting, and the parent is notified of the final outcome.
+- My Nanny never stores card details. Payment and refund processing is handled by Paystack using provider references and authorization tokens only.
 - Superadmins have full access, including pricing, integrations, trust configuration, audit history, and team access.
 - Only superadmins may invite administrators, change administrator access levels, or cancel pending invitations.
 - An administrator invitation records its intended access level, expires after seven days, and applies that level when accepted.

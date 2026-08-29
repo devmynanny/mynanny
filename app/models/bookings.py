@@ -137,3 +137,52 @@ class BookingPricingSnapshot(Base):
 		CheckConstraint("fee_amount_cents >= 0", name="bps_fee_amount_check"),
 		CheckConstraint("total_amount_cents >= 0", name="bps_total_amount_check"),
 	)
+
+
+class ChargeDispute(Base):
+	__tablename__ = "charge_disputes"
+
+	id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+	booking_request_id = Column(
+		BigInteger,
+		ForeignKey("booking_requests.id", ondelete="CASCADE"),
+		nullable=False,
+	)
+	booking_id = Column(Integer, ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True)
+	parent_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+	line_item = Column(Text, nullable=False)
+	charge_amount_cents = Column(Integer, nullable=False)
+	disputed_amount_cents = Column(Integer, nullable=False)
+	reason = Column(Text, nullable=False)
+	details = Column(Text, nullable=True)
+	status = Column(Text, nullable=False, default="open", server_default="open")
+	approved_refund_cents = Column(Integer, nullable=True)
+	resolution_reason = Column(Text, nullable=True)
+	paystack_refund_reference = Column(Text, nullable=True)
+	reviewed_by_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+	reviewed_at = Column(DateTime(timezone=True), nullable=True)
+	refunded_at = Column(DateTime(timezone=True), nullable=True)
+	failed_at = Column(DateTime(timezone=True), nullable=True)
+	failure_reason = Column(Text, nullable=True)
+	created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+	updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+	__table_args__ = (
+		CheckConstraint(
+			"line_item IN ('nanny_wage','booking_fee','overtime','other')",
+			name="charge_disputes_line_item_check",
+		),
+		CheckConstraint(
+			"status IN ('open','refund_requested','refunded','denied','failed')",
+			name="charge_disputes_status_check",
+		),
+		CheckConstraint("charge_amount_cents >= 0", name="charge_disputes_charge_amount_check"),
+		CheckConstraint("disputed_amount_cents > 0", name="charge_disputes_disputed_amount_check"),
+		CheckConstraint(
+			"approved_refund_cents IS NULL OR approved_refund_cents > 0",
+			name="charge_disputes_approved_refund_check",
+		),
+		Index("charge_disputes_booking_request_id_idx", "booking_request_id"),
+		Index("charge_disputes_parent_user_id_idx", "parent_user_id"),
+		Index("charge_disputes_status_idx", "status"),
+	)

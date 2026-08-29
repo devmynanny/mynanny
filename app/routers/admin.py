@@ -5,7 +5,7 @@ import re
 import uuid
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Header, Request, UploadFile, File, Form
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import and_, func, or_, Numeric, text
 from app.db import SessionLocal
@@ -13,6 +13,12 @@ from app import models
 from app.routers.public import require_admin as require_admin_user, _require_user, _parse_iso_dt, get_rating_12m_for_nanny, _ensure_default_nanny_tags
 from app.services.audit import log_audit
 from app.services.paystack import create_refund
+from app.services.charge_disputes import (
+    ACTIVE_DISPUTE_STATUSES,
+    refresh_booking_dispute_holds,
+    related_booking_request_ids,
+)
+from app.services.notifications import notify
 from app.services import conversations, messaging, storage
 from app.services.passport_compliance import run_passport_compliance
 from app.services.trust import DEFAULT_TRUST_BADGES, get_trust_config as load_trust_config
@@ -37,6 +43,11 @@ class RefundRequest(BaseModel):
 class RefundDecision(BaseModel):
     amount_cents: Optional[int] = None
     reason: Optional[str] = None
+
+
+class ChargeDisputeDecision(BaseModel):
+    amount_cents: Optional[int] = Field(default=None, ge=1)
+    reason: str = Field(min_length=2, max_length=1000)
 
 
 class GoogleMapsSettingsPayload(BaseModel):
@@ -811,7 +822,19 @@ def accounting_summary(
         )
         .all()
     )
-    refunds_processed_cents = sum(int(r.refund_cents or 0) for r in refund_rows)
+    charge_refund_rows = (
+        db.query(models.ChargeDispute)
+        .filter(
+            models.ChargeDispute.status == "refunded",
+            models.ChargeDispute.refunded_at.isnot(None),
+            models.ChargeDispute.refunded_at >= start_dt,
+            models.ChargeDispute.refunded_at <= end_dt,
+        )
+        .all()
+    )
+    cancellation_refunds_cents = sum(int(r.refund_cents or 0) for r in refund_rows)
+    charge_refunds_cents = sum(int(r.approved_refund_cents or 0) for r in charge_refund_rows)
+    refunds_processed_cents = cancellation_refunds_cents + charge_refunds_cents
 
     payout_rows = (
         db.query(models.Booking)
@@ -845,6 +868,7 @@ def accounting_summary(
             models.Booking.payout_hold_until <= end_dt,
             models.Booking.payout_released_at.is_(None),
             models.Booking.payout_disputed == False,  # noqa: E712
+            models.Booking.charge_dispute_hold == False,  # noqa: E712
         )
         .all()
     )
@@ -900,7 +924,11 @@ def accounting_summary(
         "overtime_charges_cents": overtime_charges_cents,
         "overtime_charges_count": len(overtime_rows),
         "refunds_processed_cents": refunds_processed_cents,
-        "refunds_processed_count": len(refund_rows),
+        "refunds_processed_count": len(refund_rows) + len(charge_refund_rows),
+        "cancellation_refunds_processed_cents": cancellation_refunds_cents,
+        "cancellation_refunds_processed_count": len(refund_rows),
+        "charge_refunds_processed_cents": charge_refunds_cents,
+        "charge_refunds_processed_count": len(charge_refund_rows),
         "payouts_released_cents": payouts_released_cents,
         "payouts_released_count": len(payout_rows),
         "overrun_payouts_released_cents": overrun_payouts_released_cents,
@@ -951,6 +979,7 @@ def ops_health(db: Session = Depends(get_db)):
             models.Booking.payout_hold_until <= now,
             models.Booking.payout_released_at.is_(None),
             models.Booking.payout_disputed == False,  # noqa: E712
+            models.Booking.charge_dispute_hold == False,  # noqa: E712
         )
         .scalar()
     ) or 0
@@ -958,6 +987,12 @@ def ops_health(db: Session = Depends(get_db)):
     refunds_awaiting_review = (
         db.query(func.count(models.BookingRequest.id))
         .filter(models.BookingRequest.refund_status == "requested")
+        .scalar()
+    ) or 0
+
+    charge_queries_open = (
+        db.query(func.count(models.ChargeDispute.id))
+        .filter(models.ChargeDispute.status.in_(ACTIVE_DISPUTE_STATUSES))
         .scalar()
     ) or 0
 
@@ -990,6 +1025,7 @@ def ops_health(db: Session = Depends(get_db)):
         "webhook_rejections_24h": int(webhook_rejections_24h),
         "stuck_payouts": int(stuck_payouts),
         "refunds_awaiting_review": int(refunds_awaiting_review),
+        "charge_queries_open": int(charge_queries_open),
         "stale_open_adverts": int(stale_open_adverts),
         "impersonations_7d": int(impersonations_7d),
         "nannies_flagged_for_review": int(flagged_nannies),
@@ -1281,7 +1317,14 @@ def accounting_payouts(
         if base_net_cents <= 0 and base_gross_cents > 0:
             base_net_cents = max(0, base_gross_cents - base_debt_cents)
 
-        base_state = "released" if base_released_at else ("due" if base_hold_until and base_hold_until <= now and not getattr(booking, "payout_disputed", False) else "pending")
+        if base_released_at:
+            base_state = "released"
+        elif getattr(booking, "charge_dispute_hold", False):
+            base_state = "queried"
+        elif base_hold_until and base_hold_until <= now and not getattr(booking, "payout_disputed", False):
+            base_state = "due"
+        else:
+            base_state = "pending"
         overrun_gross_cents = int(getattr(booking, "overrun_amount_cents", 0) or 0)
         overrun_released_at = getattr(booking, "overrun_released_at", None)
         overrun_hold_until = getattr(booking, "overrun_hold_until", None)
@@ -1467,6 +1510,185 @@ def list_refunds(status: Optional[str] = Query(default="pending_review"), db: Se
             "created_at": r.created_at.isoformat() if r.created_at else None,
         })
     return {"results": results}
+
+
+def _serialize_charge_dispute(db: Session, dispute: models.ChargeDispute) -> dict:
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == dispute.booking_request_id).first()
+    parent = db.query(models.User).filter(models.User.id == dispute.parent_user_id).first()
+    nanny = db.query(models.Nanny).filter(models.Nanny.id == req.nanny_id).first() if req else None
+    nanny_user = db.query(models.User).filter(models.User.id == nanny.user_id).first() if nanny else None
+    booking = db.query(models.Booking).filter(models.Booking.id == dispute.booking_id).first() if dispute.booking_id else None
+    return {
+        "id": dispute.id,
+        "job_id": (req.group_id or req.id) if req else None,
+        "booking_request_id": dispute.booking_request_id,
+        "booking_id": dispute.booking_id,
+        "parent_user_id": dispute.parent_user_id,
+        "parent_name": getattr(parent, "name", None),
+        "parent_email": getattr(parent, "email", None),
+        "nanny_id": getattr(req, "nanny_id", None),
+        "nanny_name": getattr(nanny_user, "name", None),
+        "starts_at": (
+            booking.starts_at.isoformat()
+            if booking and getattr(booking, "starts_at", None)
+            else (req.requested_starts_at.isoformat() if req and req.requested_starts_at else None)
+        ),
+        "line_item": dispute.line_item,
+        "charge_amount_cents": int(dispute.charge_amount_cents or 0),
+        "disputed_amount_cents": int(dispute.disputed_amount_cents or 0),
+        "approved_refund_cents": int(dispute.approved_refund_cents or 0),
+        "reason": dispute.reason,
+        "details": dispute.details,
+        "status": dispute.status,
+        "resolution_reason": dispute.resolution_reason,
+        "failure_reason": dispute.failure_reason,
+        "paystack_refund_reference": dispute.paystack_refund_reference,
+        "created_at": dispute.created_at.isoformat() if dispute.created_at else None,
+        "reviewed_at": dispute.reviewed_at.isoformat() if dispute.reviewed_at else None,
+        "refunded_at": dispute.refunded_at.isoformat() if dispute.refunded_at else None,
+    }
+
+
+@router.get("/charge-disputes", dependencies=[Depends(require_finance)])
+def list_charge_disputes(status: Optional[str] = Query(default="open"), db: Session = Depends(get_db)):
+    q = db.query(models.ChargeDispute)
+    status_key = (status or "all").strip().lower()
+    if status_key != "all":
+        q = q.filter(models.ChargeDispute.status == status_key)
+    rows = q.order_by(models.ChargeDispute.created_at.desc()).limit(200).all()
+    return {"results": [_serialize_charge_dispute(db, row) for row in rows]}
+
+
+@router.post("/charge-disputes/{dispute_id}/approve", dependencies=[Depends(require_finance)])
+def approve_charge_dispute(
+    dispute_id: int,
+    payload: ChargeDisputeDecision,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin_user = _require_user(authorization, db)
+    dispute = db.query(models.ChargeDispute).filter(models.ChargeDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Charge query not found")
+    if dispute.status not in ("open", "failed"):
+        raise HTTPException(status_code=400, detail="Charge query is not awaiting a finance decision")
+
+    refund_amount = int(payload.amount_cents or dispute.disputed_amount_cents or 0)
+    maximum = min(int(dispute.disputed_amount_cents or 0), int(dispute.charge_amount_cents or 0))
+    if refund_amount <= 0 or refund_amount > maximum:
+        raise HTTPException(status_code=400, detail="Refund amount exceeds the queried charge")
+
+    req = db.query(models.BookingRequest).filter(models.BookingRequest.id == dispute.booking_request_id).first()
+    if not req or req.payment_status != "paid":
+        raise HTTPException(status_code=400, detail="The original booking payment is not settled")
+    transaction = req.paystack_transaction_id or req.paystack_reference
+    if not transaction:
+        raise HTTPException(status_code=400, detail="Missing Paystack transaction reference")
+
+    other_query_refunds = (
+        db.query(func.coalesce(func.sum(models.ChargeDispute.approved_refund_cents), 0))
+        .filter(
+            models.ChargeDispute.booking_request_id == req.id,
+            models.ChargeDispute.id != dispute.id,
+            models.ChargeDispute.status.in_(("refund_requested", "refunded")),
+        )
+        .scalar()
+    ) or 0
+    cancellation_refund = int(req.refund_cents or 0) if req.refund_status in ("pending", "processed") else 0
+    paid_total = int(req.total_cents or 0)
+    if int(other_query_refunds) + cancellation_refund + refund_amount > paid_total:
+        raise HTTPException(status_code=400, detail="Combined refunds cannot exceed the amount paid")
+
+    now = utc_now()
+    dispute.approved_refund_cents = refund_amount
+    dispute.resolution_reason = payload.reason.strip()
+    dispute.reviewed_by_user_id = admin_user.id
+    dispute.reviewed_at = now
+    dispute.failure_reason = None
+    dispute.failed_at = None
+    ok, data = create_refund(str(transaction), refund_amount)
+    if not ok:
+        dispute.status = "failed"
+        dispute.failed_at = now
+        dispute.failure_reason = data.get("message") if isinstance(data, dict) else "Paystack error"
+        refresh_booking_dispute_holds(db, req.id)
+        db.commit()
+        raise HTTPException(status_code=400, detail=dispute.failure_reason or "Paystack refund failed")
+
+    response_data = data.get("data") if isinstance(data, dict) else None
+    response_data = response_data if isinstance(response_data, dict) else {}
+    dispute.paystack_refund_reference = str(
+        response_data.get("reference") or response_data.get("refund_reference") or response_data.get("id") or ""
+    ) or None
+    dispute.status = "refund_requested"
+    refresh_booking_dispute_holds(db, req.id)
+    log_audit(
+        db,
+        actor_user=admin_user,
+        target_user_id=dispute.parent_user_id,
+        entity="charge_disputes",
+        entity_id=dispute.id,
+        action="partial_refund_approved",
+        before_obj={"status": "open"},
+        after_obj={"status": dispute.status, "approved_refund_cents": refund_amount},
+        changed_fields=["status", "approved_refund_cents"],
+        request=None,
+    )
+    db.commit()
+    notify(
+        db,
+        dispute.parent_user_id,
+        "charge_query_refund_approved",
+        f"Finance approved a refund of R{refund_amount / 100:.2f}. Paystack is processing it now.",
+        reference_id=dispute.id,
+        action_url="/bookings",
+    )
+    db.commit()
+    return {"ok": True, "status": dispute.status, "approved_refund_cents": refund_amount}
+
+
+@router.post("/charge-disputes/{dispute_id}/deny", dependencies=[Depends(require_finance)])
+def deny_charge_dispute(
+    dispute_id: int,
+    payload: ChargeDisputeDecision,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin_user = _require_user(authorization, db)
+    dispute = db.query(models.ChargeDispute).filter(models.ChargeDispute.id == dispute_id).first()
+    if not dispute:
+        raise HTTPException(status_code=404, detail="Charge query not found")
+    if dispute.status not in ("open", "failed"):
+        raise HTTPException(status_code=400, detail="Charge query is not awaiting a finance decision")
+    dispute.status = "denied"
+    dispute.resolution_reason = payload.reason.strip()
+    dispute.reviewed_by_user_id = admin_user.id
+    dispute.reviewed_at = utc_now()
+    dispute.failure_reason = None
+    refresh_booking_dispute_holds(db, dispute.booking_request_id)
+    log_audit(
+        db,
+        actor_user=admin_user,
+        target_user_id=dispute.parent_user_id,
+        entity="charge_disputes",
+        entity_id=dispute.id,
+        action="query_denied",
+        before_obj={"status": "open"},
+        after_obj={"status": "denied", "reason": dispute.resolution_reason},
+        changed_fields=["status", "resolution_reason"],
+        request=None,
+    )
+    db.commit()
+    notify(
+        db,
+        dispute.parent_user_id,
+        "charge_query_denied",
+        f"Finance reviewed your charge query and did not approve a refund. Reason: {dispute.resolution_reason}",
+        reference_id=dispute.id,
+        action_url="/bookings",
+    )
+    db.commit()
+    return {"ok": True, "status": dispute.status}
 
 
 @router.post("/booking-requests/{job_id}/refund/approve", dependencies=[Depends(require_finance)])

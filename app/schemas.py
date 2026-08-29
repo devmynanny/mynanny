@@ -419,6 +419,14 @@ class BookingCancellationRequest(BaseModel):
     reason: str
 
 
+class ChargeDisputeCreate(BaseModel):
+    line_item: Literal["nanny_wage", "booking_fee", "overtime", "other"]
+    booking_id: Optional[int] = None
+    amount_cents: int = Field(ge=1)
+    reason: str = Field(min_length=3, max_length=200)
+    details: Optional[str] = Field(default=None, max_length=2000)
+
+
 class ParentPaymentMethodInitializeRequest(BaseModel):
     callback_url: Optional[str] = None
 

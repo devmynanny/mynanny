@@ -142,6 +142,7 @@ def run_scheduled_payouts(db: Session) -> None:
             models.Booking.payout_hold_until <= now,
             models.Booking.payout_released_at.is_(None),
             models.Booking.payout_disputed == False,  # noqa: E712
+            models.Booking.charge_dispute_hold == False,  # noqa: E712
         )
         .all()
     )

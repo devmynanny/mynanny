@@ -268,3 +268,41 @@ def test_admin_booking_overview_derives_zero_prices_from_the_paid_request():
         assert rows[long_booking.id]["price_cents"] > rows[short_booking.id]["price_cents"]
     finally:
         db.close()
+
+
+def test_admin_booking_calendar_keeps_completed_and_review_bookings_visible():
+    db = _db()
+    try:
+        admin = _seed_admin(db)
+        parent = _seed_parent(db)
+        nanny = _seed_nanny(db)
+        req = _seed_paid_request(db, parent, nanny)
+        req.status = "pending_admin"
+        start = datetime.utcnow() - timedelta(hours=2)
+        booking = models.Booking(
+            booking_request_id=req.id,
+            nanny_id=nanny.id,
+            client_user_id=parent.id,
+            day=start.date(),
+            status="admin_review",
+            price_cents=req.total_cents,
+            starts_at=start,
+            ends_at=start + timedelta(hours=1),
+            check_in_at=start,
+            check_out_at=start + timedelta(hours=1, minutes=20),
+            overrun_status="queried",
+        )
+        db.add(booking)
+        db.commit()
+        db.refresh(booking)
+
+        res = client.get("/admin/bookings/overview", headers=_auth(admin))
+        assert res.status_code == 200, res.text
+        calendar_ids = {
+            row["booking_id"]
+            for day in res.json()["month_calendar"]["days"]
+            for row in day["bookings"]
+        }
+        assert booking.id in calendar_ids
+    finally:
+        db.close()

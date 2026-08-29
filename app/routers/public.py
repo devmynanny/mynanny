@@ -30,6 +30,11 @@ from app.utils.time import utc_now
 from app import security
 from app.services.audit import log_audit, log_profile_update, log_booking_request_status_change, log_booking_status_change
 from app.services.cancellation import calculate_cancellation_outcome
+from app.services.charge_disputes import (
+    ACTIVE_DISPUTE_STATUSES,
+    refresh_booking_dispute_holds,
+    related_booking_request_ids,
+)
 from app.services.demerit import apply_demerit, apply_cancellation_weight, apply_no_show
 from app.services.google_calendar import sync_booking_to_google_calendar
 from app.services.payout import run_scheduled_payouts
@@ -6958,6 +6963,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
 
     slots_by_req: dict = {}
     bookings_by_req: dict = {}
+    disputes_by_req: dict = {}
     all_parent_bookings: list = []
     if all_req_ids:
         for slot in (
@@ -6976,6 +6982,13 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         for b in all_parent_bookings:
             if b.booking_request_id:
                 bookings_by_req.setdefault(b.booking_request_id, []).append(b)
+        for dispute in (
+            db.query(models.ChargeDispute)
+            .filter(models.ChargeDispute.booking_request_id.in_(all_req_ids))
+            .order_by(models.ChargeDispute.created_at.desc())
+            .all()
+        ):
+            disputes_by_req.setdefault(dispute.booking_request_id, []).append(dispute)
 
     reqs_by_group: dict = {}
     for req, _ in rows:
@@ -7066,6 +7079,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 "wage_cents": int(getattr(req, "wage_cents", None) or 0),
                 "booking_fee_cents": int(getattr(req, "booking_fee_cents", None) or 0),
                 "total_cents": int(getattr(req, "total_cents", None) or 0),
+                "payment_status": getattr(req, "payment_status", None),
                 "slots": [
                     {"start_dt": _to_iso_z(slot_start), "end_dt": _to_iso_z(slot_end)}
                     for slot_start, slot_end in windows
@@ -7083,6 +7097,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 "accepted_nannies": [],
                 "requested_nannies": [],
                 "booking_form": booking_form,
+                "charge_disputes": [],
                 "booking_days": [
                     {
                         "booking_id": booking.id,
@@ -7110,6 +7125,25 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
                 ],
             }
             entry = grouped[gid]
+            for group_req in reqs_by_group.get(gid, []):
+                for dispute in disputes_by_req.get(group_req.id, []):
+                    entry["charge_disputes"].append({
+                        "id": dispute.id,
+                        "booking_request_id": dispute.booking_request_id,
+                        "booking_id": dispute.booking_id,
+                        "line_item": dispute.line_item,
+                        "charge_amount_cents": dispute.charge_amount_cents,
+                        "disputed_amount_cents": dispute.disputed_amount_cents,
+                        "reason": dispute.reason,
+                        "details": dispute.details,
+                        "status": dispute.status,
+                        "approved_refund_cents": dispute.approved_refund_cents,
+                        "resolution_reason": dispute.resolution_reason,
+                        "created_at": dispute.created_at.isoformat() if dispute.created_at else None,
+                        "reviewed_at": dispute.reviewed_at.isoformat() if dispute.reviewed_at else None,
+                        "refunded_at": dispute.refunded_at.isoformat() if dispute.refunded_at else None,
+                        "failure_reason": dispute.failure_reason,
+                    })
         _resp = (getattr(req, "nanny_response_status", None) or "pending").lower()
         if req.status == "rejected" and _resp not in ("declined",):
             _resp = "unavailable" if req.admin_reason in ("filled", "filled_higher_rating", "expired") else _resp
@@ -7125,6 +7159,7 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
             entry["wage_cents"] = int(getattr(req, "wage_cents", None) or entry.get("wage_cents") or 0)
             entry["booking_fee_cents"] = int(getattr(req, "booking_fee_cents", None) or entry.get("booking_fee_cents") or 0)
             entry["total_cents"] = int(getattr(req, "total_cents", None) or entry.get("total_cents") or 0)
+            entry["payment_status"] = getattr(req, "payment_status", None) or entry.get("payment_status")
             entry["accepted_nanny_id"] = req.nanny_id
             entry["accepted_nanny_user_id"] = nanny_u.id
             entry["accepted_nanny_name"] = nanny_u.name
@@ -7148,6 +7183,119 @@ def list_parent_booking_requests(authorization: Optional[str] = Header(default=N
         entry["estimated_group_total_cents"] = int(entry.get("total_cents") or 0) * required
     results.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"results": results}
+
+
+@router.post("/parents/me/booking-requests/{job_id}/charge-disputes")
+def create_parent_charge_dispute(
+    job_id: int,
+    payload: schemas.ChargeDisputeCreate,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    user = _require_user(authorization, db)
+    if user.role != "parent":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    group_rows = (
+        db.query(models.BookingRequest)
+        .filter(
+            models.BookingRequest.parent_user_id == user.id,
+            or_(models.BookingRequest.group_id == job_id, models.BookingRequest.id == job_id),
+        )
+        .order_by(models.BookingRequest.status.desc(), models.BookingRequest.id.asc())
+        .all()
+    )
+    paid_rows = [row for row in group_rows if row.payment_status == "paid"]
+    if not paid_rows:
+        raise HTTPException(status_code=400, detail="Only paid bookings can be queried")
+    booking_request = next((row for row in paid_rows if row.status == "approved"), paid_rows[0])
+    request_ids = related_booking_request_ids(db, booking_request)
+
+    booking = None
+    if payload.booking_id is not None:
+        booking = (
+            db.query(models.Booking)
+            .filter(
+                models.Booking.id == payload.booking_id,
+                models.Booking.client_user_id == user.id,
+                models.Booking.booking_request_id.in_(request_ids),
+            )
+            .first()
+        )
+        if not booking:
+            raise HTTPException(status_code=404, detail="Booking day not found")
+
+    line_limits = {
+        "nanny_wage": int(booking_request.wage_cents or 0),
+        "booking_fee": int(booking_request.booking_fee_cents or 0),
+        "other": int(booking_request.total_cents or 0),
+        "overtime": int(getattr(booking, "overrun_amount_cents", 0) or 0) if booking else 0,
+    }
+    if payload.line_item == "overtime" and not booking:
+        raise HTTPException(status_code=400, detail="Choose the booking day for an overtime query")
+    charge_amount = line_limits[payload.line_item]
+    if charge_amount <= 0:
+        raise HTTPException(status_code=400, detail="That charge does not have a payable amount")
+    if payload.amount_cents > charge_amount:
+        raise HTTPException(status_code=400, detail="Query amount exceeds the selected charge")
+
+    duplicate = (
+        db.query(models.ChargeDispute.id)
+        .filter(
+            models.ChargeDispute.booking_request_id.in_(request_ids),
+            models.ChargeDispute.line_item == payload.line_item,
+            models.ChargeDispute.booking_id == payload.booking_id,
+            models.ChargeDispute.status.in_(ACTIVE_DISPUTE_STATUSES),
+        )
+        .first()
+    )
+    if duplicate:
+        raise HTTPException(status_code=400, detail="This charge already has an active query")
+
+    dispute = models.ChargeDispute(
+        booking_request_id=booking_request.id,
+        booking_id=payload.booking_id,
+        parent_user_id=user.id,
+        line_item=payload.line_item,
+        charge_amount_cents=charge_amount,
+        disputed_amount_cents=payload.amount_cents,
+        reason=payload.reason.strip(),
+        details=(payload.details or "").strip() or None,
+        status="open",
+    )
+    db.add(dispute)
+    db.flush()
+    refresh_booking_dispute_holds(db, booking_request.id)
+    log_audit(
+        db,
+        actor_user=user,
+        target_user_id=user.id,
+        entity="charge_disputes",
+        entity_id=dispute.id,
+        action="create",
+        before_obj=None,
+        after_obj={
+            "booking_request_id": booking_request.id,
+            "booking_id": payload.booking_id,
+            "line_item": payload.line_item,
+            "disputed_amount_cents": payload.amount_cents,
+            "status": "open",
+        },
+        changed_fields=["status"],
+        request=request,
+    )
+    db.commit()
+    notify(
+        db,
+        user.id,
+        "charge_query_opened",
+        f"Your query for R{payload.amount_cents / 100:.2f} has been sent to the finance team.",
+        reference_id=dispute.id,
+        action_url="/bookings",
+    )
+    db.commit()
+    return {"ok": True, "id": dispute.id, "status": dispute.status}
 
 
 @router.get("/parents/me/nannies/{nanny_id}/profile")
@@ -10191,8 +10339,6 @@ def list_admin_bookings_overview(
             elif request_booking_state == "cancelled" and req.id not in booking_request_ids:
                 cancelled_bookings.append(item)
                 unsuccessful_bookings.append(item)
-            elif request_booking_state == "cancelled" and req.id not in booking_request_ids:
-                unsuccessful_bookings.append(item)
         except Exception:
             continue
 
@@ -10259,11 +10405,11 @@ def list_admin_bookings_overview(
             }
             if is_live_booking:
                 confirmed_bookings.append(item)
-            if is_live_booking and start_dt:
+            if start_dt:
                 local_start = start_dt.replace(tzinfo=timezone.utc).astimezone(local_tz) if start_dt.tzinfo is None else start_dt.astimezone(local_tz)
-                if local_start.date() == tomorrow:
+                if is_live_booking and local_start.date() == tomorrow:
                     bookings_tomorrow.append(item)
-                if month_start <= local_start.date() <= month_end:
+                if booking_state != "cancelled" and month_start <= local_start.date() <= month_end:
                     month_confirmed_bookings.append(item)
             if booking_state == "cancelled":
                 cancelled_bookings.append(item)
@@ -11793,17 +11939,71 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         tx_ref = transaction.get("reference")
     elif transaction is not None:
         tx_id = transaction
-    tx_ref = tx_ref or data.get("transaction_reference") or data.get("reference")
+    # data.reference identifies the refund itself. Only transaction_reference
+    # may be used to locate the original booking payment.
+    tx_ref = tx_ref or data.get("transaction_reference")
 
-    q = db.query(models.BookingRequest)
+    dispute = None
+    if refund_ref:
+        dispute = (
+            db.query(models.ChargeDispute)
+            .filter(models.ChargeDispute.paystack_refund_reference == str(refund_ref))
+            .first()
+        )
+
+    req = None
     if tx_id is not None:
-        q = q.filter(models.BookingRequest.paystack_transaction_id == str(tx_id))
+        req = (
+            db.query(models.BookingRequest)
+            .filter(models.BookingRequest.paystack_transaction_id == str(tx_id))
+            .first()
+        )
     elif tx_ref:
-        q = q.filter(models.BookingRequest.paystack_reference == str(tx_ref))
-    else:
+        req = (
+            db.query(models.BookingRequest)
+            .filter(models.BookingRequest.paystack_reference == str(tx_ref))
+            .first()
+        )
+
+    if not dispute and req:
+        dispute = (
+            db.query(models.ChargeDispute)
+            .filter(
+                models.ChargeDispute.booking_request_id == req.id,
+                models.ChargeDispute.status == "refund_requested",
+            )
+            .order_by(models.ChargeDispute.reviewed_at.desc(), models.ChargeDispute.id.desc())
+            .first()
+        )
+    if dispute:
+        if refund_ref:
+            dispute.paystack_refund_reference = str(refund_ref)
+        if event == "refund.processed":
+            dispute.status = "refunded"
+            dispute.refunded_at = utc_now()
+            dispute.failure_reason = None
+            dispute.failed_at = None
+            event_type = "refund_processed"
+            message = f"Your charge query refund of R{int(dispute.approved_refund_cents or 0) / 100:.2f} has been processed."
+        else:
+            dispute.status = "failed"
+            dispute.failed_at = utc_now()
+            dispute.failure_reason = data.get("message") or data.get("gateway_response") or "Paystack refund failed"
+            event_type = "charge_query_failed"
+            message = "Your approved refund could not be processed automatically. The My Nanny team has been notified."
+        refresh_booking_dispute_holds(db, dispute.booking_request_id)
+        db.commit()
+        notify(
+            db,
+            dispute.parent_user_id,
+            event_type,
+            message,
+            reference_id=dispute.id,
+            action_url="/bookings",
+        )
+        db.commit()
         return {"ok": True}
 
-    req = q.first()
     if not req:
         return {"ok": True}
 

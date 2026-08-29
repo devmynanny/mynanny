@@ -1,6 +1,6 @@
 from .availability import NannyAvailability as Availability
 from .availability import NannyAvailability
-from .bookings import BookingRequest, BookingRequestSlot, BookingPricingSnapshot
+from .bookings import BookingRequest, BookingRequestSlot, BookingPricingSnapshot, ChargeDispute
 from app.db import Base
 
 from sqlalchemy import (
@@ -174,6 +174,7 @@ class Booking(Base):
     payout_amount_cents = Column(Integer, nullable=True)
     payout_debt_deducted_cents = Column(Integer, nullable=False, default=0)
     payout_disputed = Column(Boolean, nullable=False, default=False)
+    charge_dispute_hold = Column(Boolean, nullable=False, default=False, server_default="0")
     payout_dispute_raised_at = Column(DateTime, nullable=True)
     payout_resolved_at = Column(DateTime, nullable=True)
     payout_resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
