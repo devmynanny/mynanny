@@ -737,11 +737,24 @@ function AdminHome() {
       .catch(() => setReviewCount(0));
   }, []);
   function openBooking(id: number) {
-    const day = bookingOverview?.month_calendar.days.find((item) =>
+    let day = bookingOverview?.month_calendar.days.find((item) =>
       item.bookings.some(
         (booking) => booking.booking_id === id || booking.request_id === id,
       ),
     );
+    if (!day) {
+      const booking = bookingOverview?.bookings_tomorrow.find(
+        (item) => item.booking_id === id || item.request_id === id,
+      );
+      if (booking) {
+        const date = johannesburgDateKey(new Date(booking.start_dt));
+        day = {
+          date,
+          day: Number(date.slice(-2)),
+          bookings: [booking],
+        };
+      }
+    }
     if (!day) return;
     setSelectedBookingId(id);
     setSelectedBookingDay(day);
@@ -751,6 +764,10 @@ function AdminHome() {
     (day) => day.date === johannesburgDateKey(),
   );
   const todayBookings = [...(today?.bookings || [])].sort(
+    (left, right) =>
+      new Date(left.start_dt).getTime() - new Date(right.start_dt).getTime(),
+  );
+  const tomorrowBookings = [...(bookingOverview?.bookings_tomorrow || [])].sort(
     (left, right) =>
       new Date(left.start_dt).getTime() - new Date(right.start_dt).getTime(),
   );
@@ -837,6 +854,50 @@ function AdminHome() {
           {overviewError && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
               Today&apos;s bookings could not be loaded. Open Bookings to retry.
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="card mt-6 p-6">
+        <div>
+          <div className="eyebrow">Tomorrow</div>
+          <h2 className="mt-2 text-xl font-bold">Booking operations</h2>
+        </div>
+        <div className="mt-5 grid gap-3">
+          {tomorrowBookings.map((booking, index) => {
+            const id = booking.booking_id || booking.request_id;
+            return (
+              <button
+                type="button"
+                onClick={() => id && openBooking(id)}
+                key={`${booking.source}-${id || index}`}
+                className="group flex w-full flex-wrap items-center gap-4 rounded-2xl border border-[var(--line)] p-4 text-left transition hover:-translate-y-0.5 hover:border-[var(--blue)] hover:shadow-md disabled:cursor-wait disabled:opacity-60"
+                disabled={!id}
+              >
+                <div className="font-bold">{bookingTime(booking.start_dt)}</div>
+                <div className="min-w-[220px] flex-1 text-sm">
+                  {booking.nanny_name || "Nanny assignment pending"} with{" "}
+                  {booking.parent_name || "parent"}
+                </div>
+                <span className="pill">{bookingStatus(booking)}</span>
+                <ArrowRight className="text-[var(--blue-dark)]" size={17} />
+              </button>
+            );
+          })}
+          {!bookingOverview && !overviewError && (
+            <div className="rounded-2xl border border-[var(--line)] p-5 text-sm text-[var(--muted)]">
+              Loading tomorrow&apos;s bookings...
+            </div>
+          )}
+          {bookingOverview && tomorrowBookings.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-[var(--line)] p-5 text-sm text-[var(--muted)]">
+              No confirmed bookings are scheduled for tomorrow.
+            </div>
+          )}
+          {overviewError && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-950">
+              Tomorrow&apos;s bookings could not be loaded. Open Bookings to
+              retry.
             </div>
           )}
         </div>

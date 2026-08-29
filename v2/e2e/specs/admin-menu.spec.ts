@@ -52,6 +52,40 @@ test("every admin menu destination loads without a server failure", async ({
   expect(failures, failures.join("\n")).toEqual([]);
 });
 
+test("admin overview includes live today and tomorrow operations", async ({
+  page,
+}) => {
+  await signInAsAdmin(page);
+
+  await expect(page.getByText("Today", { exact: true })).toBeVisible();
+  await expect(page.getByText("Tomorrow", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("No confirmed bookings are scheduled for tomorrow."),
+  ).toBeVisible();
+});
+
+test("finance supports calendar month and custom reporting periods", async ({
+  page,
+}) => {
+  await signInAsAdmin(page);
+  await page.getByRole("link", { name: "Finance", exact: true }).click();
+
+  const reportingPeriod = page.getByLabel("Reporting period");
+  await reportingPeriod.selectOption("this_month");
+  await expect(reportingPeriod).toHaveValue("this_month");
+
+  await reportingPeriod.selectOption("last_month");
+  await expect(reportingPeriod).toHaveValue("last_month");
+
+  await reportingPeriod.selectOption("custom");
+  await page.getByLabel("From", { exact: true }).fill("2026-08-01");
+  await page.getByLabel("To", { exact: true }).fill("2026-08-29");
+  await expect(page.getByLabel("From", { exact: true })).toHaveValue("2026-08-01");
+  await expect(page.getByLabel("To", { exact: true })).toHaveValue("2026-08-29");
+  await expect(page.getByText("Choose a valid custom date range.")).toHaveCount(0);
+  await expect(page.getByText("Internal Server Error", { exact: true })).toHaveCount(0);
+});
+
 async function signInAsAdmin(page: Page) {
   await page.goto("/login");
   await page.getByLabel("Email address").fill("admin.e2e@example.test");

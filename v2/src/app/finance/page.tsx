@@ -23,6 +23,36 @@ type Reconciliation = {
 const money = (value: number | string | undefined) => `R${(Number(value || 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString("en-ZA") : "Not yet";
 const label = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+const inputDate = (value: Date) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+function reportingQuery(range: string, customStart: string, customEnd: string) {
+  const now = new Date();
+  let start: Date | null = null;
+  let end: Date | null = null;
+
+  if (range === "this_month") {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = now;
+  } else if (range === "last_month") {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    end = new Date(now.getFullYear(), now.getMonth(), 1);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (range === "custom") {
+    if (!customStart || !customEnd || customEnd < customStart) return null;
+    start = new Date(`${customStart}T00:00:00`);
+    end = new Date(`${customEnd}T23:59:59.999`);
+  }
+
+  if (start && end) {
+    return new URLSearchParams({ range, start: start.toISOString(), end: end.toISOString() }).toString();
+  }
+  return new URLSearchParams({ range }).toString();
+}
 
 export default function FinancePage() {
   return <AuthenticatedPage>{(role) => role === "admin" ? <Finance /> : <AccessDenied />}</AuthenticatedPage>;
@@ -30,6 +60,8 @@ export default function FinancePage() {
 
 function Finance() {
   const [range, setRange] = useState("month");
+  const [customStart, setCustomStart] = useState(() => inputDate(new Date()));
+  const [customEnd, setCustomEnd] = useState(() => inputDate(new Date()));
   const [status, setStatus] = useState("all");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [payouts, setPayouts] = useState<Payout[]>([]);
@@ -42,7 +74,11 @@ function Finance() {
   async function load() {
     setLoading(true); setError("");
     try {
-      const query = `range=${range}`;
+      const query = reportingQuery(range, customStart, customEnd);
+      if (!query) {
+        setError("Choose a valid custom date range. The end date cannot be before the start date.");
+        return;
+      }
       const [summaryResult, payoutResult, reconciliationResult] = await Promise.all([
         apiJson<Summary>(`/admin/accounting/summary?${query}`),
         apiJson<{ results: Payout[] }>(`/admin/accounting/payouts?${query}&status=${status}`),
@@ -54,7 +90,7 @@ function Finance() {
     finally { setLoading(false); }
   }
   const loadForFilters = useEffectEvent(load);
-  useEffect(() => { Promise.resolve().then(() => loadForFilters()); }, [range, status, onlyMismatches]);
+  useEffect(() => { Promise.resolve().then(() => loadForFilters()); }, [range, customStart, customEnd, status, onlyMismatches]);
 
   const metrics = summary ? [
     ["Payments processed", money(summary.payments_processed_cents), `${summary.payments_processed_count || 0} transactions`],
@@ -70,7 +106,31 @@ function Finance() {
   return <div className="mx-auto max-w-[1500px]">
     <div className="eyebrow">Financial operations</div>
     <div className="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h1 className="display text-4xl sm:text-5xl">Finance & payouts.</h1><p className="mt-3 text-[var(--muted)]">Monitor money collected, nanny earnings, payout readiness and ledger integrity.</p></div><button className="btn-secondary" onClick={() => void load()} disabled={loading}><RefreshCw size={17} className={loading ? "animate-spin" : ""}/>Refresh</button></div>
-    <div className="card mt-7 flex flex-wrap gap-4 p-4"><label className="min-w-52"><span className="mb-2 block text-xs font-bold uppercase text-[var(--muted)]">Reporting period</span><select className="field" value={range} onChange={(e) => setRange(e.target.value)}><option value="day">Today</option><option value="week">Last 7 days</option><option value="month">Last 30 days</option><option value="quarter">Last 3 months</option><option value="year">Last 12 months</option></select></label></div>
+    <div className="card mt-7 flex flex-wrap items-end gap-4 p-4">
+      <label className="min-w-52">
+        <span className="mb-2 block text-xs font-bold uppercase text-[var(--muted)]">Reporting period</span>
+        <select className="field" value={range} onChange={(e) => setRange(e.target.value)}>
+          <option value="day">Today</option>
+          <option value="this_month">This month</option>
+          <option value="last_month">Last month</option>
+          <option value="week">Last 7 days</option>
+          <option value="month">Last 30 days</option>
+          <option value="quarter">Last 3 months</option>
+          <option value="year">Last 12 months</option>
+          <option value="custom">Custom date</option>
+        </select>
+      </label>
+      {range === "custom" && <>
+        <label className="min-w-48">
+          <span className="mb-2 block text-xs font-bold uppercase text-[var(--muted)]">From</span>
+          <input className="field" type="date" value={customStart} max={customEnd} onChange={(e) => setCustomStart(e.target.value)}/>
+        </label>
+        <label className="min-w-48">
+          <span className="mb-2 block text-xs font-bold uppercase text-[var(--muted)]">To</span>
+          <input className="field" type="date" value={customEnd} min={customStart} onChange={(e) => setCustomEnd(e.target.value)}/>
+        </label>
+      </>}
+    </div>
     {error && <div role="alert" className="mt-5 rounded-2xl bg-red-50 p-4 text-red-800">{error}</div>}
     {loading && !summary ? <Loading /> : <>
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{metrics.map(([title, value, note]) => <div className="card p-5" key={title}><div className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">{title}</div><div className="mt-3 text-3xl font-extrabold">{value}</div><div className="mt-2 text-sm text-[var(--muted)]">{note}</div></div>)}</div>
