@@ -24,6 +24,7 @@ def claim_notification_dispatch(
         models.NotificationLog.event_type == event_type,
         models.NotificationLog.reference_id == reference_id,
         models.NotificationLog.status != "suppressed",
+        models.NotificationLog.channel != "in_app",
     )
     if legacy_message_marker:
         legacy = legacy.filter(

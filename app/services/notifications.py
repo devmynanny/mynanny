@@ -37,6 +37,7 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     # Booking lifecycle.
     "booking_confirmed": {"channels": ("chat", "email"), "in_app": True},
     "booking_cancelled": {"channels": ("chat", "email"), "in_app": True},
+    "notification_system_test": {"channels": ("chat", "email"), "in_app": True},
     "nanny_no_show_parent_notice": {"channels": ("chat", "email"), "in_app": True},
     "parent_no_show_nanny_notice": {"channels": ("chat", "email"), "in_app": True},
     "nanny_accepted": {"channels": ("chat", "email")},

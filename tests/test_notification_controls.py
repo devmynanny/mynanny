@@ -234,3 +234,59 @@ def test_superadmin_can_update_controls_and_read_delivery_activity(db):
     log_response = client.get("/admin/notification-log?limit=5", headers=_auth(admin))
     assert log_response.status_code == 200, log_response.text
     assert isinstance(log_response.json()["results"], list)
+
+
+def test_superadmin_safety_test_respects_switch_test_mode_and_deduplication(db, monkeypatch):
+    admin = _superadmin(db)
+    settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).one()
+    settings.automated_notifications_enabled = False
+    db.commit()
+    sent = []
+    monkeypatch.setattr(
+        notifications.messaging,
+        "send_whatsapp_message",
+        lambda phone, body, template_name=None: (sent.append((phone, body, template_name)) or (True, "SMsafetytest")),
+    )
+
+    disabled = client.post(
+        "/admin/notification-controls/test",
+        headers=_auth(admin),
+        json={"reference_id": 92001},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["delivered"] is False
+    external_attempts = [
+        attempt for attempt in disabled.json()["attempts"] if attempt["channel"] != "in_app"
+    ]
+    in_app_attempts = [
+        attempt for attempt in disabled.json()["attempts"] if attempt["channel"] == "in_app"
+    ]
+    assert {attempt["status"] for attempt in external_attempts} == {"suppressed"}
+    assert {attempt["status"] for attempt in in_app_attempts} == {"sent"}
+    assert sent == []
+
+    settings = db.query(models.AppSettings).filter(models.AppSettings.id == 1).one()
+    settings.automated_notifications_enabled = True
+    settings.notification_test_mode = True
+    settings.notification_test_phone = "+27764024363"
+    db.commit()
+
+    enabled = client.post(
+        "/admin/notification-controls/test",
+        headers=_auth(admin),
+        json={"reference_id": 92001},
+    )
+    duplicate = client.post(
+        "/admin/notification-controls/test",
+        headers=_auth(admin),
+        json={"reference_id": 92001},
+    )
+
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["delivered"] is True
+    assert enabled.json()["test_mode"] is True
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["delivered"] is False
+    assert len(sent) == 1
+    assert sent[0][0] == "+27764024363"
+    assert sent[0][1].startswith("[TEST for Notification Superadmin")

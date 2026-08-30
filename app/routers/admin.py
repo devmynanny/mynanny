@@ -67,6 +67,10 @@ class NotificationControlsPayload(BaseModel):
     notification_volume_alert_threshold: int = Field(default=30, ge=1, le=1000)
 
 
+class NotificationTestPayload(BaseModel):
+    reference_id: int = Field(ge=1)
+
+
 class LookupPayload(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
@@ -403,6 +407,65 @@ def get_notification_log(
             }
             for log, user in rows
         ]
+    }
+
+
+@router.post("/notification-controls/test")
+def run_notification_control_test(
+    payload: NotificationTestPayload,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_superadmin(authorization, db)
+    message = f"My Nanny notification safety test #{payload.reference_id}. No action is required."
+    delivered = notify(
+        db,
+        admin.id,
+        "notification_system_test",
+        message,
+        reference_id=payload.reference_id,
+        action_url="/profile",
+    )
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=admin.id,
+        entity="notification_test",
+        entity_id=payload.reference_id,
+        action="notification_safety_test_requested",
+        before_obj=None,
+        after_obj={"delivered": delivered},
+        changed_fields=None,
+        request=request,
+    )
+    db.commit()
+    controls = load_notification_controls(db)
+    attempts = (
+        db.query(models.NotificationLog)
+        .filter(
+            models.NotificationLog.user_id == admin.id,
+            models.NotificationLog.event_type == "notification_system_test",
+            models.NotificationLog.reference_id == payload.reference_id,
+        )
+        .order_by(models.NotificationLog.id.asc())
+        .all()
+    )
+    return {
+        "reference_id": payload.reference_id,
+        "delivered": delivered,
+        "effective_enabled": controls.effective_enabled,
+        "test_mode": controls.test_mode,
+        "attempts": [
+            {
+                "channel": row.channel,
+                "status": row.status,
+                "destination": row.destination,
+                "test_redirected": bool(row.test_redirected),
+                "provider_message_id": row.provider_message_id,
+            }
+            for row in attempts
+        ],
     }
 
 
