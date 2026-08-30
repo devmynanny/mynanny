@@ -216,7 +216,15 @@ def expire_stale_adverts_wrapper() -> None:
         db.close()
 
 
+def _automated_notifications_enabled() -> bool:
+    default = "false" if os.getenv("APP_ENV", "").strip().lower() == "production" else "true"
+    value = os.getenv("AUTOMATED_NOTIFICATIONS_ENABLED", default).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def retry_failed_notifications_wrapper() -> None:
+    if not _automated_notifications_enabled():
+        return
     db = SessionLocal()
     try:
         retry_failed_notifications(db)
@@ -225,6 +233,8 @@ def retry_failed_notifications_wrapper() -> None:
 
 
 def passport_compliance_wrapper() -> None:
+    if not _automated_notifications_enabled():
+        return
     db = SessionLocal()
     try:
         run_passport_compliance(db)
@@ -233,6 +243,8 @@ def passport_compliance_wrapper() -> None:
 
 
 def duty_notification_sweep_wrapper() -> None:
+    if not _automated_notifications_enabled():
+        return
     db = SessionLocal()
     try:
         run_duty_notification_sweep(db)
@@ -245,10 +257,11 @@ async def _startup_scheduler() -> None:
     if not scheduler.get_jobs():
         scheduler.add_job(run_scheduled_payouts_wrapper, "interval", minutes=30)
         scheduler.add_job(expire_stale_adverts_wrapper, "interval", minutes=30)
-        scheduler.add_job(retry_failed_notifications_wrapper, "interval", minutes=15)
-        scheduler.add_job(duty_notification_sweep_wrapper, "interval", minutes=5)
-        scheduler.add_job(passport_compliance_wrapper, "interval", hours=24)
-        passport_compliance_wrapper()
+        if _automated_notifications_enabled():
+            scheduler.add_job(retry_failed_notifications_wrapper, "interval", minutes=15)
+            scheduler.add_job(duty_notification_sweep_wrapper, "interval", minutes=5)
+            scheduler.add_job(passport_compliance_wrapper, "interval", hours=24)
+            passport_compliance_wrapper()
     if not scheduler.running:
         scheduler.start()
 

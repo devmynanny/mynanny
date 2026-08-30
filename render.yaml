@@ -12,6 +12,8 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: AUTOMATED_NOTIFICATIONS_ENABLED
+        value: "false"
       - key: V2_BASE_URL
         value: https://mynanny-v2.onrender.com
       - key: DATABASE_URL
