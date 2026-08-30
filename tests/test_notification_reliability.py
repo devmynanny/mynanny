@@ -159,6 +159,30 @@ def test_retry_sweep_resends_failed_and_respects_success(db, monkeypatch):
     assert notif.retry_failed_notifications(db) == 0
 
 
+@pytest.mark.parametrize("provider_status", ["accepted", "queued", "sending", "delivered", "read"])
+def test_retry_sweep_treats_provider_lifecycle_status_as_success(db, provider_status):
+    user = _seed_user(db)
+    db.add(models.NotificationLog(
+        user_id=user.id,
+        event_type="booking_confirmed",
+        channel="whatsapp",
+        status="failed",
+        reference_id=78,
+        message="Confirmed!",
+    ))
+    db.add(models.NotificationLog(
+        user_id=user.id,
+        event_type="booking_confirmed",
+        channel="whatsapp",
+        status=provider_status,
+        reference_id=78,
+        message="Confirmed!",
+    ))
+    db.commit()
+
+    assert notif.retry_failed_notifications(db) == 0
+
+
 def test_retry_sweep_caps_attempts(db, monkeypatch):
     user = _seed_user(db)
     email_client = _FakeEmailClient(fail=True)

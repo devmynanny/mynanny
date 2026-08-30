@@ -460,7 +460,7 @@ def retry_failed_notifications(
     for row in rows:
         key = (row.user_id, row.event_type, row.reference_id)
         entry = grouped.setdefault(key, {"failed": 0, "sent": False, "message": None})
-        if row.status in {"accepted", "sent", "delivered", "read"}:
+        if row.status in {"accepted", "queued", "sending", "sent", "delivered", "read"}:
             entry["sent"] = True
         elif row.status == "failed":
             entry["failed"] += 1

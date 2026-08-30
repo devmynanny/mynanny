@@ -102,6 +102,39 @@ def test_start_reminder_is_sent_once_across_repeated_sweeps(db):
     assert in_app.action_url == "/bookings"
 
 
+@pytest.mark.parametrize("provider_status", ["accepted", "queued", "sending", "delivered", "read"])
+def test_start_reminder_stays_deduplicated_after_provider_status_callback(db, provider_status):
+    parent, nanny_user, nanny, _ = _seed_people(db)
+    now = datetime.utcnow().replace(microsecond=0)
+    booking = _booking(
+        db,
+        parent=parent,
+        nanny=nanny,
+        starts_at=now + timedelta(minutes=60),
+        ends_at=now + timedelta(hours=3),
+    )
+    existing = models.NotificationLog(
+        user_id=nanny_user.id,
+        event_type="booking_start_reminder",
+        channel="whatsapp",
+        status=provider_status,
+        reference_id=booking.id,
+        message="Existing reminder",
+    )
+    db.add(existing)
+    db.commit()
+
+    result = run_duty_notification_sweep(db, now=now + timedelta(minutes=5))
+
+    assert result["start_reminders"] == 0
+    rows = db.query(models.NotificationLog).filter(
+        models.NotificationLog.user_id == nanny_user.id,
+        models.NotificationLog.event_type == "booking_start_reminder",
+        models.NotificationLog.reference_id == booking.id,
+    ).all()
+    assert len(rows) == 1
+
+
 def test_missed_checkin_escalates_and_finished_duty_prompts_checkout(db):
     parent, nanny_user, nanny, admin = _seed_people(db)
     now = datetime.utcnow().replace(microsecond=0)

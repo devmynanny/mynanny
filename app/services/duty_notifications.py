@@ -11,6 +11,15 @@ from app.utils.time import utc_now
 
 
 ACTIVE_DUTY_STATUSES = ("approved", "accepted", "active", "in_progress")
+DELIVERED_NOTIFICATION_STATUSES = (
+    "pending",
+    "accepted",
+    "queued",
+    "sending",
+    "sent",
+    "delivered",
+    "read",
+)
 
 
 def _aware(value: Optional[datetime]) -> Optional[datetime]:
@@ -30,7 +39,7 @@ def _already_sent(db: Session, user_id: Optional[int], event_type: str, referenc
             models.NotificationLog.user_id == user_id,
             models.NotificationLog.event_type == event_type,
             models.NotificationLog.reference_id == reference_id,
-            models.NotificationLog.status == "sent",
+            models.NotificationLog.status.in_(DELIVERED_NOTIFICATION_STATUSES),
         )
         .first()
         is not None
