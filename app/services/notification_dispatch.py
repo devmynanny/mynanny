@@ -23,6 +23,7 @@ def claim_notification_dispatch(
         models.NotificationLog.user_id == user_id,
         models.NotificationLog.event_type == event_type,
         models.NotificationLog.reference_id == reference_id,
+        models.NotificationLog.status != "suppressed",
     )
     if legacy_message_marker:
         legacy = legacy.filter(

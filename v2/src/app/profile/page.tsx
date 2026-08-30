@@ -8,7 +8,7 @@ import {
 } from "@/components/google-address-input";
 import { NannyLocationConfirmation } from "@/components/nanny-location-confirmation";
 import { apiFetch, apiJson } from "@/lib/api";
-import { Camera, Check, CreditCard, FileUp, KeyRound, LoaderCircle, MapPin, Save, Settings2, ShieldCheck, Wallet } from "lucide-react";
+import { BellRing, Camera, Check, CreditCard, FileUp, KeyRound, LoaderCircle, MapPin, Power, RefreshCw, Save, Settings2, ShieldCheck, Wallet } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -29,6 +29,19 @@ type PaymentMethod = {
   has_card: boolean;
   card_brand?: string | null;
   card_last4?: string | null;
+};
+type NotificationLogRow = {
+  id: number;
+  recipient_name?: string | null;
+  event_type: string;
+  channel: string;
+  status: string;
+  reference_id?: number | null;
+  destination?: string | null;
+  test_redirected: boolean;
+  provider_message_id?: string | null;
+  error_message?: string | null;
+  created_at?: string | null;
 };
 const nationalities = [
   "Angolan",
@@ -958,6 +971,8 @@ function AdminSettings() {
   const [pricing, setPricing] = useState<Data | null>(null);
   const [integration, setIntegration] = useState<Data | null>(null);
   const [workflow, setWorkflow] = useState<Data | null>(null);
+  const [notificationControls, setNotificationControls] = useState<Data | null>(null);
+  const [notificationLogs, setNotificationLogs] = useState<NotificationLogRow[]>([]);
   const [mapsKey, setMapsKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -968,7 +983,9 @@ function AdminSettings() {
       apiJson<Data>("/admin/pricing"),
       apiJson<Data>("/admin/integrations/google-maps"),
       apiJson<Data>("/admin/platform-workflow"),
-    ]).then(([priceSettings, integrationSettings, workflowSettings]) => {
+      apiJson<Data>("/admin/notification-controls"),
+      apiJson<{ results: NotificationLogRow[] }>("/admin/notification-log?limit=30"),
+    ]).then(([priceSettings, integrationSettings, workflowSettings, notificationSettings, notificationLog]) => {
       setPricing({
         ...priceSettings,
         booking_fee_pct_1_5: Number(priceSettings.booking_fee_pct_1_5 || 0) * 100,
@@ -981,6 +998,8 @@ function AdminSettings() {
       });
       setIntegration(integrationSettings);
       setWorkflow(workflowSettings);
+      setNotificationControls(notificationSettings);
+      setNotificationLogs(notificationLog.results || []);
     }).catch((error) => setMessage(error instanceof Error ? error.message : "Unable to load platform settings."))
       .finally(() => setLoading(false));
   }, []);
@@ -1059,6 +1078,41 @@ function AdminSettings() {
     }
   }
 
+  async function loadNotificationLogs() {
+    try {
+      const data = await apiJson<{ results: NotificationLogRow[] }>("/admin/notification-log?limit=30");
+      setNotificationLogs(data.results || []);
+      const controls = await apiJson<Data>("/admin/notification-controls");
+      setNotificationControls(controls);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to refresh notification activity.");
+    }
+  }
+
+  async function saveNotificationControls() {
+    if (!notificationControls) return;
+    setSaving("notifications");
+    setMessage("");
+    try {
+      const result = await apiJson<Data>("/admin/notification-controls", {
+        method: "PUT",
+        body: JSON.stringify({
+          automated_notifications_enabled: Boolean(notificationControls.automated_notifications_enabled),
+          notification_test_mode: Boolean(notificationControls.notification_test_mode),
+          notification_test_phone: String(notificationControls.notification_test_phone || "").trim(),
+          notification_volume_alert_threshold: Number(notificationControls.notification_volume_alert_threshold || 30),
+        }),
+      });
+      setNotificationControls(result);
+      setMessage(result.effective_enabled ? "System notifications are active." : "System notifications are safely switched off. In-app alerts and the manual Communicator remain available.");
+      await loadNotificationLogs();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save notification controls.");
+    } finally {
+      setSaving("");
+    }
+  }
+
   if (loading) return <Loading />;
   return (
     <ProfileLayout
@@ -1066,6 +1120,38 @@ function AdminSettings() {
       intro="Control booking rates, platform fees, payout timing and location integrations used throughout My Nanny."
     >
       {message && <div className="rounded-2xl bg-[var(--blue-pale)] p-4 text-sm font-semibold">{message}</div>}
+      {notificationControls && (
+        <SettingsPanel icon={<BellRing />} title="System notifications" intro="Control booking, payment and operational WhatsApp, Telegram and email notifications from one place. Manual Communicator and security messages remain available.">
+          <div className={`rounded-2xl border p-5 ${notificationControls.effective_enabled ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className={`mt-0.5 flex h-10 w-10 items-center justify-center rounded-full ${notificationControls.effective_enabled ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}><Power size={19}/></span>
+                <div><div className="font-bold">Effective delivery: {notificationControls.effective_enabled ? "ON" : "OFF"}</div><p className="mt-1 text-sm text-[var(--muted)]">Backend: {notificationControls.backend_service}. Web: {notificationControls.frontend_service}.</p></div>
+              </div>
+              <button type="button" role="switch" aria-checked={Boolean(notificationControls.automated_notifications_enabled)} className={`rounded-full px-5 py-3 text-sm font-bold transition ${notificationControls.automated_notifications_enabled ? "bg-[var(--green)] text-white" : "bg-slate-200 text-slate-700"}`} onClick={() => setNotificationControls((current) => ({ ...current, automated_notifications_enabled: !current?.automated_notifications_enabled }))}>{notificationControls.automated_notifications_enabled ? "System delivery enabled" : "System delivery disabled"}</button>
+            </div>
+            {notificationControls.emergency_override_active && <div className="mt-4 rounded-xl bg-white/80 p-3 text-sm font-semibold text-amber-900">The Render emergency override is OFF, so the backend will suppress delivery even if the admin switch is enabled.</div>}
+          </div>
+
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <div className="rounded-2xl border border-[var(--line)] p-5">
+              <div className="flex items-center justify-between gap-4"><div><div className="font-bold">Safe test routing</div><p className="mt-1 text-sm text-[var(--muted)]">Redirect system messages to one WhatsApp number and prevent email or Telegram delivery to real users.</p></div><button type="button" role="switch" aria-checked={Boolean(notificationControls.notification_test_mode)} className={`rounded-full px-4 py-2 text-sm font-bold ${notificationControls.notification_test_mode ? "bg-[var(--blue-dark)] text-white" : "bg-slate-200 text-slate-700"}`} onClick={() => setNotificationControls((current) => ({ ...current, notification_test_mode: !current?.notification_test_mode }))}>{notificationControls.notification_test_mode ? "Test mode on" : "Test mode off"}</button></div>
+              <label className="mt-4 block"><span className="mb-2 block text-sm font-bold">WhatsApp test number</span><input className="field" value={notificationControls.notification_test_phone || ""} onChange={(event) => setNotificationControls((current) => ({ ...current, notification_test_phone: event.target.value }))} placeholder="+27821234567"/><small className="mt-2 block text-[var(--muted)]">The number must message My Nanny first to open a 24-hour test window. Test messages identify their intended recipient.</small></label>
+            </div>
+            <div className="rounded-2xl border border-[var(--line)] p-5">
+              <div className="font-bold">Hourly volume warning</div><p className="mt-1 text-sm text-[var(--muted)]">Warn operations when an unusual number of external deliveries is attempted.</p>
+              <label className="mt-4 block"><span className="mb-2 block text-sm font-bold">Alert threshold</span><input type="number" min={1} max={1000} className="field" value={notificationControls.notification_volume_alert_threshold || 30} onChange={(event) => setNotificationControls((current) => ({ ...current, notification_volume_alert_threshold: Number(event.target.value) }))}/></label>
+              <div className={`mt-4 rounded-xl p-3 text-sm font-semibold ${notificationControls.volume_alert ? "bg-red-50 text-red-800" : "bg-slate-50 text-slate-700"}`}>{notificationControls.recent_external_attempts_1h || 0} external attempts in the last hour{notificationControls.volume_alert ? " - investigate before enabling more delivery." : "."}</div>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-4"><p className="text-sm text-[var(--muted)]">Changes are read by the backend before each system notification. No restart is required.</p><button className="btn-primary" disabled={saving === "notifications"} onClick={() => void saveNotificationControls()}>{saving === "notifications" ? <LoaderCircle className="animate-spin" size={17}/> : <Save size={17}/>} {saving === "notifications" ? "Saving..." : "Save notification controls"}</button></div>
+
+          <div className="mt-8 border-t border-[var(--line)] pt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-bold">Recent system delivery activity</h3><p className="mt-1 text-sm text-[var(--muted)]">The intended person, actual destination, trigger and Twilio outcome are recorded here.</p></div><button className="btn-secondary !min-h-10" onClick={() => void loadNotificationLogs()}><RefreshCw size={16}/>Refresh</button></div>
+            <div className="mt-4 overflow-x-auto rounded-2xl border border-[var(--line)]"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-[var(--blue-pale)] text-xs uppercase text-[var(--muted)]"><tr>{["When", "Recipient", "Trigger", "Destination", "Status", "Reference"].map((heading) => <th className="p-3" key={heading}>{heading}</th>)}</tr></thead><tbody>{notificationLogs.map((row) => <tr className="border-t border-[var(--line)]" key={row.id}><td className="whitespace-nowrap p-3">{row.created_at ? new Date(row.created_at).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" }) : "-"}</td><td className="p-3"><b>{row.recipient_name || "System"}</b>{row.test_redirected && <div className="text-xs font-bold text-amber-700">Redirected test</div>}</td><td className="p-3">{row.event_type.replaceAll("_", " ")}</td><td className="p-3"><div>{row.channel}</div><div className="text-xs text-[var(--muted)]">{row.destination || "Not recorded"}</div></td><td className="p-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${["sent", "accepted", "queued", "delivered", "read"].includes(row.status) ? "bg-emerald-50 text-emerald-700" : row.status === "suppressed" ? "bg-slate-100 text-slate-700" : "bg-red-50 text-red-700"}`}>{row.status}</span>{row.error_message && <div className="mt-1 max-w-64 truncate text-xs text-red-700" title={row.error_message}>{row.error_message}</div>}</td><td className="p-3">{row.reference_id ? `#${row.reference_id}` : "-"}</td></tr>)}</tbody></table>{notificationLogs.length === 0 && <div className="p-8 text-center text-[var(--muted)]">No system delivery activity has been recorded yet.</div>}</div>
+          </div>
+        </SettingsPanel>
+      )}
       {pricing && (
         <>
           {workflow && (

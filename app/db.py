@@ -925,7 +925,11 @@ def ensure_app_settings_schema() -> None:
                   id INTEGER NOT NULL PRIMARY KEY,
                   google_maps_api_key TEXT,
                   google_calendar_id TEXT,
-                  broadcast_workflow_enabled BOOLEAN NOT NULL DEFAULT 1
+                  broadcast_workflow_enabled BOOLEAN NOT NULL DEFAULT 1,
+                  automated_notifications_enabled BOOLEAN NOT NULL DEFAULT 1,
+                  notification_test_mode BOOLEAN NOT NULL DEFAULT 0,
+                  notification_test_phone TEXT,
+                  notification_volume_alert_threshold INTEGER NOT NULL DEFAULT 30
                 )
             """))
             return
@@ -938,6 +942,14 @@ def ensure_app_settings_schema() -> None:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN google_calendar_id TEXT"))
         if "broadcast_workflow_enabled" not in existing:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN broadcast_workflow_enabled BOOLEAN NOT NULL DEFAULT 1"))
+        if "automated_notifications_enabled" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN automated_notifications_enabled BOOLEAN NOT NULL DEFAULT 1"))
+        if "notification_test_mode" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN notification_test_mode BOOLEAN NOT NULL DEFAULT 0"))
+        if "notification_test_phone" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN notification_test_phone TEXT"))
+        if "notification_volume_alert_threshold" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN notification_volume_alert_threshold INTEGER NOT NULL DEFAULT 30"))
 
 
 def ensure_pricing_settings_schema() -> None:
@@ -1226,6 +1238,10 @@ def ensure_notification_log_schema() -> None:
             if "provider_message_id" not in existing:
                 conn.execute(text("ALTER TABLE notification_log ADD COLUMN provider_message_id TEXT"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_log_provider_message_id ON notification_log (provider_message_id)"))
+            if "destination" not in existing:
+                conn.execute(text("ALTER TABLE notification_log ADD COLUMN destination TEXT"))
+            if "test_redirected" not in existing:
+                conn.execute(text("ALTER TABLE notification_log ADD COLUMN test_redirected BOOLEAN NOT NULL DEFAULT 0"))
             return
         conn.execute(text("""
             CREATE TABLE notification_log (
@@ -1238,11 +1254,29 @@ def ensure_notification_log_schema() -> None:
               reference_id INTEGER,
               message TEXT,
               provider_message_id TEXT,
+              destination TEXT,
+              test_redirected BOOLEAN NOT NULL DEFAULT 0,
               created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY(user_id) REFERENCES users (id)
             )
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_log_provider_message_id ON notification_log (provider_message_id)"))
+
+
+def ensure_scheduler_job_leases_schema() -> None:
+    if not _is_sqlite():
+        return
+    with engine.begin() as conn:
+        if _table_exists(conn, "scheduler_job_leases"):
+            return
+        conn.execute(text("""
+            CREATE TABLE scheduler_job_leases (
+              job_name TEXT NOT NULL PRIMARY KEY,
+              locked_until DATETIME NOT NULL,
+              last_started_at DATETIME NOT NULL,
+              owner TEXT
+            )
+        """))
 
 
 def ensure_in_app_notifications_schema() -> None:

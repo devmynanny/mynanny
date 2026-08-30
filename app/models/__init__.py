@@ -431,6 +431,9 @@ class NotificationLog(Base):
     message = Column(Text, nullable=True)
     # Provider identifier used to reconcile asynchronous delivery callbacks.
     provider_message_id = Column(String, nullable=True, index=True)
+    # Actual external destination, including a test-mode redirect when active.
+    destination = Column(String, nullable=True)
+    test_redirected = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
@@ -443,6 +446,15 @@ class NotificationDispatchClaim(Base):
     event_type = Column(String, nullable=False)
     reference_id = Column(Integer, nullable=True)
     claimed_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class SchedulerJobLease(Base):
+    __tablename__ = "scheduler_job_leases"
+
+    job_name = Column(String(100), primary_key=True)
+    locked_until = Column(DateTime, nullable=False)
+    last_started_at = Column(DateTime, nullable=False)
+    owner = Column(String(255), nullable=True)
 
 
 class InAppNotification(Base):
@@ -465,6 +477,12 @@ class AppSettings(Base):
     google_calendar_id = Column(Text, nullable=True)
     trust_config_json = Column(Text, nullable=True)
     broadcast_workflow_enabled = Column(Boolean, nullable=False, default=True)
+    # Local/dev starts enabled for backward compatibility. The production
+    # Alembic migration deliberately seeds this switch off for safe rollout.
+    automated_notifications_enabled = Column(Boolean, nullable=False, default=True, server_default="1")
+    notification_test_mode = Column(Boolean, nullable=False, default=False, server_default="0")
+    notification_test_phone = Column(String(32), nullable=True)
+    notification_volume_alert_threshold = Column(Integer, nullable=False, default=30, server_default="30")
 
 
 class ParentLocation(Base):

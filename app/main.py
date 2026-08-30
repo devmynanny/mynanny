@@ -11,13 +11,15 @@ from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pathlib import Path
 from app.routes import router
-from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_admin_access_schema, ensure_users_schema, ensure_conversations_schema, ensure_messages_schema, ensure_telegram_link_tokens_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_pricing_settings_seed, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_nanny_debt_schema, ensure_debt_deduction_log_schema, ensure_notification_log_schema, ensure_in_app_notifications_schema, ensure_client_reviews_schema, ensure_bootstrap_admin
+from app.db import Base, engine, SessionLocal, ensure_audit_log_schema, ensure_booking_requests_schema, ensure_nanny_availability_schema, ensure_bookings_schema, ensure_nannies_schema, ensure_nanny_profiles_schema, ensure_parent_profiles_schema, ensure_admin_invites_schema, ensure_admin_access_schema, ensure_users_schema, ensure_conversations_schema, ensure_messages_schema, ensure_telegram_link_tokens_schema, ensure_languages_seed, ensure_qualifications_seed, ensure_parent_favorites_schema, ensure_app_settings_schema, ensure_pricing_settings_schema, ensure_pricing_settings_seed, ensure_nanny_demerit_log_schema, ensure_nanny_bank_accounts_schema, ensure_nanny_debt_schema, ensure_debt_deduction_log_schema, ensure_notification_log_schema, ensure_in_app_notifications_schema, ensure_client_reviews_schema, ensure_scheduler_job_leases_schema, ensure_bootstrap_admin
 from app.routers.public import _decode_access_token, ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from app import models
 from app.request_context import auth_token_ctx
 from app.services.payout import run_scheduled_payouts
 from app.services.advert_expiry import expire_stale_booking_requests
 from app.services.notifications import retry_failed_notifications
+from app.services.notification_controls import environment_notifications_enabled, load_notification_controls
+from app.services.scheduler_leases import claim_scheduler_job
 from app.services.duty_notifications import run_duty_notification_sweep
 from app.services.passport_compliance import run_passport_compliance
 from app.services.storage import open_media
@@ -177,6 +179,7 @@ ensure_nanny_debt_schema()
 ensure_debt_deduction_log_schema()
 ensure_notification_log_schema()
 ensure_in_app_notifications_schema()
+ensure_scheduler_job_leases_schema()
 ensure_client_reviews_schema()
 ensure_bootstrap_admin()
 
@@ -203,6 +206,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def run_scheduled_payouts_wrapper() -> None:
     db = SessionLocal()
     try:
+        if not claim_scheduler_job(db, "scheduled_payouts", lease_seconds=29 * 60):
+            return
         run_scheduled_payouts(db)
     finally:
         db.close()
@@ -211,15 +216,15 @@ def run_scheduled_payouts_wrapper() -> None:
 def expire_stale_adverts_wrapper() -> None:
     db = SessionLocal()
     try:
+        if not claim_scheduler_job(db, "expire_stale_adverts", lease_seconds=29 * 60):
+            return
         expire_stale_booking_requests(db)
     finally:
         db.close()
 
 
 def _automated_notifications_enabled() -> bool:
-    default = "false" if os.getenv("APP_ENV", "").strip().lower() == "production" else "true"
-    value = os.getenv("AUTOMATED_NOTIFICATIONS_ENABLED", default).strip().lower()
-    return value not in {"0", "false", "no", "off"}
+    return environment_notifications_enabled()
 
 
 def retry_failed_notifications_wrapper() -> None:
@@ -227,6 +232,10 @@ def retry_failed_notifications_wrapper() -> None:
         return
     db = SessionLocal()
     try:
+        if not load_notification_controls(db).effective_enabled:
+            return
+        if not claim_scheduler_job(db, "retry_failed_notifications", lease_seconds=14 * 60):
+            return
         retry_failed_notifications(db)
     finally:
         db.close()
@@ -237,6 +246,10 @@ def passport_compliance_wrapper() -> None:
         return
     db = SessionLocal()
     try:
+        if not load_notification_controls(db).effective_enabled:
+            return
+        if not claim_scheduler_job(db, "passport_compliance", lease_seconds=23 * 60 * 60):
+            return
         run_passport_compliance(db)
     finally:
         db.close()
@@ -247,6 +260,10 @@ def duty_notification_sweep_wrapper() -> None:
         return
     db = SessionLocal()
     try:
+        if not load_notification_controls(db).effective_enabled:
+            return
+        if not claim_scheduler_job(db, "duty_notifications", lease_seconds=4 * 60):
+            return
         run_duty_notification_sweep(db)
     finally:
         db.close()

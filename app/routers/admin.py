@@ -19,6 +19,7 @@ from app.services.charge_disputes import (
     related_booking_request_ids,
 )
 from app.services.notifications import notify
+from app.services.notification_controls import load_notification_controls
 from app.services import conversations, messaging, storage
 from app.services.passport_compliance import run_passport_compliance
 from app.services.trust import DEFAULT_TRUST_BADGES, get_trust_config as load_trust_config
@@ -57,6 +58,13 @@ class GoogleMapsSettingsPayload(BaseModel):
 
 class BookingWorkflowSettingsPayload(BaseModel):
     broadcast_workflow_enabled: bool
+
+
+class NotificationControlsPayload(BaseModel):
+    automated_notifications_enabled: bool
+    notification_test_mode: bool = False
+    notification_test_phone: Optional[str] = None
+    notification_volume_alert_threshold: int = Field(default=30, ge=1, le=1000)
 
 
 class LookupPayload(BaseModel):
@@ -269,6 +277,133 @@ def get_pricing_settings(db: Session = Depends(get_db)):
 def get_platform_workflow(db: Session = Depends(get_db)):
     row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
     return {"broadcast_workflow_enabled": True if not row else bool(row.broadcast_workflow_enabled)}
+
+
+def _notification_control_response(db: Session) -> dict:
+    controls = load_notification_controls(db)
+    hour_ago = utc_now() - timedelta(hours=1)
+    recent_external_attempts = (
+        db.query(func.count(models.NotificationLog.id))
+        .filter(
+            models.NotificationLog.channel.in_(["whatsapp", "telegram", "email"]),
+            models.NotificationLog.status != "suppressed",
+            models.NotificationLog.created_at >= hour_ago,
+        )
+        .scalar()
+    ) or 0
+    return {
+        "automated_notifications_enabled": controls.configured_enabled,
+        "environment_enabled": controls.environment_enabled,
+        "effective_enabled": controls.effective_enabled,
+        "emergency_override_active": not controls.environment_enabled,
+        "notification_test_mode": controls.test_mode,
+        "notification_test_phone": controls.test_phone or "",
+        "notification_volume_alert_threshold": controls.volume_alert_threshold,
+        "recent_external_attempts_1h": int(recent_external_attempts),
+        "volume_alert": int(recent_external_attempts) >= controls.volume_alert_threshold,
+        "manual_communicator_enabled": True,
+        "backend_service": os.getenv("SERVICE_DISPLAY_NAME") or "My Nanny API and notification scheduler",
+        "frontend_service": "My Nanny V2 web application",
+    }
+
+
+@router.get("/notification-controls", dependencies=[Depends(require_superadmin)])
+def get_notification_controls(db: Session = Depends(get_db)):
+    return _notification_control_response(db)
+
+
+@router.put("/notification-controls")
+def update_notification_controls(
+    payload: NotificationControlsPayload,
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    admin = require_superadmin(authorization, db)
+    phone = messaging.normalize_phone_number(payload.notification_test_phone or "") if payload.notification_test_phone else ""
+    if phone and not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
+        raise HTTPException(status_code=422, detail="Enter the test number in international format, for example +27821234567")
+    if payload.notification_test_mode and not phone:
+        raise HTTPException(status_code=422, detail="Enter a WhatsApp test number before enabling test mode")
+
+    row = db.query(models.AppSettings).filter(models.AppSettings.id == 1).first()
+    if not row:
+        row = models.AppSettings(id=1)
+        db.add(row)
+        db.flush()
+    before = {
+        "automated_notifications_enabled": bool(getattr(row, "automated_notifications_enabled", False)),
+        "notification_test_mode": bool(getattr(row, "notification_test_mode", False)),
+        "notification_test_phone": getattr(row, "notification_test_phone", None),
+        "notification_volume_alert_threshold": int(getattr(row, "notification_volume_alert_threshold", 30) or 30),
+    }
+    row.automated_notifications_enabled = payload.automated_notifications_enabled
+    row.notification_test_mode = payload.notification_test_mode
+    row.notification_test_phone = phone or None
+    row.notification_volume_alert_threshold = payload.notification_volume_alert_threshold
+    after = {
+        "automated_notifications_enabled": bool(row.automated_notifications_enabled),
+        "notification_test_mode": bool(row.notification_test_mode),
+        "notification_test_phone": row.notification_test_phone,
+        "notification_volume_alert_threshold": int(row.notification_volume_alert_threshold),
+    }
+    log_audit(
+        db,
+        actor_user=admin,
+        target_user_id=None,
+        entity="app_settings",
+        entity_id=1,
+        action="notification_controls_updated",
+        before_obj=before,
+        after_obj=after,
+        changed_fields=[key for key in after if before.get(key) != after.get(key)],
+        request=request,
+    )
+    db.commit()
+    return _notification_control_response(db)
+
+
+@router.get("/notification-log", dependencies=[Depends(require_superadmin)])
+def get_notification_log(
+    status: Optional[str] = Query(default=None),
+    event_type: Optional[str] = Query(default=None),
+    channel: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=250),
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(models.NotificationLog, models.User)
+        .outerjoin(models.User, models.User.id == models.NotificationLog.user_id)
+    )
+    if status:
+        query = query.filter(models.NotificationLog.status == status.strip().lower())
+    if event_type:
+        query = query.filter(models.NotificationLog.event_type == event_type.strip())
+    if channel:
+        query = query.filter(models.NotificationLog.channel == channel.strip().lower())
+    rows = query.order_by(models.NotificationLog.created_at.desc(), models.NotificationLog.id.desc()).limit(limit).all()
+    return {
+        "results": [
+            {
+                "id": log.id,
+                "user_id": log.user_id,
+                "recipient_name": getattr(user, "name", None),
+                "recipient_phone": getattr(user, "phone", None),
+                "recipient_email": getattr(user, "email", None),
+                "event_type": log.event_type,
+                "channel": log.channel,
+                "status": log.status,
+                "error_message": log.error_message,
+                "reference_id": log.reference_id,
+                "message": log.message,
+                "provider_message_id": log.provider_message_id,
+                "destination": getattr(log, "destination", None),
+                "test_redirected": bool(getattr(log, "test_redirected", False)),
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log, user in rows
+        ]
+    }
 
 
 @router.put("/platform-workflow", dependencies=[Depends(require_superadmin)])
@@ -961,6 +1096,17 @@ def ops_health(db: Session = Depends(get_db)):
         .scalar()
     ) or 0
 
+    notification_controls = load_notification_controls(db)
+    external_attempts_1h = (
+        db.query(func.count(models.NotificationLog.id))
+        .filter(
+            models.NotificationLog.channel.in_(["whatsapp", "telegram", "email"]),
+            models.NotificationLog.status != "suppressed",
+            models.NotificationLog.created_at >= now - timedelta(hours=1),
+        )
+        .scalar()
+    ) or 0
+
     webhook_rejections_24h = (
         db.query(func.count(models.AuditLog.id))
         .filter(
@@ -1022,6 +1168,11 @@ def ops_health(db: Session = Depends(get_db)):
 
     checks = {
         "failed_notifications_24h": int(failed_notifications_24h),
+        "high_notification_volume": (
+            int(external_attempts_1h)
+            if int(external_attempts_1h) >= notification_controls.volume_alert_threshold
+            else 0
+        ),
         "webhook_rejections_24h": int(webhook_rejections_24h),
         "stuck_payouts": int(stuck_payouts),
         "refunds_awaiting_review": int(refunds_awaiting_review),

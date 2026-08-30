@@ -2113,20 +2113,6 @@ def _booking_request_starts_at(req: models.BookingRequest) -> Optional[datetime]
         return None
 
 
-def _send_cancellation_notice(
-    *,
-    to_email: Optional[str],
-    subject: str,
-    lines: List[str],
-) -> None:
-    if not to_email:
-        return
-    try:
-        _safe_send(to_email, subject, "\n".join(lines))
-    except Exception:
-        pass
-
-
 def _clear_admin_blocked_availability_for_request(
     db: Session,
     *,
@@ -5789,15 +5775,19 @@ def nanny_cancel_booking(
             apply_cancellation_weight(db, int(related_request.nanny_id), 1.0)
 
         parent_user = db.query(models.User).filter(models.User.id == related_request.parent_user_id).first()
-        _send_cancellation_notice(
-            to_email=getattr(parent_user, "email", None),
-            subject=f"Your booking request #{related_request.id} was cancelled by nanny",
-            lines=[
-                "Your nanny cancelled this booking.",
-                f"Refund status: {related_request.refund_status}.",
-                f"Estimated refund: R{(int(related_request.refund_cents or 0)/100):.2f}.",
-            ],
-        )
+        if parent_user:
+            notify(
+                db,
+                parent_user.id,
+                "booking_cancelled",
+                (
+                    "Your nanny cancelled this booking. "
+                    f"The estimated refund is R{(int(related_request.refund_cents or 0)/100):.2f} "
+                    f"and its current status is {related_request.refund_status}."
+                ),
+                reference_id=int(related_request.id),
+                action_url="/bookings",
+            )
         admins = admin_emails()
         if admins:
             try:
@@ -7498,22 +7488,14 @@ def cancel_parent_booking_request(
             nanny_row = db.query(models.Nanny).filter(models.Nanny.id == req.nanny_id).first()
             nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
             retained = int(outcome["nanny_retained_cents"])
-            lines = ["The client has cancelled this booking. It has been removed from your calendar."]
-            if retained > 0:
-                lines.append(f"Because it was cancelled at short notice, you retain R{(retained/100):.2f}.")
-            _send_cancellation_notice(
-                to_email=getattr(nanny_user, "email", None),
-                subject=f"Booking cancelled by client (request #{req.id})",
-                lines=lines,
-            )
             if nanny_user:
-                send_notification(
+                notify(
                     db,
                     nanny_user.id,
                     "booking_cancelled_nanny",
-                    "email",
                     "The client has cancelled your booking. Please check your calendar — this job no longer takes place." + (f" You retain R{(retained/100):.2f} for the late cancellation." if retained > 0 else ""),
                     reference_id=int(req.id),
+                    action_url="/bookings",
                 )
 
     db.commit()
@@ -9575,23 +9557,28 @@ def cancel_admin_booking_request(
         parent_user = db.query(models.User).filter(models.User.id == group_req.parent_user_id).first()
         nanny_row = db.query(models.Nanny).filter(models.Nanny.id == group_req.nanny_id).first()
         nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
-        _send_cancellation_notice(
-            to_email=getattr(parent_user, "email", None),
-            subject=f"Booking request #{group_req.id} cancelled by admin",
-            lines=[
-                "This booking was cancelled by admin.",
-                f"Refund status: {group_req.refund_status}.",
-                f"Estimated refund: R{(int(group_req.refund_cents or 0)/100):.2f}.",
-            ],
-        )
-        _send_cancellation_notice(
-            to_email=getattr(nanny_user, "email", None),
-            subject=f"Booking request #{group_req.id} cancelled by admin",
-            lines=[
-                "This booking was cancelled by admin.",
-                f"Status: {group_req.status}.",
-            ],
-        )
+        if parent_user:
+            notify(
+                db,
+                parent_user.id,
+                "booking_cancelled",
+                (
+                    "This booking was cancelled by My Nanny. "
+                    f"The estimated refund is R{(int(group_req.refund_cents or 0)/100):.2f} "
+                    f"and its current status is {group_req.refund_status}."
+                ),
+                reference_id=int(group_req.id),
+                action_url="/bookings",
+            )
+        if nanny_user:
+            notify(
+                db,
+                nanny_user.id,
+                "booking_cancelled_nanny",
+                "This booking was cancelled by My Nanny and has been removed from your work schedule.",
+                reference_id=int(group_req.id),
+                action_url="/bookings",
+            )
 
     db.commit()
     log_audit(
@@ -9675,31 +9662,15 @@ def admin_mark_nanny_no_show(
     )
 
     parent_user = db.query(models.User).filter(models.User.id == booking.client_user_id).first()
-    if parent_user and getattr(parent_user, "email", None):
-        try:
-            _safe_send(
-                parent_user.email,
-                "Nanny no-show update",
-                "Your nanny did not arrive. You will receive a full refund. We apologise for the inconvenience.",
-            )
-            _log_notification_best_effort(
-                db,
-                user_id=parent_user.id,
-                event_type="nanny_no_show_parent_notice",
-                channel="email",
-                status="sent",
-                reference_id=str(booking.id),
-            )
-        except Exception as exc:
-            _log_notification_best_effort(
-                db,
-                user_id=parent_user.id,
-                event_type="nanny_no_show_parent_notice",
-                channel="email",
-                status="failed",
-                error_message=str(exc)[:500],
-                reference_id=str(booking.id),
-            )
+    if parent_user:
+        notify(
+            db,
+            parent_user.id,
+            "nanny_no_show_parent_notice",
+            "Your nanny did not arrive. You will receive a full refund. We apologise for the inconvenience.",
+            reference_id=int(booking.id),
+            action_url="/bookings",
+        )
 
     admins = admin_emails()
     if admins:
@@ -9807,31 +9778,15 @@ def admin_mark_parent_no_show(
     nanny_row = db.query(models.Nanny).filter(models.Nanny.id == booking.nanny_id).first()
     nanny_user = db.query(models.User).filter(models.User.id == nanny_row.user_id).first() if nanny_row else None
     amount_cents = int((related_request.wage_cents if related_request else 0) or 0)
-    if nanny_user and getattr(nanny_user, "email", None):
-        try:
-            _safe_send(
-                nanny_user.email,
-                "Parent no-show update",
-                f"The parent was not present. You will receive your full wage of R{(amount_cents/100):.2f} in 24 hours.",
-            )
-            _log_notification_best_effort(
-                db,
-                user_id=nanny_user.id,
-                event_type="parent_no_show_nanny_notice",
-                channel="email",
-                status="sent",
-                reference_id=str(booking.id),
-            )
-        except Exception as exc:
-            _log_notification_best_effort(
-                db,
-                user_id=nanny_user.id,
-                event_type="parent_no_show_nanny_notice",
-                channel="email",
-                status="failed",
-                error_message=str(exc)[:500],
-                reference_id=str(booking.id),
-            )
+    if nanny_user:
+        notify(
+            db,
+            nanny_user.id,
+            "parent_no_show_nanny_notice",
+            f"The parent was not present. You will receive your full wage of R{(amount_cents/100):.2f} after the payout hold.",
+            reference_id=int(booking.id),
+            action_url="/bookings",
+        )
 
     log_booking_status_change(
         db,
@@ -11499,45 +11454,14 @@ def admin_lift_nanny_suspension(
     db.commit()
     db.refresh(nanny)
 
-    subject = "Your My Nanny account has been reactivated"
-    body = "\n".join(
-        [
-            "Your account has been reactivated and you can now accept bookings again.",
-            "",
-            f"Reason: {reason}",
-        ]
+    notify(
+        db,
+        nanny_user.id,
+        "nanny_reactivated",
+        f"Your account has been reactivated and you can now accept bookings again. Reason: {reason}",
+        reference_id=int(nanny.id),
+        action_url="/dashboard",
     )
-    try:
-        if getattr(nanny_user, "email", None):
-            get_email_client().send(EmailMessage(to=[nanny_user.email], subject=subject, body=body))
-            _log_notification_best_effort(
-                db,
-                user_id=nanny_user.id,
-                event_type="nanny_suspension_lifted",
-                channel="email",
-                status="sent",
-                reference_id=str(nanny.id),
-            )
-        else:
-            _log_notification_best_effort(
-                db,
-                user_id=nanny_user.id,
-                event_type="nanny_suspension_lifted",
-                channel="email",
-                status="failed",
-                error_message="missing nanny email",
-                reference_id=str(nanny.id),
-            )
-    except Exception as exc:
-        _log_notification_best_effort(
-            db,
-            user_id=nanny_user.id,
-            event_type="nanny_suspension_lifted",
-            channel="email",
-            status="failed",
-            error_message=str(exc),
-            reference_id=str(nanny.id),
-        )
 
     log_audit(
         db,

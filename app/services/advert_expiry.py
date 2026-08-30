@@ -124,6 +124,7 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
                     "email",
                     "You marked a booking request as 'still deciding' and it starts soon. Please accept or decline it so the client is not left waiting.",
                     reference_id=int(req.id),
+                    claim_checked=True,
                 )
 
     if expired_count:
@@ -145,6 +146,7 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
                 "email",
                 "Unfortunately no nanny accepted your booking request before its start time, and it has now expired. Please create a new booking — sending it to more nannies improves your chances.",
                 reference_id=int(gid),
+                claim_checked=True,
             )
 
     for gid, req in nudge_groups.items():
@@ -164,6 +166,7 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
                 "email",
                 "Your booking starts within 12 hours and no nanny has accepted yet. You can send the request to more nannies from your bookings page to improve your chances.",
                 reference_id=int(gid),
+                claim_checked=True,
             )
 
     try:

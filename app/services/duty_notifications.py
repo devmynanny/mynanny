@@ -45,6 +45,7 @@ def notify_once(
         message,
         reference_id=booking_id,
         action_url=action_url,
+        deduplicate=False,
     )
     return True
 

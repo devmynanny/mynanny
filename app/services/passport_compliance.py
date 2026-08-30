@@ -57,6 +57,7 @@ def run_passport_compliance(db: Session) -> dict[str, int]:
                 "passport_expiry_warning",
                 f"Your passport expires on {expiry.isoformat()}. Upload a renewed passport and expiry date before then. Your account will be suspended if no valid, admin-approved passport is on file.",
                 reference_id=profile.id,
+                deduplicate=False,
             )
             warned += 1
         if days <= 0:
@@ -85,6 +86,7 @@ def run_passport_compliance(db: Session) -> dict[str, int]:
                         "passport_expired_suspension",
                         f"Your My Nanny account has been suspended because your passport expired on {expiry.isoformat()}. Upload a valid passport and expiry date for admin approval.",
                         reference_id=profile.id,
+                        deduplicate=False,
                     )
                 suspended += 1
     db.commit()

@@ -191,6 +191,7 @@ def run_scheduled_payouts(db: Session) -> None:
                         "email",
                         f"Your payment of R{(net_payout_cents/100):.2f} has been sent.",
                         reference_id=int(booking.id),
+                        claim_checked=True,
                     )
         except Exception:
             continue
@@ -239,6 +240,7 @@ def run_scheduled_payouts(db: Session) -> None:
                         "email",
                         f"Your overrun payment of R{(amount_cents/100):.2f} has been sent.",
                         reference_id=int(booking.id),
+                        claim_checked=True,
                     )
         except Exception:
             continue

@@ -11,6 +11,8 @@ from app import models
 from app.utils.time import utc_now
 from app.utils.email import EmailMessage, get_email_client
 from app.services import messaging
+from app.services.notification_controls import load_notification_controls
+from app.services.notification_dispatch import claim_notification_dispatch
 from app.services.whatsapp_templates import WHATSAPP_UTILITY_TEMPLATES
 
 WHATSAPP_TEMPLATE_NAMES = set(WHATSAPP_UTILITY_TEMPLATES)
@@ -35,6 +37,8 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     # Booking lifecycle.
     "booking_confirmed": {"channels": ("chat", "email"), "in_app": True},
     "booking_cancelled": {"channels": ("chat", "email"), "in_app": True},
+    "nanny_no_show_parent_notice": {"channels": ("chat", "email"), "in_app": True},
+    "parent_no_show_nanny_notice": {"channels": ("chat", "email"), "in_app": True},
     "nanny_accepted": {"channels": ("chat", "email")},
     "nanny_checked_in": {"channels": ("chat", "email")},
     "booking_start_reminder": {"channels": ("chat", "email"), "in_app": True},
@@ -68,7 +72,7 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     "payout_sent": {"channels": ("chat", "email")},
     # Account.
     "nanny_approved": {"channels": ("chat", "email")},
-    "nanny_reactivated": {"channels": ("chat", "email")},
+    "nanny_reactivated": {"channels": ("chat", "email"), "in_app": True},
     "passport_expiry_warning": {"channels": ("chat", "email"), "in_app": True},
     "passport_expired_suspension": {"channels": ("chat", "email"), "in_app": True},
     "passport_renewal_approved": {"channels": ("chat", "email"), "in_app": True},
@@ -102,6 +106,8 @@ def _log_notification(
     reference_id: Optional[int] = None,
     message: Optional[str] = None,
     provider_message_id: Optional[str] = None,
+    destination: Optional[str] = None,
+    test_redirected: bool = False,
 ) -> None:
     try:
         if not _notification_log_exists(db):
@@ -112,8 +118,8 @@ def _log_notification(
             db.execute(
                 text(
                     """
-                    INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, provider_message_id, created_at)
-                    VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :provider_message_id, :created_at)
+                    INSERT INTO notification_log (user_id, event_type, channel, status, error_message, reference_id, message, provider_message_id, destination, test_redirected, created_at)
+                    VALUES (:user_id, :event_type, :channel, :status, :error_message, :reference_id, :message, :provider_message_id, :destination, :test_redirected, :created_at)
                     """
                 ),
                 {
@@ -125,6 +131,8 @@ def _log_notification(
                     "reference_id": reference_id,
                     "message": message,
                     "provider_message_id": provider_message_id,
+                    "destination": destination,
+                    "test_redirected": bool(test_redirected),
                     "created_at": utc_now(),
                 },
             )
@@ -152,10 +160,69 @@ def send_notification(
     template_name: Optional[str] = None,
     reference_id: Optional[int] = None,
     action_url: Optional[str] = None,
+    claim_checked: bool = False,
 ) -> bool:
+    controls = load_notification_controls(db)
+    user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
+    original_destination: Optional[str] = None
     if channel == "whatsapp":
-        user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
-        phone = getattr(user, "phone", None) if user else None
+        original_destination = getattr(user, "phone", None) if user else None
+    elif channel == "telegram":
+        original_destination = getattr(user, "telegram_chat_id", None) if user else None
+    elif channel == "email":
+        original_destination = getattr(user, "email", None) if user else None
+
+    if channel in {"whatsapp", "telegram", "email"} and not controls.effective_enabled:
+        _log_notification(
+            db,
+            user_id=user_id,
+            event_type=event_type,
+            channel=channel,
+            status="suppressed",
+            error_message="system notifications disabled by admin or emergency environment override",
+            reference_id=reference_id,
+            message=message,
+            destination=original_destination,
+        )
+        return False
+
+    if (
+        channel in {"whatsapp", "telegram", "email"}
+        and not claim_checked
+        and user_id is not None
+        and reference_id is not None
+        and not claim_notification_dispatch(
+            db,
+            user_id=user_id,
+            event_type=event_type,
+            reference_id=reference_id,
+        )
+    ):
+        return False
+
+    test_redirected = False
+    if controls.test_mode and channel in {"whatsapp", "telegram", "email"}:
+        if channel != "whatsapp" or not controls.test_phone:
+            _log_notification(
+                db,
+                user_id=user_id,
+                event_type=event_type,
+                channel=channel,
+                status="suppressed",
+                error_message="test mode routes external notifications to the configured WhatsApp test number only",
+                reference_id=reference_id,
+                message=message,
+                destination=original_destination,
+            )
+            return False
+        intended_name = getattr(user, "name", None) or f"user #{user_id or 'unknown'}"
+        intended_phone = original_destination or "no phone"
+        message = f"[TEST for {intended_name} ({intended_phone})]\n{message}"
+        template_name = None
+        test_redirected = True
+
+    if channel == "whatsapp":
+        phone = controls.test_phone if test_redirected else original_destination
         if not phone:
             _log_notification(
                 db,
@@ -166,6 +233,8 @@ def send_notification(
                 error_message="missing phone number",
                 reference_id=reference_id,
                 message=message,
+                destination=phone,
+                test_redirected=test_redirected,
             )
             return False
         try:
@@ -182,12 +251,13 @@ def send_notification(
             reference_id=reference_id,
             message=message,
             provider_message_id=provider_result if ok else None,
+            destination=phone,
+            test_redirected=test_redirected,
         )
         return ok
 
     if channel == "telegram":
-        user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
-        chat_id = getattr(user, "telegram_chat_id", None) if user else None
+        chat_id = original_destination
         if not chat_id:
             _log_notification(
                 db,
@@ -198,6 +268,7 @@ def send_notification(
                 error_message="missing telegram chat id - not linked",
                 reference_id=reference_id,
                 message=message,
+                destination=chat_id,
             )
             return False
         ok, error = messaging.send_telegram_message(chat_id, message)
@@ -210,12 +281,12 @@ def send_notification(
             error_message=None if ok else error[:500],
             reference_id=reference_id,
             message=message,
+            destination=chat_id,
         )
         return ok
 
     if channel == "email":
-        user = db.query(models.User).filter(models.User.id == user_id).first() if user_id else None
-        email = getattr(user, "email", None) if user else None
+        email = original_destination
         if not email:
             _log_notification(
                 db,
@@ -226,6 +297,7 @@ def send_notification(
                 error_message="missing email",
                 reference_id=reference_id,
                 message=message,
+                destination=email,
             )
             return False
         try:
@@ -238,6 +310,7 @@ def send_notification(
                 status="sent",
                 reference_id=reference_id,
                 message=message,
+                destination=email,
             )
             return True
         except Exception as exc:
@@ -250,6 +323,7 @@ def send_notification(
                 error_message=str(exc)[:500],
                 reference_id=reference_id,
                 message=message,
+                destination=email,
             )
             return False
 
@@ -315,6 +389,8 @@ def notify(
     reference_id: Optional[int] = None,
     action_url: Optional[str] = None,
     include_in_app: bool = True,
+    deduplicate: bool = True,
+    idempotency_key: Optional[str] = None,
 ) -> bool:
     """Policy-driven delivery: consult NOTIFICATION_POLICY for the event's
     channel fallback chain, write an in-app notification when the policy
@@ -322,9 +398,28 @@ def notify(
     retry sweep). Returns True if any fallback channel delivered."""
     policy = NOTIFICATION_POLICY.get(event_type, DEFAULT_POLICY)
 
+    controls = load_notification_controls(db)
+    if (
+        controls.effective_enabled
+        and deduplicate
+        and user_id is not None
+        and reference_id is not None
+        and not claim_notification_dispatch(
+            db,
+            user_id=user_id,
+            event_type=event_type,
+            reference_id=reference_id,
+            idempotency_key=idempotency_key,
+        )
+    ):
+        return False
+
     delivered = False
     for channel in policy.get("channels", DEFAULT_POLICY["channels"]):
-        resolved_channel = _resolve_chat_channel(db, user_id) if channel == "chat" else channel
+        if channel == "chat":
+            resolved_channel = "whatsapp" if controls.test_mode else _resolve_chat_channel(db, user_id)
+        else:
+            resolved_channel = channel
         ok = send_notification(
             db,
             user_id,
@@ -334,6 +429,7 @@ def notify(
             template_name=event_type if (resolved_channel == "whatsapp" and event_type in WHATSAPP_TEMPLATE_NAMES) else None,
             reference_id=reference_id,
             action_url=action_url,
+            claim_checked=True,
         )
         if ok:
             delivered = True
@@ -348,6 +444,7 @@ def notify(
             message,
             reference_id=reference_id,
             action_url=action_url,
+            claim_checked=True,
         )
 
     return delivered
@@ -411,6 +508,7 @@ def record_twilio_delivery_status(
                     "email",
                     row.message or row.event_type.replace("_", " ").title(),
                     reference_id=row.reference_id,
+                    claim_checked=True,
                 )
     return True
 
@@ -480,6 +578,7 @@ def retry_failed_notifications(
             entry["message"],
             reference_id=reference_id,
             include_in_app=False,
+            deduplicate=False,
         )
         retried += 1
 

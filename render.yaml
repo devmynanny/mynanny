@@ -12,8 +12,14 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      # This is the hard emergency override. Normal on/off control lives in
+      # Admin > Settings and is stored in the database.
       - key: AUTOMATED_NOTIFICATIONS_ENABLED
-        value: "false"
+        value: "true"
+      - key: SERVICE_ROLE
+        value: api-and-notification-scheduler
+      - key: SERVICE_DISPLAY_NAME
+        value: My Nanny API and notification scheduler
       - key: V2_BASE_URL
         value: https://mynanny-v2.onrender.com
       - key: DATABASE_URL
@@ -138,6 +144,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      - key: SERVICE_ROLE
+        value: web-application
       - key: BACKEND_URL
         value: https://mynanny.onrender.com
 
