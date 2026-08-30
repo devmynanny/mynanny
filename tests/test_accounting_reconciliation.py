@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from app import models
 from app.db import SessionLocal
+from app.routers import public as public_router
 
 from tests.test_booking_flow_api import client, _auth, _seed_parent, _seed_nanny, _iso_z
 
@@ -270,7 +271,7 @@ def test_admin_booking_overview_derives_zero_prices_from_the_paid_request():
         db.close()
 
 
-def test_admin_booking_calendar_keeps_completed_and_review_bookings_visible():
+def test_admin_booking_calendar_keeps_completed_and_review_bookings_visible(monkeypatch):
     db = _db()
     try:
         admin = _seed_admin(db)
@@ -296,6 +297,14 @@ def test_admin_booking_calendar_keeps_completed_and_review_bookings_visible():
         db.commit()
         db.refresh(booking)
 
+        def fail_if_notifications_run(*_args, **_kwargs):
+            raise AssertionError("calendar reads must not dispatch notifications")
+
+        monkeypatch.setattr(
+            public_router,
+            "_mark_overdue_booking_requests_notified",
+            fail_if_notifications_run,
+        )
         res = client.get("/admin/bookings/overview", headers=_auth(admin))
         assert res.status_code == 200, res.text
         calendar_ids = {

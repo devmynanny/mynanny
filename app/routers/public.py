@@ -10251,7 +10251,6 @@ def list_admin_bookings_overview(
         .order_by(models.BookingRequest.created_at.desc())
         .all()
     )
-    _mark_overdue_booking_requests_notified(db, request_rows)
     booking_rows = (
         db.query(models.Booking, parent_user, nanny_user)
         .join(parent_user, parent_user.id == models.Booking.client_user_id)
