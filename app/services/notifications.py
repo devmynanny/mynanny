@@ -335,7 +335,7 @@ def send_notification(
                     text(
                         """
                         INSERT INTO in_app_notifications (user_id, title, body, action_url, read, created_at)
-                        VALUES (:user_id, :title, :body, :action_url, 0, :created_at)
+                        VALUES (:user_id, :title, :body, :action_url, :read, :created_at)
                         """
                     ),
                     {
@@ -343,6 +343,7 @@ def send_notification(
                         "title": event_type.replace("_", " ").title(),
                         "body": message,
                         "action_url": action_url,
+                        "read": False,
                         "created_at": utc_now(),
                     },
                 )
