@@ -6,20 +6,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.notification_dispatch import claim_notification_dispatch
 from app.services.notifications import notify
 from app.utils.time import utc_now
 
 
 ACTIVE_DUTY_STATUSES = ("approved", "accepted", "active", "in_progress")
-DELIVERED_NOTIFICATION_STATUSES = (
-    "pending",
-    "accepted",
-    "queued",
-    "sending",
-    "sent",
-    "delivered",
-    "read",
-)
 
 
 def _aware(value: Optional[datetime]) -> Optional[datetime]:
@@ -28,22 +20,6 @@ def _aware(value: Optional[datetime]) -> Optional[datetime]:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
-
-
-def _already_sent(db: Session, user_id: Optional[int], event_type: str, reference_id: int) -> bool:
-    if user_id is None:
-        return True
-    return (
-        db.query(models.NotificationLog.id)
-        .filter(
-            models.NotificationLog.user_id == user_id,
-            models.NotificationLog.event_type == event_type,
-            models.NotificationLog.reference_id == reference_id,
-            models.NotificationLog.status.in_(DELIVERED_NOTIFICATION_STATUSES),
-        )
-        .first()
-        is not None
-    )
 
 
 def notify_once(
@@ -55,7 +31,12 @@ def notify_once(
     booking_id: int,
     action_url: str = "/bookings",
 ) -> bool:
-    if _already_sent(db, user_id, event_type, booking_id):
+    if not claim_notification_dispatch(
+        db,
+        user_id=user_id,
+        event_type=event_type,
+        reference_id=booking_id,
+    ):
         return False
     notify(
         db,

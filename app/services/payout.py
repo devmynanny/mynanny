@@ -8,6 +8,7 @@ from app import models
 from app.services.paystack import create_transfer
 from app.services.debt import deduct_debt_from_payout
 from app.services.notifications import send_notification
+from app.services.notification_dispatch import claim_notification_dispatch
 from app.utils.time import utc_now
 from app.utils.email import EmailMessage, admin_emails, get_email_client
 
@@ -175,7 +176,14 @@ def run_scheduled_payouts(db: Session) -> None:
                     raise RuntimeError("payout transfer failed")
                 booking.payout_released_at = utc_now()
                 nanny_user = _nanny_user(db, int(booking.nanny_id))
-                if nanny_user:
+                if nanny_user and claim_notification_dispatch(
+                    db,
+                    user_id=int(nanny_user.id),
+                    event_type="payout_sent",
+                    reference_id=int(booking.id),
+                    idempotency_key=f"payout:sent:{nanny_user.id}:{booking.id}:base",
+                    legacy_message_marker="Your payment of",
+                ):
                     send_notification(
                         db,
                         nanny_user.id,
@@ -216,7 +224,14 @@ def run_scheduled_payouts(db: Session) -> None:
                     raise RuntimeError("overrun transfer failed")
                 booking.overrun_released_at = utc_now()
                 nanny_user = _nanny_user(db, int(booking.nanny_id))
-                if nanny_user:
+                if nanny_user and claim_notification_dispatch(
+                    db,
+                    user_id=int(nanny_user.id),
+                    event_type="payout_sent",
+                    reference_id=int(booking.id),
+                    idempotency_key=f"payout:sent:{nanny_user.id}:{booking.id}:overrun",
+                    legacy_message_marker="Your overrun payment of",
+                ):
                     send_notification(
                         db,
                         nanny_user.id,

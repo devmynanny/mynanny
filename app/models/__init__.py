@@ -434,6 +434,17 @@ class NotificationLog(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+class NotificationDispatchClaim(Base):
+    __tablename__ = "notification_dispatch_claims"
+
+    id = Column(Integer, primary_key=True)
+    idempotency_key = Column(String(255), nullable=False, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    event_type = Column(String, nullable=False)
+    reference_id = Column(Integer, nullable=True)
+    claimed_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
 class InAppNotification(Base):
     __tablename__ = "in_app_notifications"
 

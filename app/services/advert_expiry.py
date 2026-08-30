@@ -18,6 +18,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.notification_dispatch import claim_notification_dispatch
 from app.utils.time import utc_now
 
 EXPIRED_ADMIN_REASON = "expired"
@@ -58,22 +59,6 @@ def is_request_expired(req: models.BookingRequest, now: Optional[datetime] = Non
     if start is None:
         return False
     return start <= (now or utc_now())
-
-
-def _notification_already_sent(db: Session, user_id: int, event_type: str, reference_id: int) -> bool:
-    try:
-        return (
-            db.query(models.NotificationLog)
-            .filter(
-                models.NotificationLog.user_id == user_id,
-                models.NotificationLog.event_type == event_type,
-                models.NotificationLog.reference_id == reference_id,
-            )
-            .first()
-            is not None
-        )
-    except Exception:
-        return True  # fail closed: don't spam if the log can't be read
 
 
 def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -> int:
@@ -126,7 +111,12 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
         ):
             nanny_row = db.query(models.Nanny).filter(models.Nanny.id == req.nanny_id).first()
             nanny_user_id = getattr(nanny_row, "user_id", None)
-            if nanny_user_id and not _notification_already_sent(db, nanny_user_id, "deciding_reminder", req.id):
+            if claim_notification_dispatch(
+                db,
+                user_id=nanny_user_id,
+                event_type="deciding_reminder",
+                reference_id=req.id,
+            ):
                 send_notification(
                     db,
                     nanny_user_id,
@@ -142,7 +132,12 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
     # Parent notifications: one per group, deduplicated via the notification log.
     for gid, req in expired_groups.items():
         parent_id = req.parent_user_id
-        if parent_id and not _notification_already_sent(db, parent_id, "request_expired", gid):
+        if claim_notification_dispatch(
+            db,
+            user_id=parent_id,
+            event_type="request_expired",
+            reference_id=gid,
+        ):
             send_notification(
                 db,
                 parent_id,
@@ -156,7 +151,12 @@ def expire_stale_booking_requests(db: Session, now: Optional[datetime] = None) -
         if gid in expired_groups:
             continue
         parent_id = req.parent_user_id
-        if parent_id and not _notification_already_sent(db, parent_id, "no_nanny_yet", gid):
+        if claim_notification_dispatch(
+            db,
+            user_id=parent_id,
+            event_type="no_nanny_yet",
+            reference_id=gid,
+        ):
             send_notification(
                 db,
                 parent_id,

@@ -6,6 +6,7 @@ from datetime import date, datetime
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.notification_dispatch import claim_notification_dispatch
 from app.services.notifications import notify
 from app.utils.time import utc_now
 
@@ -15,15 +16,6 @@ def _expiry(value: str | None) -> date | None:
         return date.fromisoformat(str(value or "").strip()[:10])
     except ValueError:
         return None
-
-
-def _already_notified(db: Session, user_id: int, event_type: str, expiry: date) -> bool:
-    marker = expiry.isoformat()
-    return db.query(models.NotificationLog).filter(
-        models.NotificationLog.user_id == user_id,
-        models.NotificationLog.event_type == event_type,
-        models.NotificationLog.message.contains(marker),
-    ).first() is not None
 
 
 def run_passport_compliance(db: Session) -> dict[str, int]:
@@ -49,8 +41,15 @@ def run_passport_compliance(db: Session) -> dict[str, int]:
         if not expiry:
             continue
         days = (expiry - today).days
-        if 0 < days <= 90 and not _already_notified(
-            db, nanny.user_id, "passport_expiry_warning", expiry
+        if 0 < days <= 90 and claim_notification_dispatch(
+            db,
+            user_id=nanny.user_id,
+            event_type="passport_expiry_warning",
+            reference_id=profile.id,
+            idempotency_key=(
+                f"passport:warning:{nanny.user_id}:{profile.id}:{expiry.isoformat()}"
+            ),
+            legacy_message_marker=expiry.isoformat(),
         ):
             notify(
                 db,
@@ -70,13 +69,23 @@ def run_passport_compliance(db: Session) -> dict[str, int]:
                 nanny.is_suspended = True
                 nanny.suspended_at = utc_now()
                 nanny.suspension_reason = "Passport expired or renewed passport awaiting admin approval"
-                notify(
+                if claim_notification_dispatch(
                     db,
-                    nanny.user_id,
-                    "passport_expired_suspension",
-                    f"Your My Nanny account has been suspended because your passport expired on {expiry.isoformat()}. Upload a valid passport and expiry date for admin approval.",
+                    user_id=nanny.user_id,
+                    event_type="passport_expired_suspension",
                     reference_id=profile.id,
-                )
+                    idempotency_key=(
+                        f"passport:suspension:{nanny.user_id}:{profile.id}:{expiry.isoformat()}"
+                    ),
+                    legacy_message_marker=expiry.isoformat(),
+                ):
+                    notify(
+                        db,
+                        nanny.user_id,
+                        "passport_expired_suspension",
+                        f"Your My Nanny account has been suspended because your passport expired on {expiry.isoformat()}. Upload a valid passport and expiry date for admin approval.",
+                        reference_id=profile.id,
+                    )
                 suspended += 1
     db.commit()
     return {"warned": warned, "suspended": suspended}
