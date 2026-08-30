@@ -482,7 +482,7 @@ def record_twilio_delivery_status(
     if not row:
         return False
 
-    is_failure = normalized_status in {"failed", "undelivered"}
+    is_failure = normalized_status in {"failed", "undelivered"} or bool((error_message or "").strip())
     already_failed = row.status == "failed"
     row.status = "failed" if is_failure else normalized_status
     row.error_message = (error_message or "")[:500] or None
@@ -551,6 +551,7 @@ def retry_failed_notifications(
         .filter(
             models.NotificationLog.created_at >= cutoff,
             models.NotificationLog.channel.in_(["whatsapp", "telegram", "email"]),
+            models.NotificationLog.test_redirected.is_(False),
         )
         .order_by(models.NotificationLog.created_at.asc())
         .all()

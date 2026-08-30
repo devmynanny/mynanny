@@ -232,7 +232,9 @@ def test_twilio_async_failure_updates_log_and_sends_email_once(db, monkeypatch):
     assert whatsapp.provider_message_id == "SMasyncfailure"
     assert whatsapp.status == "sent"
 
-    assert notif.record_twilio_delivery_status(db, "SMasyncfailure", "undelivered", "63112")
+    # Twilio can attach an error code to a nominally non-terminal status.
+    # Any provider error must still reconcile the attempt as failed.
+    assert notif.record_twilio_delivery_status(db, "SMasyncfailure", "sent", "63112")
     db.commit()
     assert whatsapp.status == "failed"
     assert whatsapp.error_message == "63112"
