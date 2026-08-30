@@ -483,6 +483,7 @@ class AppSettings(Base):
     notification_test_mode = Column(Boolean, nullable=False, default=False, server_default="0")
     notification_test_phone = Column(String(32), nullable=True)
     notification_volume_alert_threshold = Column(Integer, nullable=False, default=30, server_default="30")
+    permanent_placements_enabled = Column(Boolean, nullable=False, default=False, server_default="0")
 
 
 class ParentLocation(Base):
@@ -601,4 +602,11 @@ from app.models.admin_profile import AdminProfile
 from app.models.admin_invite import AdminInvite
 from app.models.audit_log import AuditLog
 from app.models.messaging import Conversation, Message, TelegramLinkToken
+from app.models.placements import (
+    PermanentPlacement,
+    PermanentPlacementActivity,
+    PermanentPlacementCandidate,
+    PermanentPlacementPayment,
+    PermanentPlacementPreference,
+)
 from . import availability

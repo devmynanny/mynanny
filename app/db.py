@@ -929,7 +929,8 @@ def ensure_app_settings_schema() -> None:
                   automated_notifications_enabled BOOLEAN NOT NULL DEFAULT 1,
                   notification_test_mode BOOLEAN NOT NULL DEFAULT 0,
                   notification_test_phone TEXT,
-                  notification_volume_alert_threshold INTEGER NOT NULL DEFAULT 30
+                  notification_volume_alert_threshold INTEGER NOT NULL DEFAULT 30,
+                  permanent_placements_enabled BOOLEAN NOT NULL DEFAULT 0
                 )
             """))
             return
@@ -950,6 +951,28 @@ def ensure_app_settings_schema() -> None:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN notification_test_phone TEXT"))
         if "notification_volume_alert_threshold" not in existing:
             conn.execute(text("ALTER TABLE app_settings ADD COLUMN notification_volume_alert_threshold INTEGER NOT NULL DEFAULT 30"))
+        if "permanent_placements_enabled" not in existing:
+            conn.execute(text("ALTER TABLE app_settings ADD COLUMN permanent_placements_enabled BOOLEAN NOT NULL DEFAULT 0"))
+
+
+def ensure_permanent_placements_schema() -> None:
+    """Keep local SQLite placement tables current during branch development."""
+    if not _is_sqlite():
+        return
+    with engine.begin() as conn:
+        if not _table_exists(conn, "permanent_placements"):
+            return
+        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(permanent_placements)"))}
+        additions = {
+            "replacement_status": "TEXT NOT NULL DEFAULT 'not_requested'",
+            "replacement_requested_at": "DATETIME",
+            "replacement_reason": "TEXT",
+            "replacement_resolved_at": "DATETIME",
+            "replacement_resolved_by": "INTEGER",
+        }
+        for name, definition in additions.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE permanent_placements ADD COLUMN {name} {definition}"))
 
 
 def ensure_pricing_settings_schema() -> None:

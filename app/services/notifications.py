@@ -77,6 +77,22 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     "passport_expiry_warning": {"channels": ("chat", "email"), "in_app": True},
     "passport_expired_suspension": {"channels": ("chat", "email"), "in_app": True},
     "passport_renewal_approved": {"channels": ("chat", "email"), "in_app": True},
+    # Permanent-placement messages use email and in-app until dedicated
+    # WhatsApp templates have been approved for the new service line.
+    "permanent_brief_created": {"channels": ("email",), "in_app": True},
+    "permanent_brief_qualified": {"channels": ("email",), "in_app": True},
+    "permanent_placement_upgraded": {"channels": ("email",), "in_app": True},
+    "permanent_candidate_shortlisted": {"channels": ("email",), "in_app": True},
+    "permanent_interview_requested": {"channels": ("email",), "in_app": True},
+    "permanent_fee_paid": {"channels": ("email",), "in_app": True},
+    "permanent_candidate_response": {"channels": ("email",), "in_app": True},
+    "permanent_opportunity_invitation": {"channels": ("email",), "in_app": True},
+    "permanent_candidate_released": {"channels": ("email",), "in_app": True},
+    "permanent_interview_scheduled": {"channels": ("email",), "in_app": True},
+    "permanent_success_fee_due": {"channels": ("email",), "in_app": True},
+    "permanent_candidate_hired": {"channels": ("email",), "in_app": True},
+    "permanent_replacement_requested": {"channels": ("email",), "in_app": True},
+    "permanent_replacement_updated": {"channels": ("email",), "in_app": True},
 }
 
 DEFAULT_POLICY = {"channels": ("chat", "email"), "in_app": False}

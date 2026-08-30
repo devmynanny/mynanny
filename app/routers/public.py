@@ -49,6 +49,7 @@ from app.services.booking_status import booking_state_from_booking, booking_stat
 from app.services.messaging_status import PREFERRED_MESSAGING_CHANNELS
 from app.services.advert_expiry import is_request_expired
 from app.services.storage import store_bytes, store_file
+from app.services.permanent_placements import record_paystack_success
 from app.utils.text_guard import redact_contact_info
 
 router = APIRouter()
@@ -11840,6 +11841,14 @@ async def paystack_webhook(request: Request, db: Session = Depends(get_db)):
         tx_ref = data.get("reference")
         tx_id = data.get("id")
         metadata = data.get("metadata") or {}
+        if tx_ref and isinstance(metadata, dict) and metadata.get("purpose") == "permanent_placement_fee":
+            payment = record_paystack_success(
+                db,
+                reference=str(tx_ref),
+                transaction_id=str(tx_id) if tx_id is not None else None,
+            )
+            if payment is not None:
+                return {"ok": True}
         request_id = metadata.get("booking_request_id") if isinstance(metadata, dict) else None
         q = db.query(models.BookingRequest)
         if request_id:
