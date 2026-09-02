@@ -7788,6 +7788,37 @@ def create_parent_location(
     lat_round = round(payload.lat, 5)
     lng_round = round(payload.lng, 5)
 
+    address_fields = (
+        "place_id",
+        "formatted_address",
+        "street",
+        "suburb",
+        "city",
+        "province",
+        "postal_code",
+        "country",
+    )
+
+    def resolved_address_fields() -> dict:
+        values = {field: getattr(payload, field) for field in address_fields}
+        if str(values.get("formatted_address") or "").strip():
+            return values
+
+        reverse = _extract_reverse_fields(payload.lat, payload.lng)
+        if not reverse or not str(reverse.get("formatted_address") or "").strip():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Your coordinates were found, but we could not identify a street "
+                    "address. Please enter the address manually or try again."
+                ),
+            )
+
+        for field in address_fields:
+            if not values.get(field):
+                values[field] = reverse.get(field)
+        return values
+
     existing = (
         db.query(models.ParentLocation)
         .filter(
@@ -7798,7 +7829,40 @@ def create_parent_location(
         .first()
     )
     if existing:
+        if not str(existing.formatted_address or "").strip():
+            before = _parent_location_snapshot(existing)
+            resolved = resolved_address_fields()
+            for field in address_fields:
+                setattr(existing, field, resolved.get(field))
+            if not existing.label and payload.label:
+                existing.label = payload.label
+
+            if existing.is_default:
+                parent = db.query(models.ParentProfile).filter(models.ParentProfile.user_id == user.id).first()
+                if parent:
+                    parent.lat = existing.lat
+                    parent.lng = existing.lng
+                    parent.location_label = existing.label
+                    for field in address_fields:
+                        setattr(parent, field, getattr(existing, field))
+
+            db.commit()
+            db.refresh(existing)
+            log_audit(
+                db,
+                actor_user=user,
+                target_user_id=user.id,
+                entity="parent_locations",
+                entity_id=existing.id,
+                action="update",
+                before_obj=before,
+                after_obj=_parent_location_snapshot(existing),
+                changed_fields=None,
+                request=request,
+            )
         return existing
+
+    resolved = resolved_address_fields()
 
     existing_count = (
         db.query(models.ParentLocation)
@@ -7810,14 +7874,14 @@ def create_parent_location(
     loc = models.ParentLocation(
         parent_user_id=user.id,
         label=payload.label,
-        place_id=payload.place_id,
-        formatted_address=payload.formatted_address,
-        street=payload.street,
-        suburb=payload.suburb,
-        city=payload.city,
-        province=payload.province,
-        postal_code=payload.postal_code,
-        country=payload.country,
+        place_id=resolved.get("place_id"),
+        formatted_address=resolved.get("formatted_address"),
+        street=resolved.get("street"),
+        suburb=resolved.get("suburb"),
+        city=resolved.get("city"),
+        province=resolved.get("province"),
+        postal_code=resolved.get("postal_code"),
+        country=resolved.get("country"),
         lat=payload.lat,
         lng=payload.lng,
         lat_round=lat_round,
@@ -7835,14 +7899,14 @@ def create_parent_location(
         if parent:
             parent.lat = payload.lat
             parent.lng = payload.lng
-            parent.place_id = payload.place_id
-            parent.formatted_address = payload.formatted_address
-            parent.street = payload.street
-            parent.suburb = payload.suburb
-            parent.city = payload.city
-            parent.province = payload.province
-            parent.postal_code = payload.postal_code
-            parent.country = payload.country
+            parent.place_id = resolved.get("place_id")
+            parent.formatted_address = resolved.get("formatted_address")
+            parent.street = resolved.get("street")
+            parent.suburb = resolved.get("suburb")
+            parent.city = resolved.get("city")
+            parent.province = resolved.get("province")
+            parent.postal_code = resolved.get("postal_code")
+            parent.country = resolved.get("country")
             parent.location_label = payload.label
 
     try:
