@@ -16,7 +16,7 @@ import {
   Sparkles,
   UserRoundCheck,
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { Dispatch, FormEvent, SetStateAction, useEffect, useState } from "react";
 import {
   PlacementField,
   PlacementHeading,
@@ -737,28 +737,28 @@ function OfferCard({ title, subtitle, total, selected, disabled, onSelect, point
   );
 }
 
-function PlacementBriefForm({ brief, setBrief, busy, onCancel, onSubmit }: { brief: typeof emptyBrief; setBrief: (value: typeof emptyBrief) => void; busy: boolean; onCancel: () => void; onSubmit: (event: FormEvent) => void }) {
+function PlacementBriefForm({ brief, setBrief, busy, onCancel, onSubmit }: { brief: typeof emptyBrief; setBrief: Dispatch<SetStateAction<typeof emptyBrief>>; busy: boolean; onCancel: () => void; onSubmit: (event: FormEvent) => void }) {
   return (
     <form className="card mt-8 overflow-hidden" onSubmit={onSubmit}>
       <div className="border-b border-[var(--line)] bg-[var(--blue-pale)] p-7"><div className="eyebrow">Family needs assessment</div><h2 className="mt-2 text-3xl font-bold">Tell us about the role.</h2><p className="mt-2 text-[var(--muted)]">Exact household details never appear in a candidate profile.</p></div>
       <div className="grid gap-5 p-7 sm:grid-cols-2">
-        <PlacementField label="Role title"><input className="field" required value={brief.role_title} onChange={(event) => setBrief({ ...brief, role_title: event.target.value })} /></PlacementField>
-        <PlacementField label="Employment type"><select className="field" value={brief.employment_type} onChange={(event) => setBrief({ ...brief, employment_type: event.target.value })}><option value="full_time">Full-time</option><option value="part_time">Part-time</option><option value="live_in">Live-in</option><option value="live_out">Live-out</option></select></PlacementField>
-        <PlacementField label="Start date"><input className="field" type="date" value={brief.start_date} onChange={(event) => setBrief({ ...brief, start_date: event.target.value })} /></PlacementField>
-        <PlacementField label="Hours per week"><input className="field" type="number" min="1" max="168" value={brief.hours_per_week} onChange={(event) => setBrief({ ...brief, hours_per_week: event.target.value })} /></PlacementField>
-        <PlacementField label="Schedule"><textarea className="field min-h-24" required value={brief.schedule_summary} onChange={(event) => setBrief({ ...brief, schedule_summary: event.target.value })} /></PlacementField>
-        <PlacementField label="Duties"><textarea className="field min-h-24" required value={brief.duties} onChange={(event) => setBrief({ ...brief, duties: event.target.value })} /></PlacementField>
-        <PlacementField label="Number of children"><input className="field" type="number" min="1" max="12" value={brief.children_count} onChange={(event) => setBrief({ ...brief, children_count: event.target.value })} /></PlacementField>
-        <PlacementField label="Children's ages"><input className="field" placeholder="8 months, 4 years" value={brief.children_ages} onChange={(event) => setBrief({ ...brief, children_ages: event.target.value })} /></PlacementField>
-        <PlacementField label="Monthly salary from"><input className="field" type="number" min="1" required value={brief.salary_min} onChange={(event) => setBrief({ ...brief, salary_min: event.target.value })} /></PlacementField>
-        <PlacementField label="Monthly salary to"><input className="field" type="number" min="1" required value={brief.salary_max} onChange={(event) => setBrief({ ...brief, salary_max: event.target.value })} /></PlacementField>
-        <PlacementField label="Suburb"><input className="field" required value={brief.location_suburb} onChange={(event) => setBrief({ ...brief, location_suburb: event.target.value })} /></PlacementField>
-        <PlacementField label="City"><input className="field" required value={brief.location_city} onChange={(event) => setBrief({ ...brief, location_city: event.target.value })} /></PlacementField>
-        <PlacementField label="Province"><input className="field" value={brief.location_province} onChange={(event) => setBrief({ ...brief, location_province: event.target.value })} /></PlacementField>
-        <PlacementField label="Preferred languages"><input className="field" placeholder="English, isiZulu" value={brief.languages} onChange={(event) => setBrief({ ...brief, languages: event.target.value })} /></PlacementField>
-        <PlacementField label="Special requirements"><textarea className="field min-h-20" value={brief.special_requirements} onChange={(event) => setBrief({ ...brief, special_requirements: event.target.value })} /></PlacementField>
-        <PlacementField label="Pets or household notes"><textarea className="field min-h-20" value={brief.pets} onChange={(event) => setBrief({ ...brief, pets: event.target.value })} /></PlacementField>
-        <div className="sm:col-span-2 flex flex-wrap gap-5 rounded-2xl border border-[var(--line)] p-5">{(["live_in", "drivers_license_required", "own_car_required"] as const).map((key) => <label className="flex items-center gap-2 text-sm font-bold" key={key}><input type="checkbox" checked={brief[key]} onChange={(event) => setBrief({ ...brief, [key]: event.target.checked })} />{niceStatus(key)}</label>)}</div>
+        <PlacementField label="Role title"><input className="field" required value={brief.role_title} onChange={(event) => setBrief((current) => ({ ...current, role_title: event.target.value }))} /></PlacementField>
+        <PlacementField label="Employment type"><select className="field" value={brief.employment_type} onChange={(event) => setBrief((current) => ({ ...current, employment_type: event.target.value }))}><option value="full_time">Full-time</option><option value="part_time">Part-time</option><option value="live_in">Live-in</option><option value="live_out">Live-out</option></select></PlacementField>
+        <PlacementField label="Start date"><input className="field" type="date" value={brief.start_date} onChange={(event) => setBrief((current) => ({ ...current, start_date: event.target.value }))} /></PlacementField>
+        <PlacementField label="Hours per week"><input className="field" type="number" min="1" max="168" value={brief.hours_per_week} onChange={(event) => setBrief((current) => ({ ...current, hours_per_week: event.target.value }))} /></PlacementField>
+        <PlacementField label="Schedule"><textarea className="field min-h-24" required value={brief.schedule_summary} onChange={(event) => setBrief((current) => ({ ...current, schedule_summary: event.target.value }))} /></PlacementField>
+        <PlacementField label="Duties"><textarea className="field min-h-24" required value={brief.duties} onChange={(event) => setBrief((current) => ({ ...current, duties: event.target.value }))} /></PlacementField>
+        <PlacementField label="Number of children"><input className="field" type="number" min="1" max="12" value={brief.children_count} onChange={(event) => setBrief((current) => ({ ...current, children_count: event.target.value }))} /></PlacementField>
+        <PlacementField label="Children's ages"><input className="field" placeholder="8 months, 4 years" value={brief.children_ages} onChange={(event) => setBrief((current) => ({ ...current, children_ages: event.target.value }))} /></PlacementField>
+        <PlacementField label="Monthly salary from"><input className="field" type="number" min="1" required value={brief.salary_min} onChange={(event) => setBrief((current) => ({ ...current, salary_min: event.target.value }))} /></PlacementField>
+        <PlacementField label="Monthly salary to"><input className="field" type="number" min="1" required value={brief.salary_max} onChange={(event) => setBrief((current) => ({ ...current, salary_max: event.target.value }))} /></PlacementField>
+        <PlacementField label="Suburb"><input className="field" required value={brief.location_suburb} onChange={(event) => setBrief((current) => ({ ...current, location_suburb: event.target.value }))} /></PlacementField>
+        <PlacementField label="City"><input className="field" required value={brief.location_city} onChange={(event) => setBrief((current) => ({ ...current, location_city: event.target.value }))} /></PlacementField>
+        <PlacementField label="Province"><input className="field" value={brief.location_province} onChange={(event) => setBrief((current) => ({ ...current, location_province: event.target.value }))} /></PlacementField>
+        <PlacementField label="Preferred languages"><input className="field" placeholder="English, isiZulu" value={brief.languages} onChange={(event) => setBrief((current) => ({ ...current, languages: event.target.value }))} /></PlacementField>
+        <PlacementField label="Special requirements"><textarea className="field min-h-20" value={brief.special_requirements} onChange={(event) => setBrief((current) => ({ ...current, special_requirements: event.target.value }))} /></PlacementField>
+        <PlacementField label="Pets or household notes"><textarea className="field min-h-20" value={brief.pets} onChange={(event) => setBrief((current) => ({ ...current, pets: event.target.value }))} /></PlacementField>
+        <div className="sm:col-span-2 flex flex-wrap gap-5 rounded-2xl border border-[var(--line)] p-5">{(["live_in", "drivers_license_required", "own_car_required"] as const).map((key) => <label className="flex items-center gap-2 text-sm font-bold" key={key}><input type="checkbox" checked={brief[key]} onChange={(event) => setBrief((current) => ({ ...current, [key]: event.target.checked }))} />{niceStatus(key)}</label>)}</div>
         <div className="sm:col-span-2 flex justify-end gap-3 border-t border-[var(--line)] pt-6"><button type="button" className="btn-quiet" onClick={onCancel}>Cancel</button><button className="btn-primary" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" size={17} /> : <ArrowRight size={17} />}Save family brief</button></div>
       </div>
     </form>
