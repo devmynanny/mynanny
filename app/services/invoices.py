@@ -526,7 +526,7 @@ def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
         if document_kind == "receipt"
         else "Please use the secure Paystack payment option in your My Nanny placement portal."
     )
-    payment_heading = "PAYMENT RECEIVED" if document_kind == "receipt" else "SECURE PAYMENT"
+    payment_heading = "PAYMENT RECEIVED" if document_kind == "receipt" else "PAYMENT DUE"
     payment_colour = green if document_kind == "receipt" else coral
     payment_card = Table(
         [[
