@@ -4448,6 +4448,7 @@ def get_nanny_me_availability(
     for r in rows:
         out.append({
             "id": r.id,
+            "date": r.date.isoformat() if r.date else None,
             "start_dt": r.start_dt,
             "end_dt": r.end_dt,
             "type": getattr(r, "type", None) or ("available" if getattr(r, "is_available", True) else "blocked"),

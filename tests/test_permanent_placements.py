@@ -906,6 +906,12 @@ def test_trial_offer_acceptance_restructures_short_term_calendar(db):
     assert monday_block.is_available is False
     assert monday_block.start_time == time(0, 0)
     assert monday_block.end_time == time(23, 59, 59)
+    availability_payload = client.get(
+        "/nannies/me/availability",
+        headers=auth(nanny_user),
+    ).json()["results"]
+    monday_payload = next(row for row in availability_payload if row["id"] == monday_block.id)
+    assert monday_payload["date"] == "2026-09-14"
     saturday_blocks = db.query(models.NannyAvailability).filter_by(
         nanny_id=nanny.id,
         date=date(2026, 9, 12),

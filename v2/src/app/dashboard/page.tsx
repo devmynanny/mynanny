@@ -68,7 +68,7 @@ export default function Dashboard() {
   const [failed, setFailed] = useState(false);
   const [interviewSubmitted, setInterviewSubmitted] = useState(false);
   const [availability, setAvailability] = useState<
-    { start_dt: string; type: "available" | "blocked" }[]
+    { date?: string | null; start_dt: string; type: "available" | "blocked" }[]
   >([]);
   const [trustProfile, setTrustProfile] = useState<NannyTrustProfile>({});
   const [trustBadges, setTrustBadges] = useState<TrustBadge[]>([]);
@@ -89,7 +89,11 @@ export default function Dashboard() {
       .then((data) => setInterviewSubmitted(data.video_screening_complete))
       .catch(() => undefined);
     apiJson<{
-      results: { start_dt: string; type: "available" | "blocked" }[];
+      results: {
+        date?: string | null;
+        start_dt: string;
+        type: "available" | "blocked";
+      }[];
     }>("/nannies/me/availability")
       .then((data) => setAvailability(data.results || []))
       .catch(() => undefined);
@@ -464,13 +468,17 @@ function NannyHome({
 }: {
   name: string;
   interviewSubmitted: boolean;
-  availability: { start_dt: string; type: "available" | "blocked" }[];
+  availability: {
+    date?: string | null;
+    start_dt: string;
+    type: "available" | "blocked";
+  }[];
   trustProfile: NannyTrustProfile;
   trustBadges: TrustBadge[];
   bankingStatus: BankingStatus | null;
 }) {
   const events: CalendarEvent[] = availability.map((row) => ({
-    date: row.start_dt.slice(0, 10),
+    date: row.date || row.start_dt.slice(0, 10),
     label: row.type === "available" ? "Available" : "Unavailable",
     tone: row.type === "available" ? "green" : "coral",
   }));

@@ -8,10 +8,15 @@ import { useEffect, useState } from "react";
 
 type Availability = {
   id: number;
+  date?: string | null;
   start_dt: string;
   end_dt: string;
   type: "available" | "blocked";
 };
+
+function availabilityDate(row: Availability) {
+  return row.date || row.start_dt.slice(0, 10);
+}
 
 export default function AvailabilityPage() {
   const [rows, setRows] = useState<Availability[]>([]);
@@ -46,7 +51,7 @@ export default function AvailabilityPage() {
   }, []);
   async function selectDate(date: string) {
     const existing = rows.find(
-      (row) => row.start_dt.slice(0, 10) === date && row.type === "available",
+      (row) => availabilityDate(row) === date && row.type === "available",
     );
     setSaving(true);
     setStatus("");
@@ -73,6 +78,7 @@ export default function AvailabilityPage() {
           ...current,
           {
             id: created.id,
+            date,
             start_dt: `${date}T${startTime}:00`,
             end_dt: `${date}T${endTime}:00`,
             type: "available",
@@ -145,7 +151,7 @@ export default function AvailabilityPage() {
     }
   }
   const events: CalendarEvent[] = rows.map((row) => ({
-    date: row.start_dt.slice(0, 10),
+    date: availabilityDate(row),
     label: row.type === "available" ? "Available" : "Unavailable",
     tone: row.type === "available" ? "green" : "coral",
   }));
