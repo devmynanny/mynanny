@@ -16,6 +16,20 @@ refuses the My Nanny production domains.
 - Parent: `uat.parent@mynanny.co.za`
 - Nanny: `uat.nanny@mynanny.co.za`
 
+### Qualified demo candidate pool
+
+Run `python scripts/seed_demo_nannies.py` inside the UAT backend service to
+create or refresh three clearly labelled, synthetic nanny profiles. The seed is
+idempotent and gives each profile approved screening documents, qualifications,
+Gauteng availability and an opted-in permanent-placement preference:
+
+- `demo.nanny1@mynanny.test` — experienced full-time/live-out driver in Sandton;
+- `demo.nanny2@mynanny.test` — newborn and night-care specialist in Sandton;
+- `demo.nanny3@mynanny.test` — ECD-qualified live-out caregiver in Centurion.
+
+All three use the password documented in `scripts/seed_demo_nannies.py`. Remove
+the records before a public launch with `python scripts/seed_demo_nannies.py --delete`.
+
 Passwords are UAT secrets. Supply them only as local environment variables;
 never add them to source control, Render logs or this document.
 

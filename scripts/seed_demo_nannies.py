@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.db import SessionLocal, engine  # noqa: E402
 from app import models  # noqa: E402
 from app.security import hash_password  # noqa: E402
+from app.utils.time import utc_now  # noqa: E402
 
 DEMO_PASSWORD = "Demo1234!"
 DEMO_PROFILE_PHOTO_URL = "https://mynanny-v2.onrender.com/hero-nanny-feeding-v2.png"
@@ -46,6 +47,12 @@ DEMO_NANNIES = [
         "bio": "Warm, energetic nanny with 8 years of experience caring for toddlers and school-age children.",
         "languages": ["English", "Zulu", "Sotho"],
         "qualifications": ["First aid and CPR certificate", "Childcare / Nanny certificate"],
+        "desired_salary_min_cents": 750000,
+        "desired_salary_max_cents": 950000,
+        "employment_types": ["full_time", "part_time", "live_out"],
+        "preferred_locations": "Sandton, Rosebank and surrounding Johannesburg areas",
+        "live_in_preference": "no",
+        "permanent_profile_notes": "Experienced with toddlers and school-age children; confident driver with own car.",
         "has_drivers_license": True,
         "has_own_car": True,
         "dog_preference": "loves_dogs",
@@ -64,6 +71,12 @@ DEMO_NANNIES = [
         "bio": "Experienced night nanny and newborn specialist. Calm, reliable, and great with routines.",
         "languages": ["English", "Tswana"],
         "qualifications": ["Night Nurse / night nanny certificate", "Pediatric CPR/First aid"],
+        "desired_salary_min_cents": 900000,
+        "desired_salary_max_cents": 1200000,
+        "employment_types": ["full_time", "part_time", "live_in", "live_out"],
+        "preferred_locations": "Sandton and northern Johannesburg",
+        "live_in_preference": "either",
+        "permanent_profile_notes": "Newborn and night-care specialist; available for live-in or live-out permanent roles.",
         "has_drivers_license": True,
         "has_own_car": False,
         "dog_preference": "fine_with_dogs",
@@ -82,6 +95,12 @@ DEMO_NANNIES = [
         "bio": "ECD-qualified nanny who loves educational play. Currently studying part time.",
         "languages": ["English", "Afrikaans", "Xhosa"],
         "qualifications": ["ECD Certificate", "First aid and CPR certificate"],
+        "desired_salary_min_cents": 650000,
+        "desired_salary_max_cents": 850000,
+        "employment_types": ["full_time", "part_time", "live_out"],
+        "preferred_locations": "Centurion, Midrand and southern Pretoria",
+        "live_in_preference": "no",
+        "permanent_profile_notes": "ECD-qualified caregiver focused on structured learning, routines and educational play.",
         "has_drivers_license": False,
         "has_own_car": False,
         "dog_preference": "fine_with_dogs",
@@ -129,7 +148,7 @@ def seed(db):
         nanny.banking_complete = True
         nanny.video_screening_complete = True
         nanny.video_screening_json = json.dumps([])
-        nanny.video_screening_submitted_at = datetime.utcnow()
+        nanny.video_screening_submitted_at = utc_now()
         db.flush()
 
         profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
@@ -167,7 +186,7 @@ def seed(db):
         profile.lng = spec["lng"]
         profile.is_approved = 1
         profile.application_status = "approved"
-        profile.approved_at = datetime.utcnow().isoformat()
+        profile.approved_at = utc_now().isoformat()
         profile.formatted_address = spec["formatted_address"]
         profile.suburb = spec["suburb"]
         profile.city = spec["city"]
@@ -178,6 +197,23 @@ def seed(db):
         profile.languages = langs
         profile.qualifications = quals
         db.add(profile)
+        db.flush()
+
+        permanent_preference = db.query(models.PermanentPlacementPreference).filter(
+            models.PermanentPlacementPreference.nanny_id == nanny.id
+        ).first()
+        if not permanent_preference:
+            permanent_preference = models.PermanentPlacementPreference(nanny_id=nanny.id)
+            db.add(permanent_preference)
+        permanent_preference.opted_in = True
+        permanent_preference.desired_salary_min_cents = spec["desired_salary_min_cents"]
+        permanent_preference.desired_salary_max_cents = spec["desired_salary_max_cents"]
+        permanent_preference.employment_types_json = json.dumps(spec["employment_types"])
+        permanent_preference.preferred_locations = spec["preferred_locations"]
+        permanent_preference.available_from = date.today()
+        permanent_preference.live_in_preference = spec["live_in_preference"]
+        permanent_preference.profile_notes = spec["permanent_profile_notes"]
+        permanent_preference.consent_at = utc_now()
         db.flush()
 
         db.query(models.NannyAvailability).filter(
@@ -215,6 +251,9 @@ def delete(db):
     for user in users:
         nanny = db.query(models.Nanny).filter(models.Nanny.user_id == user.id).first()
         if nanny:
+            db.query(models.PermanentPlacementPreference).filter(
+                models.PermanentPlacementPreference.nanny_id == nanny.id
+            ).delete(synchronize_session=False)
             profile = db.query(models.NannyProfile).filter(models.NannyProfile.nanny_id == nanny.id).first()
             if profile:
                 profile.languages = []
