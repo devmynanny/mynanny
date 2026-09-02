@@ -458,7 +458,12 @@ def send_offer(db, placement_id: int, nanny_email: str) -> None:
     candidate = candidate_or_exit(db, placement, nanny_email)
     if candidate.trial_status != "accepted":
         raise SystemExit("The synthetic nanny must accept the paid trial first")
+    working_days = [0, 1, 2, 3, 4]
     if candidate.offer_status in {"pending", "accepted"}:
+        stored_working_days = json.loads(candidate.offer_working_days_json or "[]")
+        if stored_working_days != working_days:
+            candidate.offer_working_days_json = json.dumps(working_days)
+            db.commit()
         print(
             f"Placement #{placement.id}: candidate={candidate.id}; "
             f"offer={candidate.offer_status}"
@@ -466,7 +471,6 @@ def send_offer(db, placement_id: int, nanny_email: str) -> None:
         return
 
     start_date = utc_now().date() + timedelta(days=14)
-    working_days = ["monday", "tuesday", "wednesday", "thursday", "friday"]
     candidate.parent_interview_decision = "offer"
     candidate.parent_interview_feedback = (
         "Paid trial accepted in UAT; proceed with the controlled permanent offer."
