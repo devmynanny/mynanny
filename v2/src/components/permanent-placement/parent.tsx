@@ -1,6 +1,6 @@
 "use client";
 
-import { apiJson } from "@/lib/api";
+import { apiJson, apiMediaUrl } from "@/lib/api";
 import {
   ArrowRight,
   Banknote,
@@ -23,7 +23,8 @@ import {
   PlacementInfo,
   PlacementNotice,
 } from "./shared";
-import { Candidate, Config, money, niceStatus, Placement } from "./types";
+import { InterviewCommunication } from "./communication";
+import { Candidate, Config, dateTime, money, niceStatus, Placement } from "./types";
 
 const emptyBrief = {
   role_title: "Permanent nanny",
@@ -47,6 +48,8 @@ const emptyBrief = {
   pets: "",
 };
 
+const weekdayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
 export function ParentPermanentPlacements() {
   const [config, setConfig] = useState<Config | null>(null);
   const [placements, setPlacements] = useState<Placement[]>([]);
@@ -56,6 +59,7 @@ export function ParentPermanentPlacements() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const [interviewFeedback, setInterviewFeedback] = useState<Record<number, string>>({});
 
   async function load(selectId?: number) {
     const [nextConfig, list] = await Promise.all([
@@ -218,6 +222,73 @@ export function ParentPermanentPlacements() {
     }
   }
 
+  async function recordInterviewDecision(candidateId: number, decision: "reject" | "maybe" | "trial" | "offer" | "admin_support") {
+    if (!selected) return;
+    const feedback = (interviewFeedback[candidateId] || "").trim();
+    if (feedback.length < 3) {
+      setMessage("Add a short interview note before choosing the next step.");
+      return;
+    }
+    setBusy(`decision-${candidateId}`);
+    try {
+      setSelected(await apiJson<Placement>(`/parents/me/permanent-placements/${selected.id}/candidates/${candidateId}/interview-decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision, feedback }),
+      }));
+      setMessage(decision === "maybe" ? "Candidate added to Maybe for four days." : "Interview feedback and next step saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save interview feedback.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function requestTrial(candidateId: number, startsAt: string, endsAt: string, note: string) {
+    if (!selected) return;
+    setBusy(`trial-${candidateId}`);
+    try {
+      setSelected(await apiJson<Placement>(`/parents/me/permanent-placements/${selected.id}/candidates/${candidateId}/trial`, {
+        method: "POST",
+        body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt, note: note || null }),
+      }));
+      setMessage("Paid trial request sent. The nanny can accept, decline or suggest another time.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to send the trial request.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendOffer(candidateId: number, offer: {
+    salary: string;
+    startDate: string;
+    workingDays: number[];
+    startTime: string;
+    endTime: string;
+    terms: string;
+  }) {
+    if (!selected) return;
+    setBusy(`offer-${candidateId}`);
+    try {
+      setSelected(await apiJson<Placement>(`/parents/me/permanent-placements/${selected.id}/candidates/${candidateId}/offer`, {
+        method: "POST",
+        body: JSON.stringify({
+          salary_cents: Math.round(Number(offer.salary) * 100),
+          start_date: offer.startDate,
+          working_days: offer.workingDays,
+          start_time: offer.startTime,
+          end_time: offer.endTime,
+          terms: offer.terms,
+        }),
+      }));
+      setMessage("Formal offer sent. My Nanny remains available to support questions and salary discussions.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to send the offer.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function upgrade() {
     if (!selected) return;
     setBusy("upgrade");
@@ -239,7 +310,7 @@ export function ParentPermanentPlacements() {
   async function requestReplacement() {
     if (!selected) return;
     const reason = window.prompt(
-      "Please explain why you need a replacement or profile rematch.",
+      "Please explain why you need a replacement.",
     );
     if (!reason) return;
     setBusy("replacement");
@@ -276,6 +347,11 @@ export function ParentPermanentPlacements() {
         onUpgrade={upgrade}
         onRequestReplacement={requestReplacement}
         onCandidateAction={candidateAction}
+        interviewFeedback={interviewFeedback}
+        setInterviewFeedback={setInterviewFeedback}
+        onInterviewDecision={recordInterviewDecision}
+        onRequestTrial={requestTrial}
+        onSendOffer={sendOffer}
       />
     );
 
@@ -328,8 +404,9 @@ export function ParentPermanentPlacements() {
           onSelect={() => setTier("self_match")}
           points={[
             `${money(config.pricing.self_match.activation_fee_cents)} search activation`,
+            `${money(config.pricing.self_match.candidate_access_fee_cents)} top-up for the ${money(config.pricing.self_match.interview_package_fee_cents)} interview package`,
             `${config.pricing.self_match.profile_limit} profiles and ${config.pricing.self_match.interview_limit} interviews`,
-            `${config.pricing.self_match.rematch_days}-day profile rematch`,
+            `One replacement within ${config.pricing.self_match.replacement_days} days`,
             "Contact details stay protected",
           ]}
         />
@@ -341,7 +418,8 @@ export function ParentPermanentPlacements() {
           disabled={!config.enabled}
           onSelect={() => setTier("concierge")}
           points={[
-            `${money(config.pricing.concierge.application_fee_cents)} application`,
+            `${money(config.pricing.concierge.consultation_fee_cents)} consultation`,
+            `${money(config.pricing.concierge.engagement_fee_cents)} engagement and ${money(config.pricing.concierge.success_balance_cents)} placement balance`,
             `Curated shortlist and ${config.pricing.concierge.interview_limit} interviews`,
             "Interview, trial and onboarding coordination",
             `One replacement within ${config.pricing.concierge.replacement_days} days`,
@@ -371,6 +449,11 @@ function ParentPlacementDetail({
   onUpgrade,
   onRequestReplacement,
   onCandidateAction,
+  interviewFeedback,
+  setInterviewFeedback,
+  onInterviewDecision,
+  onRequestTrial,
+  onSendOffer,
 }: {
   placement: Placement;
   busy: string;
@@ -383,6 +466,11 @@ function ParentPlacementDetail({
     id: number,
     action: "shortlist" | "request-interview",
   ) => void;
+  interviewFeedback: Record<number, string>;
+  setInterviewFeedback: (value: Record<number, string>) => void;
+  onInterviewDecision: (id: number, decision: "reject" | "maybe" | "trial" | "offer" | "admin_support") => void;
+  onRequestTrial: (id: number, startsAt: string, endsAt: string, note: string) => void;
+  onSendOffer: (id: number, offer: { salary: string; startDate: string; workingDays: number[]; startTime: string; endTime: string; terms: string }) => void;
 }) {
   const dueFeeType =
     placement.status === "awaiting_initial_payment"
@@ -391,6 +479,8 @@ function ParentPlacementDetail({
         : "application"
       : placement.status === "awaiting_candidate_access"
         ? "candidate_access"
+        : placement.status === "awaiting_engagement_payment"
+          ? "engagement"
         : placement.status === "awaiting_success_fee"
           ? "success"
           : null;
@@ -405,7 +495,7 @@ function ParentPlacementDetail({
         <PlacementHeading
           eyebrow="Permanent care"
           title={placement.role_title}
-          body={`${niceStatus(placement.service_tier)} placement in ${placement.location_suburb}. Track every protected introduction, interview and payment here.`}
+          body={`${niceStatus(placement.service_tier)} placement in ${placement.location_suburb}. Track every managed introduction, interview and payment here.`}
         />
         <button className="btn-secondary" onClick={onBack}>View all searches</button>
       </div>
@@ -445,6 +535,13 @@ function ParentPlacementDetail({
             </div>
           )}
           <div className="card p-6">
+            <div className="eyebrow">Interview credits</div>
+            <div className="mt-2 text-3xl font-bold">{placement.interview_credits.available} available</div>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              {placement.interview_credits.used} of {placement.interview_credits.included} accepted interview credits used. Invitations do not use a credit until a nanny accepts.
+            </p>
+          </div>
+          <div className="card p-6">
             <div className="eyebrow">Fees</div>
             <div className="mt-4 grid gap-3">
               {placement.payments.map((payment) => (
@@ -454,11 +551,12 @@ function ParentPlacementDetail({
                 </div>
               ))}
             </div>
+            {placement.invoices.length > 0 && <div className="mt-5 border-t border-[var(--line)] pt-5"><div className="text-sm font-bold">Invoices and receipts</div><div className="mt-3 grid gap-2">{placement.invoices.map((invoice) => <div className="rounded-xl bg-[var(--blue-pale)] p-3 text-sm" key={invoice.id}><div className="flex items-center justify-between gap-3"><span><b>{invoice.invoice_number || "Invoice draft"}</b><span className="ml-2 text-[var(--muted)]">{money(invoice.total_cents)}</span></span><span className="pill">{niceStatus(invoice.status)}</span></div><div className="mt-2 flex flex-wrap gap-3">{invoice.invoice_pdf_url && <a className="font-bold underline" href={apiMediaUrl(invoice.invoice_pdf_url)} target="_blank" rel="noreferrer">Download invoice</a>}{invoice.receipt_pdf_url && <a className="font-bold underline" href={apiMediaUrl(invoice.receipt_pdf_url)} target="_blank" rel="noreferrer">Download receipt</a>}{!invoice.invoice_pdf_url && <span className="text-[var(--muted)]">Awaiting billing setup or issue</span>}</div></div>)}</div></div>}
           </div>
           {placement.guarantee_until && (
             <div className="card p-6">
               <div className="eyebrow">
-                {placement.service_tier === "concierge" ? "Replacement cover" : "Profile rematch"}
+                Replacement cover
               </div>
               <h3 className="mt-2 text-xl font-bold">
                 Covered until {new Date(placement.guarantee_until).toLocaleDateString("en-ZA", { dateStyle: "medium" })}
@@ -468,7 +566,7 @@ function ParentPlacementDetail({
               </p>
               {placement.replacement_status === "not_requested" && (
                 <button className="btn-secondary mt-5 w-full" disabled={busy === "replacement"} onClick={onRequestReplacement}>
-                  Request {placement.service_tier === "concierge" ? "a replacement" : "a profile rematch"}
+                  Request a replacement
                 </button>
               )}
             </div>
@@ -477,7 +575,7 @@ function ParentPlacementDetail({
             <div className="card bg-[var(--blue-pale)] p-6">
               <Sparkles className="text-[var(--blue-dark)]" />
               <h3 className="mt-4 text-xl font-bold">Need more help?</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">Upgrade without another application fee. Paid candidate access is credited against the Concierge success fee.</p>
+              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">Upgrade without another application fee. Your paid interview package is credited against the remaining Concierge placement service.</p>
               <button className="btn-secondary mt-5 w-full" disabled={busy === "upgrade"} onClick={onUpgrade}>Upgrade to Concierge</button>
             </div>
           )}
@@ -485,13 +583,13 @@ function ParentPlacementDetail({
       </div>
       <section className="mt-8">
         <div className="flex items-end justify-between gap-4">
-          <div><div className="eyebrow">Protected introductions</div><h2 className="display mt-2 text-3xl sm:text-4xl">Your candidate shortlist.</h2></div>
+          <div><div className="eyebrow">Managed introductions</div><h2 className="display mt-2 text-3xl sm:text-4xl">Your candidate shortlist.</h2></div>
           <span className="pill">{placement.candidates?.length || 0} released</span>
         </div>
         {placement.candidates?.length ? (
           <div className="mt-6 grid gap-5 lg:grid-cols-2">
             {placement.candidates.map((candidate) => (
-              <CandidateCard key={candidate.id} candidate={candidate} busy={busy} onAction={onCandidateAction} />
+              <CandidateCard key={candidate.id} candidate={candidate} busy={busy} onAction={onCandidateAction} feedback={interviewFeedback[candidate.id] || candidate.parent_interview_feedback || ""} onFeedback={(value) => setInterviewFeedback({ ...interviewFeedback, [candidate.id]: value })} onDecision={onInterviewDecision} onRequestTrial={onRequestTrial} onSendOffer={onSendOffer} />
             ))}
           </div>
         ) : (
@@ -506,8 +604,49 @@ function ParentPlacementDetail({
   );
 }
 
-function CandidateCard({ candidate, busy, onAction }: { candidate: Candidate; busy: string; onAction: (id: number, action: "shortlist" | "request-interview") => void }) {
+function CandidateCard({
+  candidate,
+  busy,
+  onAction,
+  feedback,
+  onFeedback,
+  onDecision,
+  onRequestTrial,
+  onSendOffer,
+}: {
+  candidate: Candidate;
+  busy: string;
+  onAction: (id: number, action: "shortlist" | "request-interview") => void;
+  feedback: string;
+  onFeedback: (value: string) => void;
+  onDecision: (id: number, decision: "reject" | "maybe" | "trial" | "offer" | "admin_support") => void;
+  onRequestTrial: (id: number, startsAt: string, endsAt: string, note: string) => void;
+  onSendOffer: (id: number, offer: { salary: string; startDate: string; workingDays: number[]; startTime: string; endTime: string; terms: string }) => void;
+}) {
   const checks = Object.values(candidate.verification).filter((value) => value === true).length;
+  const [trialStart, setTrialStart] = useState("");
+  const [trialEnd, setTrialEnd] = useState("");
+  const [trialNote, setTrialNote] = useState("");
+  const [offer, setOffer] = useState({
+    salary: candidate.desired_salary_min_cents ? String(candidate.desired_salary_min_cents / 100) : "",
+    startDate: "",
+    workingDays: [0, 1, 2, 3, 4],
+    startTime: "07:00",
+    endTime: "17:00",
+    terms: "Permanent nanny position subject to the agreed duties and My Nanny placement terms.",
+  });
+  const trialReady = Boolean(trialStart && trialEnd);
+  const offerReady = Boolean(offer.salary && offer.startDate && offer.workingDays.length && offer.startTime && offer.endTime && offer.terms.trim().length >= 5);
+
+  function toggleWorkingDay(day: number) {
+    setOffer({
+      ...offer,
+      workingDays: offer.workingDays.includes(day)
+        ? offer.workingDays.filter((value) => value !== day)
+        : [...offer.workingDays, day].sort(),
+    });
+  }
+
   return (
     <article className="card overflow-hidden">
       <div className="flex items-start gap-4 bg-[var(--blue-pale)] p-5">
@@ -520,8 +659,67 @@ function CandidateCard({ candidate, busy, onAction }: { candidate: Candidate; bu
         <div className="mt-5 flex flex-wrap gap-3 border-t border-[var(--line)] pt-5">
           {candidate.status === "released" && <button className="btn-secondary" disabled={Boolean(busy)} onClick={() => onAction(candidate.id, "shortlist")}><UserRoundCheck size={17} />Shortlist</button>}
           {["released", "shortlisted"].includes(candidate.status) && <button className="btn-primary" disabled={Boolean(busy)} onClick={() => onAction(candidate.id, "request-interview")}><CalendarDays size={17} />Request interview</button>}
+          {candidate.interview_invite_status === "pending" && <span className="pill">Awaiting nanny response</span>}
+          {candidate.interview_invite_status === "accepted" && !candidate.interview_scheduled_at && <span className="pill">Interview accepted</span>}
+          {["declined", "cancelled_by_nanny", "not_held"].includes(candidate.interview_invite_status) && <span className="pill">Credit not used</span>}
           {candidate.interview_scheduled_at && <span className="pill">Interview {new Date(candidate.interview_scheduled_at).toLocaleDateString("en-ZA")}</span>}
         </div>
+        {candidate.interview_completed_at && !["reject", "trial", "offer"].includes(candidate.parent_interview_decision || "") && (
+          <div className="mt-5 rounded-2xl bg-[var(--blue-pale)] p-5">
+            <b>Interview feedback and next step</b>
+            <textarea className="field mt-3 min-h-24 bg-white" value={feedback} onChange={(event) => onFeedback(event.target.value)} placeholder="How did you experience the interview?"/>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button className="btn-quiet !min-h-9 text-red-700" disabled={Boolean(busy)} onClick={() => onDecision(candidate.id, "reject")}>Reject</button>
+              <button className="btn-secondary !min-h-9" disabled={Boolean(busy)} onClick={() => onDecision(candidate.id, "maybe")}>Maybe</button>
+              <button className="btn-secondary !min-h-9" disabled={Boolean(busy)} onClick={() => onDecision(candidate.id, "trial")}>Request trial</button>
+              <button className="btn-primary !min-h-9" disabled={Boolean(busy)} onClick={() => onDecision(candidate.id, "offer")}>Make an offer</button>
+              <button className="btn-quiet !min-h-9" disabled={Boolean(busy)} onClick={() => onDecision(candidate.id, "admin_support")}>Ask My Nanny</button>
+            </div>
+            {candidate.maybe_until && <p className="mt-3 text-xs font-semibold text-[var(--muted)]">Maybe decision due by {new Date(candidate.maybe_until).toLocaleString("en-ZA")}</p>}
+          </div>
+        )}
+        {["accepted", "completed"].includes(candidate.interview_invite_status) && <InterviewCommunication candidateId={candidate.id} />}
+        {candidate.parent_interview_decision === "trial" && (
+          <div className="mt-5 rounded-2xl border border-[var(--line)] p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2"><b>Paid trial</b><span className="pill">{niceStatus(candidate.trial_status || "choose dates")}</span></div>
+            {candidate.trial_alternative_at && <p className="mt-3 rounded-xl bg-[var(--blue-pale)] p-3 text-sm"><b>Alternative suggested:</b> {dateTime(candidate.trial_alternative_at)}</p>}
+            {candidate.trial_status === "pending" || candidate.trial_status === "accepted" ? (
+              <div className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                {dateTime(candidate.trial_scheduled_at)} to {dateTime(candidate.trial_ends_at)} · {candidate.trial_status === "pending" ? "Awaiting the nanny's response" : "Accepted by the nanny"}
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <PlacementField label="Trial starts"><input className="field" type="datetime-local" value={trialStart} onChange={(event) => setTrialStart(event.target.value)} /></PlacementField>
+                <PlacementField label="Trial ends"><input className="field" type="datetime-local" value={trialEnd} onChange={(event) => setTrialEnd(event.target.value)} /></PlacementField>
+                <div className="sm:col-span-2"><textarea className="field min-h-20" value={trialNote} onChange={(event) => setTrialNote(event.target.value)} placeholder="Transport, meeting point or trial notes" /></div>
+                <button className="btn-primary sm:col-span-2" disabled={Boolean(busy) || !trialReady} onClick={() => onRequestTrial(candidate.id, trialStart, trialEnd, trialNote)}><CalendarDays size={17} />Send trial request</button>
+              </div>
+            )}
+          </div>
+        )}
+        {candidate.parent_interview_decision === "offer" && (
+          <div className="mt-5 rounded-2xl border border-[var(--line)] p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2"><b>Permanent offer</b><span className="pill">{niceStatus(candidate.offer_status || "prepare offer")}</span></div>
+            {candidate.offer_status === "pending" || candidate.offer_status === "accepted" ? (
+              <div className="mt-3 grid gap-2 text-sm text-[var(--muted)]">
+                <span><b>Salary:</b> {money(candidate.offer_salary_cents)} monthly</span>
+                <span><b>Starts:</b> {candidate.offer_start_date || "To confirm"}</span>
+                <span><b>Working schedule:</b> {(candidate.offer_working_days || []).map((day) => weekdayNames[day]).join(", ")} · {candidate.offer_start_time}-{candidate.offer_end_time}</span>
+                <span>{candidate.offer_status === "pending" ? "Awaiting the nanny's response." : "Offer accepted. The agreed working days are now blocked from her short-term calendar."}</span>
+              </div>
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <PlacementField label="Monthly salary"><input className="field" type="number" min="1" value={offer.salary} onChange={(event) => setOffer({ ...offer, salary: event.target.value })} /></PlacementField>
+                <PlacementField label="Start date"><input className="field" type="date" value={offer.startDate} onChange={(event) => setOffer({ ...offer, startDate: event.target.value })} /></PlacementField>
+                <PlacementField label="Working from"><input className="field" type="time" value={offer.startTime} onChange={(event) => setOffer({ ...offer, startTime: event.target.value })} /></PlacementField>
+                <PlacementField label="Working until"><input className="field" type="time" value={offer.endTime} onChange={(event) => setOffer({ ...offer, endTime: event.target.value })} /></PlacementField>
+                <div className="sm:col-span-2"><div className="mb-2 text-sm font-bold">Working days</div><div className="flex flex-wrap gap-2">{weekdayNames.map((name, day) => <button type="button" key={name} className={offer.workingDays.includes(day) ? "btn-primary !min-h-9" : "btn-secondary !min-h-9"} onClick={() => toggleWorkingDay(day)}>{name.slice(0, 3)}</button>)}</div></div>
+                <div className="sm:col-span-2"><textarea className="field min-h-24" value={offer.terms} onChange={(event) => setOffer({ ...offer, terms: event.target.value })} placeholder="Role, duties and any agreed terms" /></div>
+                <button className="btn-primary sm:col-span-2" disabled={Boolean(busy) || !offerReady} onClick={() => onSendOffer(candidate.id, offer)}><Handshake size={17} />Send formal offer</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </article>
   );

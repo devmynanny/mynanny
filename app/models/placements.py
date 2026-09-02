@@ -1,5 +1,6 @@
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -43,6 +44,7 @@ class PermanentPlacement(Base):
     pets = Column(Text, nullable=True)
     parent_notes = Column(Text, nullable=True)
     admin_notes = Column(Text, nullable=True)
+    pricing_snapshot_json = Column(Text, nullable=True)
     candidate_access_expires_at = Column(DateTime, nullable=True)
     placed_nanny_id = Column(Integer, ForeignKey("nannies.id"), nullable=True)
     hired_at = Column(DateTime, nullable=True)
@@ -53,6 +55,8 @@ class PermanentPlacement(Base):
     replacement_reason = Column(Text, nullable=True)
     replacement_resolved_at = Column(DateTime, nullable=True)
     replacement_resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    replacement_count = Column(Integer, nullable=False, default=0)
+    interview_credit_cycle = Column(Integer, nullable=False, default=0)
     upgraded_from_self_match = Column(Boolean, nullable=False, default=False)
     closed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -61,6 +65,54 @@ class PermanentPlacement(Base):
     __table_args__ = (
         Index("ix_permanent_placements_parent_status", "parent_user_id", "status"),
         Index("ix_permanent_placements_tier_status", "service_tier", "status"),
+    )
+
+
+class PermanentPlacementSettings(Base):
+    """Current commercial terms for new permanent-placement cases.
+
+    A case receives its own JSON snapshot when it is created, so editing these
+    settings never changes a fee or entitlement already shown to a family.
+    """
+
+    __tablename__ = "permanent_placement_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    currency = Column(String(3), nullable=False, default="ZAR")
+    self_match_activation_fee_cents = Column(Integer, nullable=False, default=35_000)
+    self_match_interview_package_fee_cents = Column(Integer, nullable=False, default=150_000)
+    self_match_placement_fee_cents = Column(Integer, nullable=False, default=150_000)
+    activation_fee_credits_toward_package = Column(Boolean, nullable=False, default=True)
+    concierge_consultation_fee_cents = Column(Integer, nullable=False, default=55_000)
+    concierge_engagement_fee_cents = Column(Integer, nullable=False, default=250_000)
+    concierge_success_balance_cents = Column(Integer, nullable=False, default=700_000)
+    self_match_profile_limit = Column(Integer, nullable=False, default=10)
+    self_match_interview_limit = Column(Integer, nullable=False, default=5)
+    concierge_interview_limit = Column(Integer, nullable=False, default=5)
+    candidate_access_days = Column(Integer, nullable=False, default=30)
+    replacement_period_days = Column(Integer, nullable=False, default=40)
+    replacement_credit_count = Column(Integer, nullable=False, default=3)
+    replacement_max_count = Column(Integer, nullable=False, default=1)
+    maybe_period_days = Column(Integer, nullable=False, default=4)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("self_match_activation_fee_cents >= 0", name="ck_perm_activation_fee_nonnegative"),
+        CheckConstraint("self_match_interview_package_fee_cents >= 0", name="ck_perm_package_fee_nonnegative"),
+        CheckConstraint("self_match_placement_fee_cents >= 0", name="ck_perm_placement_fee_nonnegative"),
+        CheckConstraint("concierge_consultation_fee_cents >= 0", name="ck_perm_consultation_fee_nonnegative"),
+        CheckConstraint("concierge_engagement_fee_cents >= 0", name="ck_perm_engagement_fee_nonnegative"),
+        CheckConstraint("concierge_success_balance_cents >= 0", name="ck_perm_success_balance_nonnegative"),
+        CheckConstraint("self_match_profile_limit > 0", name="ck_perm_profile_limit_positive"),
+        CheckConstraint("self_match_interview_limit > 0", name="ck_perm_self_interview_limit_positive"),
+        CheckConstraint("concierge_interview_limit > 0", name="ck_perm_concierge_interview_limit_positive"),
+        CheckConstraint("candidate_access_days > 0", name="ck_perm_access_days_positive"),
+        CheckConstraint("replacement_period_days > 0", name="ck_perm_replacement_days_positive"),
+        CheckConstraint("replacement_credit_count > 0", name="ck_perm_replacement_credits_positive"),
+        CheckConstraint("replacement_max_count > 0", name="ck_perm_replacement_count_positive"),
+        CheckConstraint("maybe_period_days > 0", name="ck_perm_maybe_days_positive"),
     )
 
 
@@ -78,12 +130,39 @@ class PermanentPlacementCandidate(Base):
     introduction_expires_at = Column(DateTime, nullable=True)
     shortlisted_at = Column(DateTime, nullable=True)
     interview_requested_at = Column(DateTime, nullable=True)
+    interview_invite_status = Column(String(24), nullable=False, default="not_requested")
+    interview_responded_at = Column(DateTime, nullable=True)
+    interview_credit_cycle = Column(Integer, nullable=True)
+    interview_credit_consumed_at = Column(DateTime, nullable=True)
+    interview_credit_restored_at = Column(DateTime, nullable=True)
     interview_scheduled_at = Column(DateTime, nullable=True)
+    interview_checked_in_at = Column(DateTime, nullable=True)
+    interview_completed_at = Column(DateTime, nullable=True)
     interview_format = Column(String(40), nullable=True)
     interview_location = Column(Text, nullable=True)
+    parent_contact_terms_accepted_at = Column(DateTime, nullable=True)
+    nanny_contact_terms_accepted_at = Column(DateTime, nullable=True)
     trial_scheduled_at = Column(DateTime, nullable=True)
+    trial_ends_at = Column(DateTime, nullable=True)
+    trial_status = Column(String(24), nullable=False, default="not_requested")
+    trial_responded_at = Column(DateTime, nullable=True)
+    trial_alternative_at = Column(DateTime, nullable=True)
     trial_notes = Column(Text, nullable=True)
+    offer_status = Column(String(24), nullable=False, default="not_requested")
+    offer_salary_cents = Column(Integer, nullable=True)
+    offer_start_date = Column(Date, nullable=True)
+    offer_working_days_json = Column(Text, nullable=True)
+    offer_start_time = Column(String(5), nullable=True)
+    offer_end_time = Column(String(5), nullable=True)
+    offer_terms = Column(Text, nullable=True)
+    offer_sent_at = Column(DateTime, nullable=True)
+    offer_responded_at = Column(DateTime, nullable=True)
+    availability_restructured_at = Column(DateTime, nullable=True)
     client_notes = Column(Text, nullable=True)
+    parent_interview_decision = Column(String(24), nullable=True)
+    parent_interview_feedback = Column(Text, nullable=True)
+    parent_interview_decided_at = Column(DateTime, nullable=True)
+    maybe_until = Column(DateTime, nullable=True)
     admin_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
@@ -144,4 +223,46 @@ class PermanentPlacementActivity(Base):
 
     __table_args__ = (
         Index("ix_permanent_activity_placement_created", "placement_id", "created_at"),
+    )
+
+
+class PermanentPlacementInterviewCreditEvent(Base):
+    __tablename__ = "permanent_placement_interview_credit_events"
+
+    id = Column(Integer, primary_key=True)
+    placement_id = Column(Integer, ForeignKey("permanent_placements.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("permanent_placement_candidates.id"), nullable=False, index=True)
+    cycle = Column(Integer, nullable=False, default=0)
+    delta = Column(Integer, nullable=False)
+    event_type = Column(String(32), nullable=False, index=True)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("delta IN (-1, 1)", name="ck_perm_interview_credit_delta"),
+        Index(
+            "ix_permanent_interview_credit_placement_cycle",
+            "placement_id",
+            "cycle",
+        ),
+    )
+
+
+class PermanentPlacementMessage(Base):
+    __tablename__ = "permanent_placement_messages"
+
+    id = Column(Integer, primary_key=True)
+    placement_id = Column(Integer, ForeignKey("permanent_placements.id"), nullable=False, index=True)
+    candidate_id = Column(Integer, ForeignKey("permanent_placement_candidates.id"), nullable=False, index=True)
+    sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_permanent_messages_candidate_created",
+            "candidate_id",
+            "created_at",
+        ),
     )

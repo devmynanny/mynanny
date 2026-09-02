@@ -602,11 +602,15 @@ from app.models.admin_profile import AdminProfile
 from app.models.admin_invite import AdminInvite
 from app.models.audit_log import AuditLog
 from app.models.messaging import Conversation, Message, TelegramLinkToken
+from app.models.billing import BillingSettings, Invoice
 from app.models.placements import (
     PermanentPlacement,
     PermanentPlacementActivity,
     PermanentPlacementCandidate,
+    PermanentPlacementInterviewCreditEvent,
+    PermanentPlacementMessage,
     PermanentPlacementPayment,
     PermanentPlacementPreference,
+    PermanentPlacementSettings,
 )
 from . import availability

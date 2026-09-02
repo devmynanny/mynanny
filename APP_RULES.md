@@ -138,8 +138,9 @@ It is intended as an operational source of truth for product, support, and engin
   - A Paystack payout recipient has been created and banking setup is complete.
 - Parents may only see approved, video-screened candidates who meet all parent-visibility eligibility rules.
 - Parent-facing nanny profiles use the nanny's real first name and only the initial of the last name.
-- Parent-facing profiles contain no direct contact details.
-- Parents must never receive access to a nanny's ID or passport number, identity/legal documents, permit details, medical information, exact home address, phone number, email address, or private operational notes.
+- Parent-facing profiles contain no direct contact details by default.
+- Parents must never receive access to a nanny's ID or passport number, identity/legal documents, permit details, medical information, exact home address, or private operational notes.
+- A nanny's phone number and email address remain hidden except for the narrowly controlled Permanent Placement interview-arrangement window described in section 9D.
 - Admin access to sensitive candidate information is limited to legitimate screening and operational needs and remains subject to audit and POPIA controls.
 
 ## 8B. Document and Trust Badge Rules
@@ -269,6 +270,22 @@ It is intended as an operational source of truth for product, support, and engin
 - Full nanny account numbers must not be displayed after setup or stored as reusable plaintext banking details.
 - An approved nanny without valid payout readiness must not be shown in parent discovery results.
 
+## 9D. Permanent Placement Rules
+
+- Permanent Placement and short-term Nanny on Call use the same V2 landing page, accounts and admin application, but remain distinct products with separate profile visibility and workflow rules.
+- Every Permanent Placement amount, profile limit, interview-credit limit, decision period and replacement rule is configurable by an administrator. A new case freezes a pricing-and-rules snapshot so later admin changes do not silently alter an existing client's agreement.
+- Self-Match uses an activation payment, an interview-package top-up and a successful-placement payment. Five interview credits are consumed only when invited nannies accept; a credit is restored when the interview is cancelled or did not take place.
+- Concierge includes the consultation, managed matching, ongoing client consultation, interview and transport coordination, salary negotiation, offer support and placement administration. Its engagement and successful-placement balance are separate payment milestones.
+- One admin-approved replacement is included within the configured replacement period. The replacement releases the configured number of interview credits; a second replacement is not included.
+- Limited Permanent Placement profiles never expose identity documents, sensitive checks, exact home addresses, parent addresses, phone numbers or email addresses.
+- After a nanny accepts an interview, the parent and nanny must each accept the interview contact rules before either can see the other's phone number or email address or use direct candidate chat.
+- Temporary phone, email and direct-chat access exists only to arrange that interview. It is automatically hidden and locked when the nanny checks in or records the interview as completed. Existing chat history remains auditable, and My Nanny mediates all later questions, trials, offers and salary negotiations.
+- Exact residential addresses are never revealed through Permanent Placement contact access.
+- The parent records an outcome for each completed interview: reject, maybe, request a paid trial, make an offer or request admin support. A maybe decision expires after the configured period.
+- A formal offer records salary, start date, working days, working hours and terms. Once accepted, those working days are blocked in the nanny's short-term calendar while the nanny remains free to configure availability on non-working days.
+- Permanent Placement payments create an immutable invoice snapshot and, once paid, a receipt. Documents remain private to the parent and authorized administrators.
+- Invoice issue is blocked until an administrator has confirmed the legal billing identity, address, billing email and VAT treatment. Payment processing itself does not wait for missing billing data; the document remains a draft until the setup is complete.
+
 ## 10. Operational Safety Rules
 
 - Preserve backward-compatible request/response shapes unless intentionally changed.
@@ -334,7 +351,7 @@ It is intended as an operational source of truth for product, support, and engin
 - South Africa local time is the canonical business time for scheduling UX.
 - Distance/location is the primary nanny discovery ordering signal.
 - New nannies with no reviews display as `New`, not zero-rated.
-- Parents only see eligible approved nannies with submitted video interviews and no direct contact or sensitive identity information.
+- Parents only see eligible approved nannies with submitted video interviews and no direct contact or sensitive identity information, except for the controlled Permanent Placement interview contact window in section 9D.
 
 ## 12. Change Control
 

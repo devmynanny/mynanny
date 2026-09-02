@@ -93,6 +93,10 @@ NOTIFICATION_POLICY: dict[str, dict] = {
     "permanent_candidate_hired": {"channels": ("email",), "in_app": True},
     "permanent_replacement_requested": {"channels": ("email",), "in_app": True},
     "permanent_replacement_updated": {"channels": ("email",), "in_app": True},
+    "permanent_invoice_issued": {"channels": ("email",), "in_app": True},
+    "permanent_receipt_ready": {"channels": ("email",), "in_app": True},
+    "permanent_contact_terms": {"channels": ("email",), "in_app": True},
+    "permanent_interview_message": {"channels": ("email",), "in_app": True},
 }
 
 DEFAULT_POLICY = {"channels": ("chat", "email"), "in_app": False}
@@ -318,7 +322,29 @@ def send_notification(
             )
             return False
         try:
-            get_email_client().send(EmailMessage(to=[email], subject=event_type.replace("_", " ").title(), body=message))
+            delivery_result = get_email_client().send(
+                EmailMessage(
+                    to=[email],
+                    subject=event_type.replace("_", " ").title(),
+                    body=message,
+                )
+            )
+            # Older/custom email clients may return None after a successful send.
+            # The built-in client returns False when it only logged the message or
+            # when SMTP is disabled, missing, or failed.
+            if delivery_result is False:
+                _log_notification(
+                    db,
+                    user_id=user_id,
+                    event_type=event_type,
+                    channel=channel,
+                    status="failed",
+                    error_message="email provider is disabled, incomplete, or failed to deliver",
+                    reference_id=reference_id,
+                    message=message,
+                    destination=email,
+                )
+                return False
             _log_notification(
                 db,
                 user_id=user_id,

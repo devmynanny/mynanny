@@ -7,6 +7,19 @@
 - Database: managed Render Postgres (`mynanny-db`). SQLite is LOCAL DEV ONLY.
 - Uploads: private S3-compatible object storage, delivered through authenticated `/media/*` routes. Local development continues to use `app/static/uploads`.
 
+## Environments
+
+| Environment | Application | Database | Payments | Private files |
+|---|---|---|---|---|
+| Local | Local FastAPI and V2 | Local SQLite/test database | Mock or Paystack Test | Private local directory |
+| UAT | Separate Render services from `render.uat.yaml` | Separate Render PostgreSQL | Paystack Test only | Separate private UAT S3 bucket |
+| Production | Render services from `render.yaml` | `mynanny-db` | Paystack Live | Production S3 bucket |
+
+Never share database URLs, authentication secrets, Paystack secrets, S3
+credentials or user data between UAT and production. UAT uses synthetic data.
+The proposed UAT Blueprint is intentionally not connected to Render until its
+monthly cost is approved. See `docs/render-uat-plan.md`.
+
 ## Private media storage
 
 Production and staging use `STORAGE_BACKEND=s3`. Configure:
@@ -26,6 +39,8 @@ Production AWS values:
 - `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` belong to the restricted Render application identity, never the AWS root user.
 
 The bucket must remain private. Do not configure public-read ACLs or expose its provider URL. The application stores stable `/media/<key>` references and checks authentication and document ownership before streaming an object. Existing `/static/uploads/*` database references remain supported while historical files are migrated.
+
+Permanent Placement invoices and receipts are stored below `invoices/<parent-id>/` in the same private storage backend. The `/media/invoices/*` application route allows only the owning parent or an authorized administrator to download them; provider URLs must never be shared directly.
 - Schema management:
   - Postgres: Alembic only. `alembic upgrade head` runs automatically before each deploy (`preDeployCommand`).
   - SQLite (local dev): `create_all` + legacy `ensure_*` functions run at app startup, unchanged workflow.
@@ -39,6 +54,11 @@ The bucket must remain private. Do not configure public-read ACLs or expose its 
 | JWT_SECRET | Token signing |
 | AUTH_SECRET | Auth cookies |
 | PAYSTACK_SECRET_KEY | Live Paystack secret key (sk_live_...) |
+| EMAIL_MODE | Set to `smtp` in deployed environments |
+| SMTP_HOST / SMTP_PORT | Google Workspace SMTP endpoint (`smtp.gmail.com:587`) |
+| SMTP_USER | Single My Nanny mailbox: `sayhi@mynanny.co.za` |
+| SMTP_PASS | Environment-specific Google app password; never the normal mailbox password |
+| FROM_EMAIL | `sayhi@mynanny.co.za` |
 | TWILIO_ACCOUNT_SID | Existing WhatsApp notification sending (unchanged) |
 | TWILIO_AUTH_TOKEN | Also verifies inbound `/whatsapp/webhook` signatures |
 | TWILIO_WHATSAPP_FROM | Existing WhatsApp notification sending (unchanged) |
@@ -100,6 +120,15 @@ Copy `TWILIO_REQUIRE_TEMPLATES` and every generated `TWILIO_CONTENT_SID_*` value
 
     pip install -r requirements.txt
     uvicorn app.main:app --reload        # uses sqlite:///./nanny_app.db
+
+Before Permanent Placement payment testing in UAT, an administrator must complete the Billing identity & tax setup on the existing Permanent Placements admin screen. Use the legal entity's confirmed details and VAT treatment; do not infer them from branding or Paystack account data.
+
+Google Workspace must also be configured before invoice-email UAT. Use the one
+existing `sayhi@mynanny.co.za` mailbox for sending and replies, with a separate
+Google app password in each Render environment. A missing or failed SMTP
+provider is recorded as a failed notification and must never be treated as a
+delivered invoice email. Invoice emails link back to the authenticated V2
+Placement screen; private storage URLs are not exposed as public attachments.
 
 ## Tests
 

@@ -13,6 +13,7 @@ from app.main import app  # noqa: F401  (import creates the test DB schema)
 from app import models
 from app.db import SessionLocal
 from app.services import notifications as notif
+from app.utils.email import EmailClient
 
 
 def _db():
@@ -79,6 +80,32 @@ def test_notify_falls_back_to_email_when_whatsapp_fails(db, monkeypatch):
     assert ("email", "sent") in statuses
     # Message body persisted on every attempt row.
     assert all(r.message == "Payment received" for r in rows)
+
+
+def test_unconfigured_email_is_recorded_as_failed_not_sent(db, monkeypatch):
+    user = _seed_user(db)
+    monkeypatch.setenv("EMAIL_MODE", "off")
+    monkeypatch.setattr(notif, "get_email_client", lambda: EmailClient())
+
+    ok = notif.send_notification(
+        db,
+        user.id,
+        "permanent_invoice_issued",
+        "email",
+        "Your invoice is ready.",
+        reference_id=991,
+    )
+    db.commit()
+
+    assert ok is False
+    row = _log_rows(db, user.id)[-1]
+    assert row.channel == "email"
+    assert row.status == "failed"
+    assert "provider" in (row.error_message or "")
+    # This module exercises the global retry sweep against a shared test DB;
+    # remove this deliberately failed row so later retry tests stay isolated.
+    db.delete(row)
+    db.commit()
 
 
 def test_notify_stops_at_first_successful_channel(db, monkeypatch):

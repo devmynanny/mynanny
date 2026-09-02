@@ -44,9 +44,9 @@ class EmailMessage:
 class EmailClient:
     """
     Modes:
-      EMAIL_MODE=log      logs emails to stdout, never raises
-      EMAIL_MODE=smtp     sends via SMTP, falls back to log if misconfigured
-      EMAIL_MODE=off      no op
+      EMAIL_MODE=log      logs emails to stdout as a local delivery simulation
+      EMAIL_MODE=smtp     sends via SMTP; logs and reports failure if unavailable
+      EMAIL_MODE=off      no op and reports no external delivery
     """
 
     def __init__(self) -> None:
@@ -67,18 +67,21 @@ class EmailClient:
             return False
         return True
 
-    def send(self, msg: EmailMessage) -> None:
+    def send(self, msg: EmailMessage) -> bool:
         if self.mode == "off":
-            return
+            return False
 
         if self.mode == "smtp" and self.can_smtp():
             try:
                 self._send_smtp(msg)
-                return
+                return True
             except Exception as e:
                 print(f"[EMAIL][SMTP_FAIL] {e!r}")
 
         self._log(msg)
+        # Log mode is the explicit local-development simulation. SMTP mode
+        # reaches this branch only when provider setup or delivery failed.
+        return self.mode == "log"
 
     def _log(self, msg: EmailMessage) -> None:
         print("[EMAIL][LOG]")

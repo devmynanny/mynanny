@@ -964,15 +964,63 @@ def ensure_permanent_placements_schema() -> None:
             return
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(permanent_placements)"))}
         additions = {
+            "pricing_snapshot_json": "TEXT",
             "replacement_status": "TEXT NOT NULL DEFAULT 'not_requested'",
             "replacement_requested_at": "DATETIME",
             "replacement_reason": "TEXT",
             "replacement_resolved_at": "DATETIME",
             "replacement_resolved_by": "INTEGER",
+            "replacement_count": "INTEGER NOT NULL DEFAULT 0",
+            "interview_credit_cycle": "INTEGER NOT NULL DEFAULT 0",
         }
         for name, definition in additions.items():
             if name not in existing:
                 conn.execute(text(f"ALTER TABLE permanent_placements ADD COLUMN {name} {definition}"))
+
+        if _table_exists(conn, "permanent_placement_candidates"):
+            candidate_existing = {
+                row[1]
+                for row in conn.execute(
+                    text("PRAGMA table_info(permanent_placement_candidates)")
+                )
+            }
+            candidate_additions = {
+                "interview_invite_status": "TEXT NOT NULL DEFAULT 'not_requested'",
+                "interview_responded_at": "DATETIME",
+                "interview_credit_cycle": "INTEGER",
+                "interview_credit_consumed_at": "DATETIME",
+                "interview_credit_restored_at": "DATETIME",
+                "interview_checked_in_at": "DATETIME",
+                "interview_completed_at": "DATETIME",
+                "parent_contact_terms_accepted_at": "DATETIME",
+                "nanny_contact_terms_accepted_at": "DATETIME",
+                "parent_interview_decision": "TEXT",
+                "parent_interview_feedback": "TEXT",
+                "parent_interview_decided_at": "DATETIME",
+                "maybe_until": "DATETIME",
+                "trial_ends_at": "DATETIME",
+                "trial_status": "TEXT NOT NULL DEFAULT 'not_requested'",
+                "trial_responded_at": "DATETIME",
+                "trial_alternative_at": "DATETIME",
+                "offer_status": "TEXT NOT NULL DEFAULT 'not_requested'",
+                "offer_salary_cents": "INTEGER",
+                "offer_start_date": "DATE",
+                "offer_working_days_json": "TEXT",
+                "offer_start_time": "TEXT",
+                "offer_end_time": "TEXT",
+                "offer_terms": "TEXT",
+                "offer_sent_at": "DATETIME",
+                "offer_responded_at": "DATETIME",
+                "availability_restructured_at": "DATETIME",
+            }
+            for name, definition in candidate_additions.items():
+                if name not in candidate_existing:
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE permanent_placement_candidates "
+                            f"ADD COLUMN {name} {definition}"
+                        )
+                    )
 
 
 def ensure_pricing_settings_schema() -> None:

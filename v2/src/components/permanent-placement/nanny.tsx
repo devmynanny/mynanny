@@ -14,6 +14,7 @@ import {
   PlacementInfo,
   PlacementNotice,
 } from "./shared";
+import { InterviewCommunication } from "./communication";
 import { dateTime, money, niceStatus } from "./types";
 
 type NannyPreference = {
@@ -50,17 +51,36 @@ type Opportunity = {
   languages: string[];
   pets?: string | null;
   interview_scheduled_at?: string | null;
+  interview_invite_status: string;
+  interview_responded_at?: string | null;
+  interview_checked_in_at?: string | null;
+  interview_completed_at?: string | null;
   interview_format?: string | null;
   interview_location?: string | null;
   trial_scheduled_at?: string | null;
+  trial_ends_at?: string | null;
+  trial_status?: string | null;
+  trial_alternative_at?: string | null;
   trial_notes?: string | null;
+  offer_status?: string | null;
+  offer_salary_cents?: number | null;
+  offer_start_date?: string | null;
+  offer_working_days?: number[];
+  offer_start_time?: string | null;
+  offer_end_time?: string | null;
+  offer_terms?: string | null;
+  availability_restructured_at?: string | null;
 };
+
+const weekdayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export function NannyPermanentPlacements() {
   const [profile, setProfile] = useState<NannyPreference | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
+  const [trialAlternatives, setTrialAlternatives] = useState<Record<number, string>>({});
+  const [supportNotes, setSupportNotes] = useState<Record<number, string>>({});
   const [form, setForm] = useState({
     opted_in: false,
     min: "",
@@ -190,6 +210,88 @@ export function NannyPermanentPlacements() {
     }
   }
 
+  async function respondToInterview(candidateId: number, decision: "accepted" | "declined" | "cancelled") {
+    const note = decision === "cancelled" ? window.prompt("Please tell My Nanny why you need to cancel this interview") : null;
+    if (decision === "cancelled" && !note) return;
+    setBusy(`interview-${decision}-${candidateId}`);
+    try {
+      await apiJson(`/nannies/me/permanent-opportunities/${candidateId}/interview-response`, {
+        method: "POST",
+        body: JSON.stringify({ decision, note }),
+      });
+      setMessage(
+        decision === "accepted"
+          ? "Interview accepted. My Nanny will coordinate the date and arrangements."
+          : decision === "cancelled"
+            ? "Interview cancelled and the family's interview credit was restored."
+            : "Interview invitation declined. No family credit was used.",
+      );
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to respond to the interview.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function updateInterview(candidateId: number, action: "check_in" | "completed") {
+    setBusy(`interview-${action}-${candidateId}`);
+    try {
+      await apiJson(`/nannies/me/permanent-opportunities/${candidateId}/interview-progress`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+      setMessage(action === "check_in" ? "Arrival confirmed. The family and My Nanny have been notified." : "Interview completed. The family can now record feedback and choose the next step.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to update the interview.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function respondToTrial(candidateId: number, decision: "accepted" | "declined" | "change_requested") {
+    const alternative = trialAlternatives[candidateId] || null;
+    if (decision === "change_requested" && !alternative) {
+      setMessage("Choose the alternative trial date and time first.");
+      return;
+    }
+    setBusy(`trial-${decision}-${candidateId}`);
+    try {
+      await apiJson(`/nannies/me/permanent-opportunities/${candidateId}/trial-response`, {
+        method: "POST",
+        body: JSON.stringify({ decision, alternative_at: alternative, note: null }),
+      });
+      setMessage(decision === "accepted" ? "Trial accepted. The family and My Nanny have been notified." : decision === "change_requested" ? "Your suggested time was sent to the family." : "Trial declined. My Nanny will support the next step.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to respond to the trial.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function respondToOffer(candidateId: number, decision: "accepted" | "declined" | "admin_support") {
+    const note = (supportNotes[candidateId] || "").trim();
+    if (decision === "admin_support" && !note) {
+      setMessage("Tell My Nanny what you would like to discuss first.");
+      return;
+    }
+    setBusy(`offer-${decision}-${candidateId}`);
+    try {
+      await apiJson(`/nannies/me/permanent-opportunities/${candidateId}/offer-response`, {
+        method: "POST",
+        body: JSON.stringify({ decision, note: note || null }),
+      });
+      setMessage(decision === "accepted" ? "Offer accepted. Your calendar is now available only outside the agreed permanent working schedule." : decision === "admin_support" ? "My Nanny has been asked to contact you about the offer." : "Offer declined. The family and My Nanny have been notified.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to respond to the offer.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   function toggleType(value: string) {
     setForm({
       ...form,
@@ -244,7 +346,44 @@ export function NannyPermanentPlacements() {
                   <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="eyebrow">Family in {row.broad_location}</div><h3 className="mt-2 text-2xl font-bold">{row.role_title}</h3><div className="mt-2 text-sm text-[var(--muted)]">{niceStatus(row.employment_type)} · {money(row.salary_min_cents)} - {money(row.salary_max_cents)} monthly</div></div><span className="pill">{niceStatus(row.consent_status)}</span></div>
                   <div className="mt-5 grid gap-4 rounded-2xl bg-[var(--blue-pale)] p-5 sm:grid-cols-2"><PlacementInfo label="Schedule" value={row.schedule_summary} /><PlacementInfo label="Children" value={`${row.children_count} · ${row.children_ages.join(", ") || "Ages to confirm"}`} /><PlacementInfo label="Duties" value={row.duties} /><PlacementInfo label="Requirements" value={opportunityRequirements(row)} /></div>
                   {row.consent_status === "pending" && <div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={Boolean(busy)} onClick={() => void respond(row.candidate_id, "accepted")}><Check size={17} />I am interested</button><button className="btn-secondary" disabled={Boolean(busy)} onClick={() => void respond(row.candidate_id, "declined")}>Not for me</button></div>}
-                  {row.interview_scheduled_at && <div className="mt-5 rounded-2xl border border-[var(--line)] p-4 text-sm"><b>Interview:</b> {dateTime(row.interview_scheduled_at)} · {niceStatus(row.interview_format || "")}{row.interview_location ? ` · ${row.interview_location}` : ""}</div>}
+                  {row.interview_invite_status === "pending" && <div className="mt-5 rounded-2xl border border-[var(--line)] p-5"><b>Interview invitation</b><p className="mt-2 text-sm text-[var(--muted)]">Accept only if you would like My Nanny to arrange this interview.</p><div className="mt-4 flex flex-wrap gap-3"><button className="btn-primary" disabled={Boolean(busy)} onClick={() => void respondToInterview(row.candidate_id, "accepted")}><Check size={17} />Accept interview</button><button className="btn-secondary" disabled={Boolean(busy)} onClick={() => void respondToInterview(row.candidate_id, "declined")}>Decline</button></div></div>}
+                  {row.interview_invite_status === "accepted" && !row.interview_scheduled_at && <div className="mt-5 rounded-2xl bg-[var(--blue-pale)] p-4 text-sm"><b>Interview accepted.</b> My Nanny is arranging the details. <button className="ml-2 font-bold underline" disabled={Boolean(busy)} onClick={() => void respondToInterview(row.candidate_id, "cancelled")}>Cancel interview</button></div>}
+                  {row.interview_scheduled_at && <div className="mt-5 rounded-2xl border border-[var(--line)] p-4 text-sm"><b>Interview:</b> {dateTime(row.interview_scheduled_at)} · {niceStatus(row.interview_format || "")}{row.interview_location ? ` · ${row.interview_location}` : ""}{!row.interview_completed_at && <div className="mt-4 flex flex-wrap gap-3">{!row.interview_checked_in_at && <button className="btn-secondary !min-h-9" disabled={Boolean(busy)} onClick={() => void updateInterview(row.candidate_id, "check_in")}>I have arrived</button>}<button className="btn-primary !min-h-9" disabled={Boolean(busy)} onClick={() => void updateInterview(row.candidate_id, "completed")}><Check size={17} />Interview completed</button></div>}{row.interview_checked_in_at && !row.interview_completed_at && <p className="mt-3 font-semibold text-[var(--green)]">Arrival confirmed</p>}{row.interview_completed_at && <p className="mt-3 font-semibold text-[var(--green)]">Interview completed</p>}</div>}
+                  {row.interview_invite_status === "accepted" && row.interview_scheduled_at && <button className="btn-quiet mt-3 text-sm" disabled={Boolean(busy)} onClick={() => void respondToInterview(row.candidate_id, "cancelled")}>I need to cancel this interview</button>}
+                  {["accepted", "completed"].includes(row.interview_invite_status) && <InterviewCommunication candidateId={row.candidate_id} />}
+                  {row.trial_status && row.trial_status !== "not_requested" && (
+                    <div className="mt-5 rounded-2xl border border-[var(--line)] p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2"><b>Paid trial request</b><span className="pill">{niceStatus(row.trial_status)}</span></div>
+                      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">{dateTime(row.trial_scheduled_at)} to {dateTime(row.trial_ends_at)}</p>
+                      {row.trial_notes && <p className="mt-2 text-sm leading-6">{row.trial_notes}</p>}
+                      {row.trial_status === "pending" && (
+                        <div className="mt-4 grid gap-3">
+                          <div className="flex flex-wrap gap-3"><button className="btn-primary !min-h-9" disabled={Boolean(busy)} onClick={() => void respondToTrial(row.candidate_id, "accepted")}><Check size={17} />Accept trial</button><button className="btn-secondary !min-h-9" disabled={Boolean(busy)} onClick={() => void respondToTrial(row.candidate_id, "declined")}>Decline</button></div>
+                          <div className="grid gap-2 sm:grid-cols-[1fr_auto]"><input className="field" type="datetime-local" value={trialAlternatives[row.candidate_id] || ""} onChange={(event) => setTrialAlternatives({ ...trialAlternatives, [row.candidate_id]: event.target.value })} /><button className="btn-secondary" disabled={Boolean(busy) || !trialAlternatives[row.candidate_id]} onClick={() => void respondToTrial(row.candidate_id, "change_requested")}>Suggest another time</button></div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {row.offer_status && row.offer_status !== "not_requested" && (
+                    <div className="mt-5 rounded-2xl bg-[var(--blue-pale)] p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2"><b>Permanent employment offer</b><span className="pill">{niceStatus(row.offer_status)}</span></div>
+                      <div className="mt-4 grid gap-2 text-sm leading-6">
+                        <span><b>Monthly salary:</b> {money(row.offer_salary_cents)}</span>
+                        <span><b>Start date:</b> {row.offer_start_date || "To confirm"}</span>
+                        <span><b>Working days:</b> {(row.offer_working_days || []).map((day) => weekdayNames[day]).join(", ")}</span>
+                        <span><b>Working times:</b> {row.offer_start_time}-{row.offer_end_time}</span>
+                        {row.offer_terms && <span><b>Terms:</b> {row.offer_terms}</span>}
+                      </div>
+                      {row.offer_status === "pending" && (
+                        <div className="mt-4 grid gap-3">
+                          <div className="flex flex-wrap gap-3"><button className="btn-primary" disabled={Boolean(busy)} onClick={() => void respondToOffer(row.candidate_id, "accepted")}><Check size={17} />Accept offer</button><button className="btn-secondary" disabled={Boolean(busy)} onClick={() => void respondToOffer(row.candidate_id, "declined")}>Decline</button></div>
+                          <textarea className="field min-h-20 bg-white" value={supportNotes[row.candidate_id] || ""} onChange={(event) => setSupportNotes({ ...supportNotes, [row.candidate_id]: event.target.value })} placeholder="Questions about salary, duties or the working arrangement" />
+                          <button className="btn-secondary" disabled={Boolean(busy) || !(supportNotes[row.candidate_id] || "").trim()} onClick={() => void respondToOffer(row.candidate_id, "admin_support")}>Ask My Nanny to contact me</button>
+                        </div>
+                      )}
+                      {row.offer_status === "accepted" && <p className="mt-4 text-sm font-semibold text-[var(--green)]">Accepted. Your weekday short-term availability has been restructured around this role; free days such as weekends remain available for bookings.</p>}
+                    </div>
+                  )}
                 </article>
               ))}
             </div>

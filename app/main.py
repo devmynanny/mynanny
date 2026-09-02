@@ -64,6 +64,13 @@ def _upload_access_status(path: str, user: dict | None) -> int | None:
         return 401
     if path.startswith("/media/communicator/"):
         return None if user.get("is_admin") else 403
+    if path.startswith("/media/invoices/"):
+        parts = path.split("/")
+        try:
+            owner_id = int(parts[3])
+        except (IndexError, ValueError):
+            return 403
+        return None if user.get("is_admin") or int(user.get("id", 0)) == owner_id else 403
     if user.get("is_admin"):
         return None
     filename = path.rsplit("/", 1)[-1]

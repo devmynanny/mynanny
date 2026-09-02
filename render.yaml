@@ -34,6 +34,18 @@ services:
         sync: false
       - key: PAYSTACK_SECRET_KEY
         sync: false
+      - key: EMAIL_MODE
+        value: smtp
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        value: sayhi@mynanny.co.za
+      - key: SMTP_PASS
+        sync: false
+      - key: FROM_EMAIL
+        value: sayhi@mynanny.co.za
       - key: GOOGLE_MAPS_API_KEY
         sync: false
       - key: STORAGE_BACKEND
