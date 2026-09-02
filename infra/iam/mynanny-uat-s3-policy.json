@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListOnlyUatObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads"
+      ],
+      "Resource": "arn:aws:s3:::my-nanny-production-uploads-337903911181-af-south-1-an",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "uat",
+            "uat/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadWriteOnlyUatObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": "arn:aws:s3:::my-nanny-production-uploads-337903911181-af-south-1-an/uat/*"
+    }
+  ]
+}

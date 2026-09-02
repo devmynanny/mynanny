@@ -8,8 +8,8 @@ services:
     region: oregon
     branch: codex/permanent-placements
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: python scripts/provision_uat_database.py && python scripts/assert_safe_database_target.py && alembic upgrade head
-    startCommand: python scripts/assert_safe_database_target.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: python -m scripts.provision_uat_database && python -m scripts.assert_safe_database_target && alembic upgrade head
+    startCommand: python -m scripts.assert_safe_database_target && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: "off"
     envVars:

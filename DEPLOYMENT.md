@@ -47,6 +47,10 @@ UAT uses the same bucket with `S3_KEY_PREFIX=uat` and an IAM identity restricted
 to `arn:aws:s3:::my-nanny-production-uploads-337903911181-af-south-1-an/uat/*`.
 Do not reuse the production S3 access key.
 
+The version-controlled least-privilege policy is
+`infra/iam/mynanny-uat-s3-policy.json`. The UAT identity intentionally has no
+delete permission and no access to objects outside the `uat/` prefix.
+
 Permanent Placement invoices and receipts are stored below `invoices/<parent-id>/` in the same private storage backend. The `/media/invoices/*` application route allows only the owning parent or an authorized administrator to download them; provider URLs must never be shared directly.
 - Schema management:
   - Postgres: Alembic only. `alembic upgrade head` runs automatically before each deploy (`preDeployCommand`).
