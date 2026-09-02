@@ -912,6 +912,29 @@ def test_trial_offer_acceptance_restructures_short_term_calendar(db):
     ).json()["results"]
     monday_payload = next(row for row in availability_payload if row["id"] == monday_block.id)
     assert monday_payload["date"] == "2026-09-14"
+    protected_create = client.post(
+        "/nannies/me/availability",
+        headers=auth(nanny_user),
+        json={
+            "start_dt": "2026-09-14T18:00:00",
+            "end_dt": "2026-09-14T21:00:00",
+            "type": "available",
+        },
+    )
+    assert protected_create.status_code == 409
+    assert "permanent work schedule" in protected_create.json()["detail"]
+    protected_delete = client.delete(
+        f"/nannies/me/availability/{monday_block.id}",
+        headers=auth(nanny_user),
+    )
+    assert protected_delete.status_code == 409
+    cleared = client.delete(
+        "/nannies/me/availability",
+        headers=auth(nanny_user),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["deleted"] == 2
+    assert db.query(models.NannyAvailability).filter_by(id=monday_block.id).one()
     saturday_blocks = db.query(models.NannyAvailability).filter_by(
         nanny_id=nanny.id,
         date=date(2026, 9, 12),

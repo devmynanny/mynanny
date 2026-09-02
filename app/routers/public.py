@@ -4473,6 +4473,22 @@ def create_nanny_me_availability(
         raise HTTPException(status_code=400, detail="start_dt must be before end_dt")
     if payload.type not in ("available", "blocked"):
         raise HTTPException(status_code=400, detail="Invalid type")
+    if payload.type == "available":
+        permanent_block = (
+            db.query(models.NannyAvailability.id)
+            .filter(
+                models.NannyAvailability.nanny_id == nanny.id,
+                models.NannyAvailability.date == start_dt.date(),
+                models.NannyAvailability.created_by == "permanent_placement",
+                models.NannyAvailability.type == "blocked",
+            )
+            .first()
+        )
+        if permanent_block:
+            raise HTTPException(
+                status_code=409,
+                detail="This date is protected by your permanent work schedule",
+            )
     existing_same_day = (
         db.query(models.NannyAvailability.id)
         .filter(
@@ -4544,6 +4560,18 @@ def create_nanny_me_availability_bulk(
     existing_dates = _existing_availability_type_dates(
         db, nanny.id, start_date, end_date, payload.type
     )
+    if payload.type == "available":
+        existing_dates.update(
+            row[0]
+            for row in db.query(models.NannyAvailability.date)
+            .filter(
+                models.NannyAvailability.nanny_id == nanny.id,
+                models.NannyAvailability.date.between(start_date, end_date),
+                models.NannyAvailability.created_by == "permanent_placement",
+                models.NannyAvailability.type == "blocked",
+            )
+            .all()
+        )
 
     created = 0
     skipped = 0
@@ -4615,6 +4643,18 @@ def create_nanny_me_availability_weekly(
     existing_dates = _existing_availability_type_dates(
         db, nanny.id, start_date, end_date, payload.type
     )
+    if payload.type == "available":
+        existing_dates.update(
+            row[0]
+            for row in db.query(models.NannyAvailability.date)
+            .filter(
+                models.NannyAvailability.nanny_id == nanny.id,
+                models.NannyAvailability.date.between(start_date, end_date),
+                models.NannyAvailability.created_by == "permanent_placement",
+                models.NannyAvailability.type == "blocked",
+            )
+            .all()
+        )
 
     created = 0
     skipped = 0
@@ -4657,6 +4697,11 @@ def delete_nanny_me_availability(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Availability not found")
+    if row.created_by == "permanent_placement":
+        raise HTTPException(
+            status_code=409,
+            detail="Permanent work schedule blocks cannot be removed here",
+        )
     db.delete(row)
     db.commit()
     return {"ok": True}
@@ -4671,7 +4716,10 @@ def clear_nanny_me_availability(
 
     deleted = (
         db.query(models.NannyAvailability)
-        .filter(models.NannyAvailability.nanny_id == nanny.id)
+        .filter(
+            models.NannyAvailability.nanny_id == nanny.id,
+            models.NannyAvailability.created_by != "permanent_placement",
+        )
         .delete(synchronize_session=False)
     )
     db.commit()
@@ -4693,6 +4741,11 @@ def update_nanny_me_availability(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Availability not found")
+    if row.created_by == "permanent_placement":
+        raise HTTPException(
+            status_code=409,
+            detail="Permanent work schedule blocks cannot be changed here",
+        )
     next_start_dt = None
     next_end_dt = None
     if "start_dt" in payload:

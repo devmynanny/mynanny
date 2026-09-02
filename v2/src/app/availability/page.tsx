@@ -50,6 +50,13 @@ export default function AvailabilityPage() {
       .finally(() => setLoading(false));
   }, []);
   async function selectDate(date: string) {
+    const protectedDay = rows.some(
+      (row) => availabilityDate(row) === date && row.type === "blocked",
+    );
+    if (protectedDay) {
+      setStatus("This day is protected by your permanent work schedule.");
+      return;
+    }
     const existing = rows.find(
       (row) => availabilityDate(row) === date && row.type === "available",
     );
@@ -99,8 +106,10 @@ export default function AvailabilityPage() {
     setSaving(true);
     try {
       await apiJson("/nannies/me/availability", { method: "DELETE" });
-      setRows([]);
-      setStatus("Calendar cleared.");
+      await load();
+      setStatus(
+        "Your own availability was cleared. Permanent work schedule blocks remain protected.",
+      );
     } catch (err) {
       setStatus(
         err instanceof Error ? err.message : "Unable to clear calendar.",
@@ -150,11 +159,19 @@ export default function AvailabilityPage() {
       setSaving(false);
     }
   }
-  const events: CalendarEvent[] = rows.map((row) => ({
-    date: availabilityDate(row),
-    label: row.type === "available" ? "Available" : "Unavailable",
-    tone: row.type === "available" ? "green" : "coral",
-  }));
+  const eventsByDate = new Map<string, CalendarEvent>();
+  rows.forEach((row) => {
+    const date = availabilityDate(row);
+    const current = eventsByDate.get(date);
+    if (!current || row.type === "blocked") {
+      eventsByDate.set(date, {
+        date,
+        label: row.type === "available" ? "Available" : "Unavailable",
+        tone: row.type === "available" ? "green" : "coral",
+      });
+    }
+  });
+  const events = Array.from(eventsByDate.values());
   return (
     <AuthenticatedPage>
       {(role) =>

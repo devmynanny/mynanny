@@ -477,11 +477,19 @@ function NannyHome({
   trustBadges: TrustBadge[];
   bankingStatus: BankingStatus | null;
 }) {
-  const events: CalendarEvent[] = availability.map((row) => ({
-    date: row.date || row.start_dt.slice(0, 10),
-    label: row.type === "available" ? "Available" : "Unavailable",
-    tone: row.type === "available" ? "green" : "coral",
-  }));
+  const eventsByDate = new Map<string, CalendarEvent>();
+  availability.forEach((row) => {
+    const date = row.date || row.start_dt.slice(0, 10);
+    const current = eventsByDate.get(date);
+    if (!current || row.type === "blocked") {
+      eventsByDate.set(date, {
+        date,
+        label: row.type === "available" ? "Available" : "Unavailable",
+        tone: row.type === "available" ? "green" : "coral",
+      });
+    }
+  });
+  const events = Array.from(eventsByDate.values());
   return (
     <div className="mx-auto max-w-6xl">
       <Heading
