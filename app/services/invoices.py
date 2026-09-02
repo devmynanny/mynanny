@@ -343,7 +343,6 @@ def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
     )
     document_heading = Table(
         [
-            [Paragraph("BILLING DOCUMENT", styles["InvoiceEyebrow"])],
             [Paragraph(title, styles["InvoiceTitle"])],
             [Paragraph(html.escape(str(number or "DRAFT")), styles["InvoiceNumber"])],
         ],
@@ -387,8 +386,6 @@ def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
         issuer_lines.append(f"Registration: {html.escape(str(issuer['registration_number']))}")
     if issuer.get("vat_registered"):
         issuer_lines.append(f"VAT: {html.escape(str(issuer.get('vat_number') or ''))}")
-    else:
-        issuer_lines.append("<font color='#4C8A72'><b>Not VAT registered</b></font>")
     customer_lines = [
         "<font name='Times-Bold' size='15'>Bill to</font>",
         f"<b>{html.escape(str(customer.get('name') or ''))}</b>",
