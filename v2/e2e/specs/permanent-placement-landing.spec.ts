@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
 
+test("landing page exposes the My Nanny browser icon", async ({ page }) => {
+  await page.goto("/");
+
+  const icon = page.locator('link[rel="icon"]');
+  await expect(icon).toHaveAttribute("href", /\/icon\.png/);
+  await expect(icon).toHaveAttribute("type", "image/png");
+  await expect(icon).toHaveAttribute("sizes", "160x160");
+});
+
 test("landing page presents short-term, Self-Match and Concierge care", async ({
   page,
 }) => {
