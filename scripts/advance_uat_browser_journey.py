@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import os
-from urllib.parse import urlparse
 
 from sqlalchemy import func
 
@@ -26,6 +25,7 @@ from app.services.permanent_placements import (
     get_or_create_payment,
     pricing_payload,
 )
+from app.utils.database_target import assert_safe_database_target
 from app.utils.time import utc_now
 
 
@@ -38,8 +38,7 @@ DEMO_NANNY_EMAILS = (
 
 def refuse_unsafe_target() -> None:
     environment = os.getenv("APP_ENV", "").strip().lower()
-    database_url = os.getenv("DATABASE_URL", "").strip()
-    database_name = (urlparse(database_url).path or "").lstrip("/").lower()
+    database_name = assert_safe_database_target().lower()
     if environment not in {"uat", "staging"} or "uat" not in database_name:
         raise SystemExit(
             "Refusing to change data outside an APP_ENV=uat/staging database whose name contains 'uat'"
