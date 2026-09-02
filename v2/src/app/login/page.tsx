@@ -12,12 +12,15 @@ import {
   Mail,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 
 type Me = { name: string; role: string; is_admin?: boolean };
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const params = useSearchParams();
+  const nextPath = params.get("next") === "/placements" ? "/placements" : "/dashboard";
+  const isPermanentJourney = nextPath === "/placements";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -25,9 +28,9 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     apiJson<Me>("/auth/me")
-      .then(() => router.replace("/dashboard"))
+      .then(() => router.replace(nextPath))
       .catch(() => undefined);
-  }, [router]);
+  }, [nextPath, router]);
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
@@ -37,7 +40,7 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      router.push("/dashboard");
+      router.push(nextPath);
     } catch (err) {
       setError(
         err instanceof Error
@@ -57,11 +60,14 @@ export default function LoginPage() {
         <div className="relative my-auto max-w-lg">
           <div className="eyebrow !text-[#bfe5f3]">Welcome back</div>
           <h1 className="display mt-5 text-6xl leading-[1.02]">
-            Care your family can feel good about.
+            {isPermanentJourney
+              ? "Your permanent search continues here."
+              : "Care your family can feel good about."}
           </h1>
           <p className="mt-6 text-lg leading-8 text-white/70">
-            Your trusted nannies, bookings and conversations are waiting for
-            you.
+            {isPermanentJourney
+              ? "Sign in to choose Self-Match or Concierge and manage your search, interviews and offers."
+              : "Your trusted nannies, bookings and conversations are waiting for you."}
           </p>
           <div className="mt-9 grid gap-4 text-sm font-bold text-white/80">
             {[
@@ -158,7 +164,7 @@ export default function LoginPage() {
           </form>
           <p className="mt-7 text-center text-sm text-[var(--muted)]">
             New to My Nanny?{" "}
-            <Link href="/signup" className="font-bold text-[var(--blue-dark)]">
+            <Link href={isPermanentJourney ? "/signup?role=parent&next=%2Fplacements" : "/signup"} className="font-bold text-[var(--blue-dark)]">
               Create an account
             </Link>
           </p>
@@ -168,5 +174,13 @@ export default function LoginPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen" />}>
+      <LoginForm />
+    </Suspense>
   );
 }

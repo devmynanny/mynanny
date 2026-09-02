@@ -22,7 +22,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "../.venv/bin/python e2e/start-test-backend.py",
+      command: "python3 e2e/start-test-backend.py",
       url: "http://127.0.0.1:8011/docs",
       reuseExistingServer: false,
       timeout: 120_000,

@@ -3,9 +3,13 @@ import { PoweredByTiqet } from "@/components/powered-by-tiqet";
 import {
   ArrowRight,
   BadgeCheck,
+  BriefcaseBusiness,
   CalendarDays,
+  CalendarRange,
+  CircleCheckBig,
   ExternalLink,
   Heart,
+  HandHeart,
   Mail,
   MapPin,
   MessageCircle,
@@ -50,6 +54,16 @@ const faqs = [
       "Yes. You can select one or more dates, specify the hours and care requirements, and then see nannies who are available for that booking.",
   },
   {
+    question: "Can My Nanny help me find a permanent nanny?",
+    answer:
+      "Yes. Choose Self-Match to search protected profiles and manage your shortlist, interviews, trial and offer, or choose Concierge for Mariette to lead the search, arrangements, consultations and salary negotiations with you.",
+  },
+  {
+    question: "Do I need a separate account for permanent placements?",
+    answer:
+      "No. Short-term bookings and permanent placements use the same My Nanny family account. Your permanent-placement search has its own protected workflow, pricing and communication rules.",
+  },
+  {
     question: "Can I arrange overnight care?",
     answer:
       "Yes. Sleepover bookings include dedicated fields for overnight expectations, routines and the reason care is required, so the nanny knows what to expect.",
@@ -80,6 +94,9 @@ export default function Home() {
           <Link className="btn-quiet desktop-only" href="#how-it-works">
             How it works
           </Link>
+          <Link className="btn-quiet desktop-only" href="#care-options">
+            Care options
+          </Link>
           <Link className="btn-quiet desktop-only" href="#why-my-nanny">
             Why My Nanny
           </Link>
@@ -97,18 +114,21 @@ export default function Home() {
             Care that feels like family.
           </h1>
           <p className="mt-8 max-w-2xl text-lg leading-8 text-[var(--muted)] sm:text-xl sm:leading-9">
-            Reliable childcare when you need it most. Find trusted local
-            nannies through real video introductions, verified credentials and
-            a booking experience designed around your family.
+            Trusted childcare for the days you need support and the long term.
+            Meet screened local nannies through real video introductions,
+            verified credentials and one experience designed around your family.
           </p>
           <div className="mt-9 flex flex-wrap gap-3">
             <Link className="btn-primary !min-h-14 !px-6" href="/signup?role=parent">
-              Find care for my family <ArrowRight size={19} />
+              Book short-term care <ArrowRight size={19} />
             </Link>
-            <Link className="btn-secondary !min-h-14 !px-6" href="/signup?role=nanny">
-              Join as a nanny
+            <Link className="btn-secondary !min-h-14 !px-6" href="/signup?role=parent&next=%2Fplacements">
+              Find a permanent nanny
             </Link>
           </div>
+          <Link className="mt-5 inline-flex items-center gap-2 text-sm font-extrabold text-[var(--blue-dark)]" href="/signup?role=nanny">
+            Looking for work? Join as a nanny <ArrowRight size={16} />
+          </Link>
           <div className="mt-9 flex flex-wrap gap-x-7 gap-y-3 text-sm font-bold text-[var(--muted)]">
             <span className="flex items-center gap-2">
               <BadgeCheck size={19} className="text-[var(--green)]" />
@@ -121,6 +141,10 @@ export default function Home() {
             <span className="flex items-center gap-2">
               <MapPin size={18} className="text-[var(--coral)]" />
               Distance-based matches
+            </span>
+            <span className="flex items-center gap-2">
+              <BriefcaseBusiness size={18} className="text-[var(--blue-dark)]" />
+              Short-term or permanent care
             </span>
           </div>
         </div>
@@ -174,6 +198,101 @@ export default function Home() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="care-options" className="scroll-mt-8 py-24 sm:py-32">
+        <div className="mx-auto max-w-7xl px-5 sm:px-9">
+          <div className="mx-auto max-w-3xl text-center">
+            <div className="eyebrow">Choose the support you need</div>
+            <h2 className="display mt-4 text-5xl leading-[.96] sm:text-6xl">
+              One trusted place. Three ways to find care.
+            </h2>
+            <p className="mt-6 text-lg leading-8 text-[var(--muted)]">
+              Use the same My Nanny family account whether you need help for a
+              few dates, want to run your own permanent search, or want Mariette
+              to manage the placement with you.
+            </p>
+          </div>
+
+          <div className="mt-12 grid gap-5 lg:grid-cols-3">
+            <article className="flex h-full flex-col rounded-[32px] border border-[var(--line)] bg-white p-7 shadow-[0_18px_55px_rgba(35,81,105,.07)] sm:p-8">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--blue-pale)] text-[var(--blue-dark)]">
+                <CalendarRange size={27} />
+              </span>
+              <div className="mt-6 text-xs font-extrabold uppercase tracking-[.16em] text-[var(--blue-dark)]">Flexible care</div>
+              <h3 className="mt-2 text-2xl font-extrabold">Short-term bookings</h3>
+              <p className="mt-4 leading-7 text-[var(--muted)]">
+                Choose your dates and requirements, see screened nannies who are
+                available, and manage the booking and payment in one place.
+              </p>
+              <ul className="mt-6 grid gap-3 text-sm font-bold text-[var(--muted)]">
+                {["One or several dates", "Availability-based matches", "Simple in-app booking"].map((item) => (
+                  <li className="flex items-start gap-2" key={item}><CircleCheckBig className="mt-0.5 shrink-0 text-[var(--green)]" size={17} />{item}</li>
+                ))}
+              </ul>
+              <Link className="btn-secondary mt-8 w-full" href="/signup?role=parent">
+                Book short-term care <ArrowRight size={18} />
+              </Link>
+            </article>
+
+            <article className="relative flex h-full flex-col overflow-hidden rounded-[32px] border border-[#acd7e7] bg-[#eaf6fa] p-7 shadow-[0_22px_65px_rgba(35,81,105,.1)] sm:p-8">
+              <div className="absolute -right-16 -top-16 h-44 w-44 rounded-full border-[34px] border-white/60" />
+              <div className="relative">
+                <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[var(--blue-dark)] shadow-sm">
+                  <BriefcaseBusiness size={27} />
+                </span>
+                <div className="mt-6 text-xs font-extrabold uppercase tracking-[.16em] text-[var(--blue-dark)]">Permanent · Self-Match</div>
+                <h3 className="mt-2 text-2xl font-extrabold">Lead your own search</h3>
+                <p className="mt-4 leading-7 text-[var(--muted)]">
+                  Search protected profiles, create your shortlist, invite
+                  nannies to interviews and manage trials and offers with My
+                  Nanny safeguarding the process.
+                </p>
+                <ul className="mt-6 grid gap-3 text-sm font-bold text-[var(--muted)]">
+                  {["Protected profile search", "Interview credits and shortlist", "Trial, offer and replacement workflow"].map((item) => (
+                    <li className="flex items-start gap-2" key={item}><CircleCheckBig className="mt-0.5 shrink-0 text-[var(--green)]" size={17} />{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="relative mt-auto pt-8">
+                <Link className="btn-primary w-full" href="/signup?role=parent&next=%2Fplacements">
+                  Start Self-Match <ArrowRight size={18} />
+                </Link>
+              </div>
+            </article>
+
+            <article className="flex h-full flex-col rounded-[32px] border border-[var(--line)] bg-[#fff6f1] p-7 shadow-[0_18px_55px_rgba(35,81,105,.07)] sm:p-8">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-[var(--coral)] shadow-sm">
+                <HandHeart size={28} />
+              </span>
+              <div className="mt-6 text-xs font-extrabold uppercase tracking-[.16em] text-[#a44e3d]">Permanent · Concierge</div>
+              <h3 className="mt-2 text-2xl font-extrabold">Let Mariette manage it</h3>
+              <p className="mt-4 leading-7 text-[var(--muted)]">
+                Mariette consults with your family, shortlists candidates,
+                coordinates interview arrangements and supports salary and
+                offer negotiations through placement.
+              </p>
+              <ul className="mt-6 grid gap-3 text-sm font-bold text-[var(--muted)]">
+                {["Personal shortlist and consultations", "Interview and agreed transport coordination", "Salary and offer negotiation support"].map((item) => (
+                  <li className="flex items-start gap-2" key={item}><CircleCheckBig className="mt-0.5 shrink-0 text-[var(--green)]" size={17} />{item}</li>
+                ))}
+              </ul>
+              <Link className="btn-secondary mt-8 w-full" href="/signup?role=parent&next=%2Fplacements">
+                Request Concierge support <ArrowRight size={18} />
+              </Link>
+            </article>
+          </div>
+
+          <div className="mt-7 flex flex-col items-center justify-between gap-4 rounded-[24px] border border-[var(--line)] bg-white px-6 py-5 text-center sm:flex-row sm:text-left">
+            <p className="text-sm leading-6 text-[var(--muted)]">
+              Permanent-placement fees and inclusions are shown before payment.
+              Your agreed pricing is preserved once your search begins.
+            </p>
+            <Link className="shrink-0 text-sm font-extrabold text-[var(--blue-dark)]" href="/login?next=%2Fplacements">
+              Already have an account? Continue <ArrowRight className="ml-1 inline" size={16} />
+            </Link>
           </div>
         </div>
       </section>
@@ -246,10 +365,10 @@ export default function Home() {
                 From needing help to feeling supported.
               </h2>
               <p className="mt-6 max-w-lg text-lg leading-8 text-white/65">
-                No monthly fee. My Nanny is a flexible, pay-as-you-go service,
-                with pricing shown before you choose a caregiver. Profiles,
-                matching, bookings and communication stay together so everyone
-                knows what happens next.
+                Choose flexible bookings or a permanent placement, with pricing
+                shown before you continue. Profiles, matching, interviews,
+                bookings and communication stay together so everyone knows what
+                happens next.
               </p>
             </div>
             <div className="rounded-[38px] border border-white/10 bg-white/[.06] p-4 shadow-[0_30px_80px_rgba(0,0,0,.2)] sm:p-6">
@@ -479,7 +598,10 @@ export default function Home() {
           </div>
           <div className="relative mt-8 flex shrink-0 flex-wrap gap-3 lg:mt-0">
             <Link className="btn-secondary !min-h-14 !border-white !px-6" href="/signup?role=parent">
-              Create family account <ArrowRight size={19} />
+              Book short-term care <ArrowRight size={19} />
+            </Link>
+            <Link className="btn-secondary !min-h-14 !border-white !px-6" href="/signup?role=parent&next=%2Fplacements">
+              Find a permanent nanny <BriefcaseBusiness size={19} />
             </Link>
           </div>
         </div>
@@ -496,6 +618,8 @@ export default function Home() {
             <div className="mt-5 flex flex-wrap gap-4 text-sm font-bold text-[var(--muted)]">
               <Link href="/login">Log in</Link>
               <Link href="/signup?role=parent">Parents</Link>
+              <Link href="#care-options">Care options</Link>
+              <Link href="/login?next=%2Fplacements">Permanent placements</Link>
               <Link href="/signup?role=nanny">Nannies</Link>
               <Link href="#contact">Contact us</Link>
               <a href="https://g.page/r/CfJHxxMZ_CGGEBE/review" rel="noreferrer" target="_blank">Google reviews</a>

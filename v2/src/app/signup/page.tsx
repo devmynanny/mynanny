@@ -71,6 +71,7 @@ const boolValue = (value: string) =>
 function SignupForm() {
   const router = useRouter();
   const params = useSearchParams();
+  const nextPath = params.get("next") === "/placements" ? "/placements" : "/dashboard";
   const [role, setRole] = useState<Role>(
     params.get("role") === "nanny" ? "nanny" : "parent",
   );
@@ -82,6 +83,7 @@ function SignupForm() {
     useState<GoogleAddress | null>(null);
   const isSouthAfrican =
     form.nationality.trim().toLowerCase() === "south african";
+  const isPermanentParent = role === "parent" && nextPath === "/placements";
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -89,7 +91,8 @@ function SignupForm() {
 
   function chooseRole(nextRole: Role) {
     setRole(nextRole);
-    window.history.replaceState(null, "", `/signup?role=${nextRole}`);
+    const nextQuery = nextPath === "/placements" ? "&next=%2Fplacements" : "";
+    window.history.replaceState(null, "", `/signup?role=${nextRole}${nextQuery}`);
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -113,7 +116,7 @@ function SignupForm() {
           }),
         });
         if (role === "parent") {
-          router.push("/dashboard");
+          router.push(nextPath);
           router.refresh();
           return;
         }
@@ -174,7 +177,7 @@ function SignupForm() {
       <div className="mx-auto max-w-6xl">
         <header className="flex items-center justify-between gap-4">
           <Brand large />
-          <Link href="/login" className="btn-secondary">
+          <Link href={nextPath === "/placements" ? "/login?next=%2Fplacements" : "/login"} className="btn-secondary">
             Sign in
           </Link>
         </header>
@@ -187,14 +190,18 @@ function SignupForm() {
               <h1 className="display mt-4 text-4xl leading-tight sm:text-5xl">
                 {role === "nanny"
                   ? "Let families get to know the real you."
-                  : "Find trusted care for your family."}
+                  : isPermanentParent
+                    ? "Find the right nanny for the long term."
+                    : "Find trusted care for your family."}
               </h1>
               <p className="mt-5 leading-7 text-white/70">
                 {role === "nanny"
                   ? accountCreated
                     ? "Your account is secure. Now complete the private information our screening team needs to review your application."
                     : "Create your account first. Your application and screening questions only appear once you are signed in."
-                  : "Create your private family account to discover video-screened nannies and manage bookings."}
+                  : isPermanentParent
+                    ? "Create your private family account, then choose Self-Match or Concierge and tell us what your family needs."
+                    : "Create your private family account to discover video-screened nannies and manage bookings."}
               </p>
               <div className="mt-8 grid gap-4 text-sm font-bold text-white/80">
                 {(role === "nanny"
@@ -206,7 +213,9 @@ function SignupForm() {
                   : [
                       "Only screened nannies are shown",
                       "Contact details remain protected",
-                      "Bookings stay in one place",
+                      isPermanentParent
+                        ? "Shortlists, interviews and offers stay together"
+                        : "Bookings stay in one place",
                     ]
                 ).map((item) => (
                   <span key={item} className="flex items-center gap-3">

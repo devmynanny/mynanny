@@ -7,7 +7,7 @@ import { ParentPermanentPlacements } from "@/components/permanent-placement/pare
 
 export default function PermanentPlacementsPage() {
   return (
-    <AuthenticatedPage>
+    <AuthenticatedPage returnTo="/placements">
       {(role) =>
         role === "admin" ? (
           <AdminPermanentPlacements />
