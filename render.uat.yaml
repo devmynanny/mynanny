@@ -1,5 +1,5 @@
-# Separate UAT Blueprint. This file is not connected to Render until the paid
-# UAT cost gate is approved. Secret values are entered in Render, never here.
+# Separate UAT Blueprint. It reuses the existing paid Postgres instance but
+# targets a guarded logical UAT database. Secret values are entered in Render.
 services:
   - type: web
     name: mynanny-uat
@@ -8,8 +8,8 @@ services:
     region: oregon
     branch: codex/permanent-placements
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: alembic upgrade head
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: python scripts/provision_uat_database.py && python scripts/assert_safe_database_target.py && alembic upgrade head
+    startCommand: python scripts/assert_safe_database_target.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: "off"
     envVars:
@@ -25,10 +25,14 @@ services:
         value: My Nanny UAT API
       - key: V2_BASE_URL
         value: https://mynanny-v2-uat.onrender.com
-      - key: DATABASE_URL
+      - key: DATABASE_ADMIN_URL
         fromDatabase:
-          name: mynanny-uat-db
+          name: mynanny-db
           property: connectionString
+      - key: DATABASE_NAME_OVERRIDE
+        value: mynanny_uat
+      - key: UAT_EXPECTED_DATABASE_NAME
+        value: mynanny_uat
       - key: ADMIN_API_KEY
         generateValue: true
       - key: JWT_SECRET
@@ -54,7 +58,9 @@ services:
       - key: STORAGE_BACKEND
         value: s3
       - key: S3_BUCKET
-        sync: false
+        value: my-nanny-production-uploads-337903911181-af-south-1-an
+      - key: S3_KEY_PREFIX
+        value: uat
       - key: S3_REGION
         value: af-south-1
       - key: S3_ACCESS_KEY_ID
@@ -84,12 +90,3 @@ services:
         value: UAT
       - key: BACKEND_URL
         value: https://mynanny-uat.onrender.com
-
-databases:
-  - name: mynanny-uat-db
-    plan: 0.1c-256mb
-    region: oregon
-    postgresMajorVersion: "16"
-    diskSizeGB: 1
-    storageAutoscalingEnabled: false
-    ipAllowList: []

@@ -44,3 +44,32 @@ def test_communicator_media_is_admin_only():
     assert _upload_access_status(path, None) == 401
     assert _upload_access_status(path, {"id": 7, "is_admin": False}) == 403
     assert _upload_access_status(path, {"id": 1, "is_admin": True}) is None
+
+
+def test_s3_prefix_is_applied_without_changing_application_url(monkeypatch):
+    calls = []
+
+    class FakeS3:
+        def put_object(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setenv("STORAGE_BACKEND", "s3")
+    monkeypatch.setenv("S3_BUCKET", "shared-private-bucket")
+    monkeypatch.setenv("S3_KEY_PREFIX", "uat")
+    monkeypatch.setattr(storage, "_s3_client", lambda: FakeS3())
+
+    url = storage.store_bytes("invoices/42/test.pdf", b"pdf", "application/pdf")
+
+    assert url == "/media/invoices/42/test.pdf"
+    assert calls[0]["Bucket"] == "shared-private-bucket"
+    assert calls[0]["Key"] == "uat/invoices/42/test.pdf"
+
+
+def test_s3_prefix_rejects_path_traversal(monkeypatch):
+    monkeypatch.setenv("S3_KEY_PREFIX", "../production")
+    try:
+        storage._provider_key("safe.pdf")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unsafe S3 prefix should be rejected")

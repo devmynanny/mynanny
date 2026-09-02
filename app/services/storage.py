@@ -54,11 +54,20 @@ def _bucket() -> str:
     return value
 
 
+def _provider_key(key: str) -> str:
+    """Map a stable application media key into an isolated provider prefix."""
+    safe_key = _safe_key(key)
+    prefix = (os.getenv("S3_KEY_PREFIX") or "").strip().strip("/")
+    if not prefix:
+        return safe_key
+    return f"{_safe_key(prefix)}/{safe_key}"
+
+
 def store_bytes(key: str, data: bytes, content_type: str | None = None) -> str:
     safe_key = _safe_key(key)
     if _backend() == "s3":
         extra = {"ContentType": content_type} if content_type else {}
-        _s3_client().put_object(Bucket=_bucket(), Key=safe_key, Body=data, **extra)
+        _s3_client().put_object(Bucket=_bucket(), Key=_provider_key(safe_key), Body=data, **extra)
     else:
         destination = _local_upload_root() / safe_key
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -70,7 +79,9 @@ def store_file(key: str, source: Path, content_type: str | None = None) -> str:
     safe_key = _safe_key(key)
     if _backend() == "s3":
         extra = {"ContentType": content_type} if content_type else None
-        _s3_client().upload_file(str(source), _bucket(), safe_key, ExtraArgs=extra or {})
+        _s3_client().upload_file(
+            str(source), _bucket(), _provider_key(safe_key), ExtraArgs=extra or {}
+        )
     else:
         destination = _local_upload_root() / safe_key
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -81,7 +92,7 @@ def store_file(key: str, source: Path, content_type: str | None = None) -> str:
 def open_media(key: str) -> tuple[BinaryIO, str | None, int | None]:
     safe_key = _safe_key(key)
     if _backend() == "s3":
-        result = _s3_client().get_object(Bucket=_bucket(), Key=safe_key)
+        result = _s3_client().get_object(Bucket=_bucket(), Key=_provider_key(safe_key))
         return result["Body"], result.get("ContentType"), result.get("ContentLength")
     path = _local_upload_root() / safe_key
     data = path.read_bytes()
@@ -95,6 +106,6 @@ def temporary_provider_url(key: str, expires_seconds: int = 900) -> str:
         raise RuntimeError("Outbound messaging attachments require STORAGE_BACKEND=s3")
     return _s3_client().generate_presigned_url(
         "get_object",
-        Params={"Bucket": _bucket(), "Key": safe_key},
+        Params={"Bucket": _bucket(), "Key": _provider_key(safe_key)},
         ExpiresIn=expires_seconds,
     )

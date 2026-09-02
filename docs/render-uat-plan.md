@@ -14,7 +14,7 @@ and managed database operations.
 Sprint 8 therefore keeps:
 
 - Render for the backend, V2 application and PostgreSQL;
-- AWS S3 only for separate private production and UAT object storage;
+- AWS S3 with an isolated `uat/` object prefix and UAT-scoped credentials;
 - the existing `devmynanny/mynanny` GitHub repository as the source of truth;
   and
 - Paystack Test mode in UAT and Live mode only in production.
@@ -37,18 +37,17 @@ The August invoice was $22.87 because resources were introduced during the
 month. The current month-to-date breakdown and hourly rates reconcile to an
 approximately $24.75 full month before unusual bandwidth or tax adjustments.
 
-## 3. Proposed permanent UAT environment
+## 3. Approved cost-conscious UAT environment
 
 | UAT component | Proposed plan | Approximate monthly cost |
 | --- | --- | ---: |
 | `mynanny-uat` backend | 0.5 CPU, 512 MB | $7.00 |
 | `mynanny-v2-uat` | 0.5 CPU, 512 MB | $7.00 |
-| `mynanny-uat-db` compute | 0.1 CPU, 256 MB | $6.00 |
-| UAT database storage | 1 GB | about $0.30 |
-| Private UAT S3 and transfer | usage based | expected to be small during UAT |
-| **Approximate added fixed Render cost** | | **$20.30/month** |
+| Logical `mynanny_uat` database on existing Postgres instance | shared | $0.00 added |
+| Isolated `uat/` objects in the existing private S3 bucket | usage based | expected to be small during UAT |
+| **Approximate added fixed Render cost** | | **$14.00/month** |
 
-The expected combined Render total is therefore about $45.05/month while UAT
+The expected combined Render total is therefore about $38.75/month while UAT
 is retained. The rand amount varies with the exchange rate and card charges.
 The cost gate is expressed in US dollars because Render bills in US dollars.
 
@@ -62,19 +61,25 @@ do not replace the stable business UAT environment.
 
 UAT and production must have separate:
 
-- Render services and PostgreSQL databases;
-- S3 buckets and scoped AWS application credentials;
+- Render services and logical PostgreSQL databases;
+- S3 object prefixes and scoped AWS application credentials;
 - JWT, authentication and admin secrets;
 - Paystack keys and webhook endpoints;
 - document objects, invoices and signature evidence;
 - seed users and placement records; and
 - email/notification configuration.
 
-The UAT database uses `ipAllowList: []`, which blocks external database
-connections while allowing Render's private service connection. The production
-database currently allows `0.0.0.0/0`. That production rule must be restricted
-only after confirming whether any approved developer, migration or reporting
-workflow still connects externally.
+UAT and production share one paid Postgres instance to avoid a second fixed
+database charge. The UAT application rewrites the injected connection to the
+logical `mynanny_uat` database. Both pre-deploy and application startup run a
+fail-closed target check. If the resolved database is the instance's production
+database, the release stops before migrations or application startup.
+
+The shared instance remains a deliberate compromise: UAT load can still affect
+production compute and backups share the same instance lifecycle. UAT therefore
+uses synthetic data, automated notifications remain disabled, and load testing
+is prohibited. A dedicated UAT database instance becomes mandatory if usage or
+the team grows beyond controlled acceptance testing.
 
 ## 5. Safe deployment sequence
 
@@ -82,10 +87,12 @@ workflow still connects externally.
 2. Add the UAT banner and environment safety tests.
 3. Validate `render.uat.yaml` without applying it.
 4. Run backend, frontend and migration tests against PostgreSQL.
-5. Review the expected $20.30 monthly addition and obtain explicit approval.
-6. Create a private UAT S3 bucket and a UAT-only application identity.
-7. Create the separate Render UAT Blueprint from `render.uat.yaml`.
-8. Enter the Paystack Test and UAT S3 credentials through the Render dashboard;
+5. Review the expected $14.00 monthly addition and obtain explicit approval.
+6. Create an UAT-only S3 application identity restricted to the shared bucket's
+   `uat/*` objects.
+7. Create the separate Render UAT Blueprint from `render.uat.yaml`; its
+   idempotent pre-deploy step creates `mynanny_uat` on the existing instance.
+8. Enter the Paystack Test, SMTP and UAT-scoped S3 credentials through Render;
    never commit them.
 9. Deploy with external notifications and Permanent Placement disabled.
 10. Run short-term regression, auth, storage and Paystack Test smoke checks.
@@ -109,7 +116,7 @@ workflow still connects externally.
 Preparing and committing the UAT Blueprint does not incur a charge. Creating
 the Render Blueprint resources does. Before applying it, confirm:
 
-- an added Render ceiling of $21/month before unusual usage;
+- an added Render ceiling of $14/month before unusual usage;
 - the UAT service names and Git branch;
 - control of DNS for `mynanny.co.za`;
 - synthetic UAT data only;

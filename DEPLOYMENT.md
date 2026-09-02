@@ -12,19 +12,22 @@
 | Environment | Application | Database | Payments | Private files |
 |---|---|---|---|---|
 | Local | Local FastAPI and V2 | Local SQLite/test database | Mock or Paystack Test | Private local directory |
-| UAT | Separate Render services from `render.uat.yaml` | Separate Render PostgreSQL | Paystack Test only | Separate private UAT S3 bucket |
+| UAT | Separate Render services from `render.uat.yaml` | Logical `mynanny_uat` database on the shared instance | Paystack Test only | Existing private bucket under `uat/` |
 | Production | Render services from `render.yaml` | `mynanny-db` | Paystack Live | Production S3 bucket |
 
-Never share database URLs, authentication secrets, Paystack secrets, S3
-credentials or user data between UAT and production. UAT uses synthetic data.
-The proposed UAT Blueprint is intentionally not connected to Render until its
-monthly cost is approved. See `docs/render-uat-plan.md`.
+Never share authentication secrets, Paystack secrets, S3 credentials or user
+data between UAT and production. UAT uses synthetic data. The approved UAT
+design shares the paid Postgres instance and S3 bucket only: the logical
+database, object prefix and application credentials remain isolated. See
+`docs/render-uat-plan.md`.
 
 ## Private media storage
 
 Production and staging use `STORAGE_BACKEND=s3`. Configure:
 
 - `S3_BUCKET`: private bucket name.
+- `S3_KEY_PREFIX`: optional environment namespace such as `uat`; application
+  `/media/*` URLs remain unchanged while provider objects stay isolated.
 - `S3_REGION`: provider region.
 - `S3_ENDPOINT_URL`: optional for S3-compatible providers such as Cloudflare R2; omit for AWS S3.
 - `S3_ACCESS_KEY_ID`: restricted application access key.
@@ -40,6 +43,10 @@ Production AWS values:
 
 The bucket must remain private. Do not configure public-read ACLs or expose its provider URL. The application stores stable `/media/<key>` references and checks authentication and document ownership before streaming an object. Existing `/static/uploads/*` database references remain supported while historical files are migrated.
 
+UAT uses the same bucket with `S3_KEY_PREFIX=uat` and an IAM identity restricted
+to `arn:aws:s3:::my-nanny-production-uploads-337903911181-af-south-1-an/uat/*`.
+Do not reuse the production S3 access key.
+
 Permanent Placement invoices and receipts are stored below `invoices/<parent-id>/` in the same private storage backend. The `/media/invoices/*` application route allows only the owning parent or an authorized administrator to download them; provider URLs must never be shared directly.
 - Schema management:
   - Postgres: Alembic only. `alembic upgrade head` runs automatically before each deploy (`preDeployCommand`).
@@ -49,7 +56,8 @@ Permanent Placement invoices and receipts are stored below `invoices/<parent-id>
 
 | Key | Purpose |
 |---|---|
-| DATABASE_URL | Injected automatically from the mynanny-db database |
+| DATABASE_URL | Production database connection; UAT instead receives `DATABASE_ADMIN_URL` and rewrites only the database name |
+| DATABASE_NAME_OVERRIDE / UAT_EXPECTED_DATABASE_NAME | Both must be `mynanny_uat`; deployment fails closed if they differ |
 | ADMIN_API_KEY | Admin API access |
 | JWT_SECRET | Token signing |
 | AUTH_SECRET | Auth cookies |
@@ -114,7 +122,15 @@ Copy `TWILIO_REQUIRE_TEMPLATES` and every generated `TWILIO_CONTENT_SID_*` value
 3. Review the generated file in `alembic/versions/` (autogenerate is a draft, not gospel).
 4. Commit model + migration together. Render applies it on deploy.
 5. For local SQLite dev the legacy ensure_* path still applies changes automatically
-   where implemented; keep both paths in sync for columns that matter locally.
+  where implemented; keep both paths in sync for columns that matter locally.
+
+### Shared Postgres instance guard for UAT
+
+Render injects the existing instance connection as `DATABASE_ADMIN_URL`. UAT
+sets both `DATABASE_NAME_OVERRIDE` and `UAT_EXPECTED_DATABASE_NAME` to
+`mynanny_uat`. The pre-deploy step creates that logical database if necessary,
+then verifies the resolved target before Alembic runs. Startup repeats the same
+check. Never remove these checks or point UAT at the production database name.
 
 ## Local development
 

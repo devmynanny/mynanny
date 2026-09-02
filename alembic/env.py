@@ -17,6 +17,7 @@ from app import models  # noqa: E402,F401
 from app.models import audit_log  # noqa: E402,F401
 from app.models import admin_invite  # noqa: E402,F401
 from app.models import admin_profile  # noqa: E402,F401
+from app.utils.database_target import assert_safe_database_target, resolve_database_url  # noqa: E402
 
 config = context.config
 
@@ -27,13 +28,12 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    url = os.getenv("DATABASE_URL")
-    if not url:
+    if not os.getenv("DATABASE_URL") and not os.getenv("DATABASE_ADMIN_URL"):
         raise RuntimeError(
-            "DATABASE_URL is not set. Alembic uses the same DATABASE_URL "
-            "environment variable as the app."
+            "DATABASE_URL or DATABASE_ADMIN_URL is required for Alembic."
         )
-    return url
+    assert_safe_database_target()
+    return resolve_database_url()
 
 
 def run_migrations_offline() -> None:
