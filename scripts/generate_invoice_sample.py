@@ -9,42 +9,42 @@ from app.services.invoices import build_invoice_pdf
 
 
 invoice = SimpleNamespace(
-    invoice_number="MN-UAT-INV-2026-000001",
+    invoice_number="MN-INV-2026-000002",
     receipt_number=None,
     issued_at=datetime(2026, 9, 2, 10, 30),
     paid_at=None,
-    permanent_placement_id=1042,
+    permanent_placement_id=1,
     currency="ZAR",
-    subtotal_cents=217_391,
-    vat_cents=32_609,
-    total_cents=250_000,
+    subtotal_cents=115_000,
+    vat_cents=0,
+    total_cents=115_000,
     issuer_snapshot_json=json.dumps(
         {
-            "legal_name": "My Nanny Sample Entity (UAT only)",
+            "legal_name": "My Nanny (Pty) Ltd",
             "trading_name": "My Nanny",
-            "email": "billing@example.com",
-            "phone": "+27 11 000 0000",
-            "address": "1 Sample Avenue\nJohannesburg\nGauteng",
-            "registration_number": "SAMPLE-REG-001",
-            "vat_registered": True,
-            "vat_number": "SAMPLE-VAT-001",
-            "vat_rate_bps": 1500,
-            "prices_include_vat": True,
+            "email": "sayhi@mynanny.co.za",
+            "phone": "0813967980",
+            "address": "21 Victoria Cres, Louwlardia, Centurion",
+            "registration_number": None,
+            "vat_registered": False,
+            "vat_number": None,
+            "vat_rate_bps": 0,
+            "prices_include_vat": False,
         }
     ),
     customer_snapshot_json=json.dumps(
         {
-            "name": "UAT Family",
-            "email": "family@example.com",
-            "phone": "+27 82 000 0000",
+            "name": "UAT Parent Family",
+            "email": "uat.parent@mynanny.co.za",
+            "phone": "+27810000001",
         }
     ),
     line_items_json=json.dumps(
         [
             {
-                "description": "Concierge placement engagement",
+                "description": "Self-Match interview package top-up",
                 "quantity": 1,
-                "amount_cents": 250_000,
+                "amount_cents": 115_000,
             }
         ]
     ),

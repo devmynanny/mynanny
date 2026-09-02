@@ -5,14 +5,15 @@ import html
 import io
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_RIGHT
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
 from app import models
@@ -170,6 +171,13 @@ def _money(cents: int, currency: str = "ZAR") -> str:
     return f"R {cents / 100:,.2f}" if currency == "ZAR" else f"{currency} {cents / 100:,.2f}"
 
 
+def _address_lines(value: Any) -> list[str]:
+    lines: list[str] = []
+    for raw_line in str(value or "").splitlines():
+        lines.extend(part.strip() for part in raw_line.split(",") if part.strip())
+    return lines
+
+
 def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
     issuer = _json(invoice.issuer_snapshot_json, {})
     customer = _json(invoice.customer_snapshot_json, {})
@@ -178,36 +186,200 @@ def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
     title = "Invoice" if document_kind == "invoice" else "Payment receipt"
     document_date = invoice.issued_at if document_kind == "invoice" else invoice.paid_at
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Right", parent=styles["BodyText"], alignment=TA_RIGHT))
-    styles.add(ParagraphStyle(name="SmallMuted", parent=styles["BodyText"], fontSize=8.5, leading=12, textColor=colors.HexColor("#64748B")))
+    ink = colors.HexColor("#18324A")
+    muted = colors.HexColor("#667B8D")
+    blue = colors.HexColor("#5F9FBE")
+    blue_dark = colors.HexColor("#2F6F92")
+    blue_pale = colors.HexColor("#E8F5FA")
+    cream = colors.HexColor("#FBFAF6")
+    line = colors.HexColor("#DBE7EC")
+    coral = colors.HexColor("#DC765F")
+    green = colors.HexColor("#4C8A72")
+
+    styles.add(ParagraphStyle(
+        name="InvoiceBody",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=10.5,
+        leading=15,
+        textColor=ink,
+        spaceAfter=0,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceBodyRight",
+        parent=styles["InvoiceBody"],
+        alignment=TA_RIGHT,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceEyebrow",
+        parent=styles["InvoiceBody"],
+        fontName="Helvetica-Bold",
+        fontSize=7.5,
+        leading=10,
+        textColor=blue_dark,
+        tracking=2.1,
+        uppercase=True,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceTitle",
+        parent=styles["InvoiceBodyRight"],
+        fontName="Times-Bold",
+        fontSize=28,
+        leading=29,
+        textColor=ink,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceNumber",
+        parent=styles["InvoiceBodyRight"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        leading=13,
+        textColor=blue_dark,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceCardTitle",
+        parent=styles["InvoiceBody"],
+        fontName="Times-Bold",
+        fontSize=15,
+        leading=17,
+        textColor=ink,
+        spaceAfter=4,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceSmallMuted",
+        parent=styles["InvoiceBody"],
+        fontSize=8.5,
+        leading=12,
+        textColor=muted,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceWhite",
+        parent=styles["InvoiceBody"],
+        textColor=colors.white,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceWhiteRight",
+        parent=styles["InvoiceWhite"],
+        alignment=TA_RIGHT,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceWhiteEyebrow",
+        parent=styles["InvoiceEyebrow"],
+        textColor=colors.HexColor("#D7F0F8"),
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceTotalLabel",
+        parent=styles["InvoiceWhite"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=14,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceTotal",
+        parent=styles["InvoiceWhiteRight"],
+        fontName="Helvetica-Bold",
+        fontSize=15,
+        leading=18,
+    ))
+    styles.add(ParagraphStyle(
+        name="InvoiceFooter",
+        parent=styles["InvoiceSmallMuted"],
+        alignment=TA_CENTER,
+        fontSize=7.5,
+        leading=10,
+    ))
+
+    asset_root = Path(__file__).resolve().parents[1] / "static"
+    logo_path = asset_root / "logo.jpg"
+    tiqet_logo_path = asset_root / "powered-by-tiqet.png"
+
     stream = io.BytesIO()
     document = SimpleDocTemplate(
         stream,
         pagesize=A4,
-        rightMargin=18 * mm,
-        leftMargin=18 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm,
+        rightMargin=16 * mm,
+        leftMargin=16 * mm,
+        topMargin=15 * mm,
+        bottomMargin=27 * mm,
         title=f"{title} {number}",
         author=str(issuer.get("trading_name") or issuer.get("legal_name") or "My Nanny"),
     )
-    brand = colors.HexColor("#1F607D")
-    pale = colors.HexColor("#EAF4F7")
+
+    def decorate_page(canvas, doc):
+        width, height = A4
+        canvas.saveState()
+        canvas.setFillColor(cream)
+        canvas.rect(0, 0, width, height, stroke=0, fill=1)
+        canvas.setFillColor(colors.HexColor("#DDF1F8"))
+        canvas.circle(-8 * mm, height - 12 * mm, 34 * mm, stroke=0, fill=1)
+        canvas.setFillColor(colors.HexColor("#F8DED8"))
+        canvas.circle(width + 2 * mm, height + 1 * mm, 23 * mm, stroke=0, fill=1)
+        canvas.setFillColor(colors.HexColor("#F6E8BE"))
+        canvas.circle(width - 17 * mm, height - 6 * mm, 4 * mm, stroke=0, fill=1)
+        canvas.setStrokeColor(line)
+        canvas.setLineWidth(0.7)
+        canvas.line(16 * mm, 24 * mm, width - 16 * mm, 24 * mm)
+        canvas.setFillColor(muted)
+        canvas.setFont("Helvetica", 7.5)
+        canvas.drawString(16 * mm, 15.5 * mm, "MY NANNY  |  PLACEMENT SUPPORT MADE PERSONAL")
+        if tiqet_logo_path.exists():
+            canvas.drawImage(
+                str(tiqet_logo_path),
+                width - 57 * mm,
+                7.5 * mm,
+                width=41 * mm,
+                height=14.8 * mm,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        canvas.restoreState()
+
     story: list[Any] = []
-    story.append(
-        Table(
-            [[
-                Paragraph(f"<font size='23'><b>{html.escape(str(issuer.get('trading_name') or 'My Nanny'))}</b></font>", styles["BodyText"]),
-                Paragraph(f"<font size='22'><b>{title.upper()}</b></font><br/><font size='10'>{html.escape(str(number or 'DRAFT'))}</font>", styles["Right"]),
-            ]],
-            colWidths=[95 * mm, 75 * mm],
-            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("TEXTCOLOR", (0, 0), (-1, -1), brand)]),
-        )
+
+    logo = (
+        Image(str(logo_path), width=61 * mm, height=23 * mm)
+        if logo_path.exists()
+        else Paragraph("<b>My Nanny</b>", styles["InvoiceCardTitle"])
     )
-    story.append(Spacer(1, 9 * mm))
+    document_heading = Table(
+        [
+            [Paragraph("BILLING DOCUMENT", styles["InvoiceEyebrow"])],
+            [Paragraph(title, styles["InvoiceTitle"])],
+            [Paragraph(html.escape(str(number or "DRAFT")), styles["InvoiceNumber"])],
+        ],
+        colWidths=[78 * mm],
+        style=TableStyle([
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]),
+    )
+    header = Table(
+        [[logo, document_heading]],
+        colWidths=[92 * mm, 86 * mm],
+        cornerRadii=[7 * mm] * 4,
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("BOX", (0, 0), (-1, -1), 0.7, line),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (0, 0), 7 * mm),
+            ("RIGHTPADDING", (-1, 0), (-1, 0), 7 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 6 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6 * mm),
+        ]),
+    )
+    story.append(header)
+    story.append(Spacer(1, 7 * mm))
+
+    issuer_address = "<br/>".join(
+        html.escape(line_value) for line_value in _address_lines(issuer.get("address"))
+    )
     issuer_lines = [
-        f"<b>{html.escape(str(issuer.get('legal_name') or ''))}</b>",
-        html.escape(str(issuer.get("address") or "")).replace("\n", "<br/>"),
+        f"<font name='Times-Bold' size='15'>{html.escape(str(issuer.get('legal_name') or 'My Nanny'))}</font>",
+        issuer_address,
         html.escape(str(issuer.get("email") or "")),
         html.escape(str(issuer.get("phone") or "")),
     ]
@@ -215,45 +387,102 @@ def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
         issuer_lines.append(f"Registration: {html.escape(str(issuer['registration_number']))}")
     if issuer.get("vat_registered"):
         issuer_lines.append(f"VAT: {html.escape(str(issuer.get('vat_number') or ''))}")
+    else:
+        issuer_lines.append("<font color='#4C8A72'><b>Not VAT registered</b></font>")
     customer_lines = [
-        "<b>Bill to</b>",
-        html.escape(str(customer.get("name") or "")),
+        "<font name='Times-Bold' size='15'>Bill to</font>",
+        f"<b>{html.escape(str(customer.get('name') or ''))}</b>",
         html.escape(str(customer.get("email") or "")),
         html.escape(str(customer.get("phone") or "")),
     ]
-    details_lines = [
-        f"<b>Date</b><br/>{document_date.strftime('%d %B %Y') if document_date else '-'}",
-        f"<b>Placement reference</b><br/>PP-{invoice.permanent_placement_id}",
-    ]
-    story.append(
-        Table(
-            [[Paragraph("<br/>".join(filter(None, issuer_lines)), styles["BodyText"]), Paragraph("<br/>".join(filter(None, customer_lines)), styles["BodyText"]), Paragraph("<br/><br/>".join(details_lines), styles["Right"])]],
-            colWidths=[66 * mm, 55 * mm, 49 * mm],
-            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")), ("BOTTOMPADDING", (0, 0), (-1, -1), 8 * mm)]),
+
+    def info_card(content: Paragraph, width: float, background=colors.white) -> Table:
+        return Table(
+            [[content]],
+            colWidths=[width],
+            cornerRadii=[6 * mm] * 4,
+            style=TableStyle([
+                ("BACKGROUND", (0, 0), (-1, -1), background),
+                ("BOX", (0, 0), (-1, -1), 0.7, line),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
+                ("TOPPADDING", (0, 0), (-1, -1), 5 * mm),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
+            ]),
         )
+
+    issuer_card = info_card(
+        Paragraph("<br/>".join(filter(None, issuer_lines)), styles["InvoiceBody"]),
+        61 * mm,
     )
-    story.append(Spacer(1, 7 * mm))
-    rows = [[Paragraph("<b>Description</b>", styles["BodyText"]), Paragraph("<b>Amount</b>", styles["Right"])]]
+    customer_card = info_card(
+        Paragraph("<br/>".join(filter(None, customer_lines)), styles["InvoiceBody"]),
+        61 * mm,
+        blue_pale,
+    )
+    detail_content = "<br/>".join([
+        "<font color='#D7F0F8' size='7'><b>DATE</b></font>",
+        f"<b>{document_date.strftime('%d %B %Y') if document_date else '-'}</b>",
+        "",
+        "<font color='#D7F0F8' size='7'><b>PLACEMENT</b></font>",
+        f"<b>PP-{invoice.permanent_placement_id}</b>",
+    ])
+    details_card = Table(
+        [[Paragraph(detail_content, styles["InvoiceWhiteRight"])]],
+        colWidths=[50 * mm],
+        cornerRadii=[6 * mm] * 4,
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), blue_dark),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 5 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
+        ]),
+    )
+    story.append(Table(
+        [[issuer_card, "", customer_card, "", details_card]],
+        colWidths=[61 * mm, 3 * mm, 61 * mm, 3 * mm, 50 * mm],
+        style=TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]),
+    ))
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph("YOUR SERVICE", styles["InvoiceEyebrow"]))
+    story.append(Spacer(1, 2.5 * mm))
+
+    rows = [[
+        Paragraph("<b>Description</b>", styles["InvoiceBody"]),
+        Paragraph("<b>Amount</b>", styles["InvoiceBodyRight"]),
+    ]]
     for item in line_items:
         rows.append([
-            Paragraph(html.escape(str(item.get("description") or "Service")), styles["BodyText"]),
-            Paragraph(_money(int(item.get("amount_cents") or 0), invoice.currency), styles["Right"]),
+            Paragraph(html.escape(str(item.get("description") or "Service")), styles["InvoiceBody"]),
+            Paragraph(_money(int(item.get("amount_cents") or 0), invoice.currency), styles["InvoiceBodyRight"]),
         ])
     story.append(
         Table(
             rows,
-            colWidths=[130 * mm, 40 * mm],
+            colWidths=[128 * mm, 50 * mm],
             repeatRows=1,
+            cornerRadii=[5 * mm] * 4,
             style=TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), pale),
-                ("TEXTCOLOR", (0, 0), (-1, 0), brand),
-                ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#CBD5E1")),
-                ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#E2E8F0")),
+                ("BACKGROUND", (0, 0), (-1, 0), blue_pale),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("TEXTCOLOR", (0, 0), (-1, 0), blue_dark),
+                ("BOX", (0, 0), (-1, -1), 0.7, line),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.7, line),
+                ("LINEBEFORE", (1, 0), (1, -1), 0.5, line),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("TOPPADDING", (0, 0), (-1, -1), 4 * mm),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4 * mm),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4 * mm),
+                ("TOPPADDING", (0, 0), (-1, -1), 4.5 * mm),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5 * mm),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
             ]),
         )
     )
@@ -267,25 +496,70 @@ def build_invoice_pdf(invoice: models.Invoice, *, document_kind: str) -> bytes:
     total_rows.append(["Total", _money(invoice.total_cents, invoice.currency)])
     if document_kind == "receipt":
         total_rows.append(["Paid", _money(invoice.total_cents, invoice.currency)])
-    totals = Table(total_rows, colWidths=[35 * mm, 38 * mm], hAlign="RIGHT")
+    total_flowables = [
+        [
+            Paragraph(html.escape(str(label)), styles["InvoiceBodyRight"]),
+            Paragraph(html.escape(str(amount)), styles["InvoiceBodyRight"]),
+        ]
+        for label, amount in total_rows[:-1]
+    ]
+    total_flowables.append([
+        Paragraph(html.escape(str(total_rows[-1][0])), styles["InvoiceTotalLabel"]),
+        Paragraph(html.escape(str(total_rows[-1][1])), styles["InvoiceTotal"]),
+    ])
+    totals = Table(
+        total_flowables,
+        colWidths=[32 * mm, 42 * mm],
+        hAlign="RIGHT",
+        cornerRadii=[5 * mm] * 4,
+    )
     totals.setStyle(TableStyle([
         ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTSIZE", (0, -1), (-1, -1), 12),
-        ("TEXTCOLOR", (0, -1), (-1, -1), brand),
-        ("TOPPADDING", (0, 0), (-1, -1), 2 * mm),
+        ("BACKGROUND", (0, -1), (-1, -1), blue_dark),
+        ("BOX", (0, -1), (-1, -1), 0.7, blue_dark),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5 * mm),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4 * mm),
     ]))
     story.append(totals)
-    story.append(Spacer(1, 12 * mm))
+    story.append(Spacer(1, 9 * mm))
     payment_note = (
         "Payment received. Thank you."
         if document_kind == "receipt"
         else "Please use the secure Paystack payment option in your My Nanny placement portal."
     )
-    story.append(Paragraph(payment_note, styles["BodyText"]))
-    story.append(Spacer(1, 5 * mm))
-    story.append(Paragraph("This document was generated from the immutable price and customer snapshot stored with the service payment. Contact My Nanny through the app if any detail needs review.", styles["SmallMuted"]))
-    document.build(story)
+    payment_heading = "PAYMENT RECEIVED" if document_kind == "receipt" else "SECURE PAYMENT"
+    payment_colour = green if document_kind == "receipt" else coral
+    payment_card = Table(
+        [[
+            Paragraph(payment_heading, ParagraphStyle(
+                name=f"InvoicePayment{document_kind}",
+                parent=styles["InvoiceEyebrow"],
+                textColor=payment_colour,
+            )),
+            Paragraph(payment_note, styles["InvoiceBody"]),
+        ]],
+        colWidths=[38 * mm, 140 * mm],
+        cornerRadii=[5 * mm] * 4,
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+            ("BOX", (0, 0), (-1, -1), 0.7, line),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LINEBEFORE", (1, 0), (1, 0), 3, payment_colour),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
+            ("TOPPADDING", (0, 0), (-1, -1), 4 * mm),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4 * mm),
+        ]),
+    )
+    story.append(payment_card)
+    story.append(Spacer(1, 4 * mm))
+    story.append(Paragraph(
+        "This document was generated from the immutable price and customer snapshot stored with the service payment. Contact My Nanny through the app if any detail needs review.",
+        styles["InvoiceSmallMuted"],
+    ))
+    document.build(story, onFirstPage=decorate_page, onLaterPages=decorate_page)
     return stream.getvalue()
 
 
