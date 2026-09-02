@@ -887,7 +887,13 @@ def ensure_qualifications_seed() -> None:
                         {"name": name, "id": existing["id"]},
                     )
             else:
-                conn.execute(text("INSERT INTO qualifications (name, is_active) VALUES (:name, 1)"), {"name": name})
+                conn.execute(
+                    text(
+                        "INSERT INTO qualifications (name, is_active) "
+                        "VALUES (:name, :is_active)"
+                    ),
+                    {"name": name, "is_active": True},
+                )
 
 
 def ensure_parent_favorites_schema() -> None:
