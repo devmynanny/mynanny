@@ -4,6 +4,7 @@
 import { AuthenticatedPage } from "@/components/authenticated-page";
 import {
   GoogleAddressInput,
+  reverseGeocodeCoordinates,
   type GoogleAddress,
 } from "@/components/google-address-input";
 import { NannyLocationConfirmation } from "@/components/nanny-location-confirmation";
@@ -194,12 +195,16 @@ function ParentProfile() {
     navigator.geolocation.getCurrentPosition(
       async ({ coords }) => {
         try {
+          setStatus("Confirming your street address...");
+          const address = await reverseGeocodeCoordinates(
+            coords.latitude,
+            coords.longitude,
+          );
           const location = await apiJson<ParentLocation>("/parents/me/locations", {
             method: "POST",
             body: JSON.stringify({
+              ...address,
               label: "Home",
-              lat: coords.latitude,
-              lng: coords.longitude,
               is_default: locations.length === 0,
             }),
           });
@@ -207,7 +212,7 @@ function ParentProfile() {
             const withoutDuplicate = current.filter((item) => item.id !== location.id);
             return [location, ...withoutDuplicate];
           });
-          setStatus("Home location saved.");
+          setStatus("Home address found and saved.");
         } catch (error) {
           setStatus(error instanceof Error ? error.message : "Unable to save location.");
         } finally {

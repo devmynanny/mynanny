@@ -20,6 +20,7 @@ export type GoogleAddress = {
 type AddressSuggestion = { place_id: string; description: string };
 type GooglePrediction = { place_id: string; description: string };
 type GoogleGeocoderResult = {
+  place_id: string;
   formatted_address: string;
   address_components: { long_name: string; types: string[] }[];
   geometry: { location: { lat: () => number; lng: () => number } };
@@ -41,7 +42,9 @@ type GooglePlacesWindow = Window & {
       };
       Geocoder: new () => {
         geocode: (
-          request: { placeId: string },
+          request:
+            | { placeId: string }
+            | { location: { lat: number; lng: number } },
           callback: (
             results: GoogleGeocoderResult[] | null,
             status: string,
@@ -98,6 +101,69 @@ async function loadGooglePlacesServices() {
     });
 
   return googlePlacesLoader;
+}
+
+function addressFromGeocoderResult(
+  result: GoogleGeocoderResult,
+  placeId = result.place_id,
+): GoogleAddress {
+  const component = (...types: string[]) => {
+    for (const type of types) {
+      const match = result.address_components.find((item) =>
+        item.types.includes(type),
+      );
+      if (match) return match.long_name;
+    }
+    return "";
+  };
+  const street = [component("street_number"), component("route")]
+    .filter(Boolean)
+    .join(" ");
+
+  return {
+    place_id: placeId,
+    formatted_address: result.formatted_address,
+    street,
+    suburb: component(
+      "sublocality_level_1",
+      "sublocality",
+      "neighborhood",
+    ),
+    city: component("locality", "administrative_area_level_2"),
+    province: component("administrative_area_level_1"),
+    postal_code: component("postal_code"),
+    country: component("country"),
+    lat: result.geometry.location.lat(),
+    lng: result.geometry.location.lng(),
+  };
+}
+
+export async function reverseGeocodeCoordinates(
+  lat: number,
+  lng: number,
+): Promise<GoogleAddress> {
+  await loadGooglePlacesServices();
+  const maps = (window as GooglePlacesWindow).google?.maps;
+  if (!maps) throw new Error("Google Maps is unavailable.");
+
+  const result = await new Promise<GoogleGeocoderResult>((resolve, reject) => {
+    new maps.Geocoder().geocode(
+      { location: { lat, lng } },
+      (results, status) => {
+        if (status === maps.GeocoderStatus.OK && results?.[0]) {
+          resolve(results[0]);
+        } else {
+          reject(
+            new Error(
+              "We found your location but could not identify its street address. Please enter the address manually.",
+            ),
+          );
+        }
+      },
+    );
+  });
+
+  return addressFromGeocoderResult(result);
 }
 
 export function GoogleAddressInput({
@@ -193,37 +259,7 @@ export function GoogleAddressInput({
           );
         },
       );
-      const component = (...types: string[]) => {
-        for (const type of types) {
-          const match = result.address_components.find((item) =>
-            item.types.includes(type),
-          );
-          if (match) return match.long_name;
-        }
-        return "";
-      };
-      const street = [
-        component("street_number"),
-        component("route"),
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const address: GoogleAddress = {
-        place_id: suggestion.place_id,
-        formatted_address: result.formatted_address,
-        street,
-        suburb: component(
-          "sublocality_level_1",
-          "sublocality",
-          "neighborhood",
-        ),
-        city: component("locality", "administrative_area_level_2"),
-        province: component("administrative_area_level_1"),
-        postal_code: component("postal_code"),
-        country: component("country"),
-        lat: result.geometry.location.lat(),
-        lng: result.geometry.location.lng(),
-      };
+      const address = addressFromGeocoderResult(result, suggestion.place_id);
       suppressSearch.current = true;
       onChange(address.formatted_address);
       onSelected(address);
